@@ -1,8 +1,6 @@
-# Invariant: Durable repository context for agentic work
+# Invariant: Durable semantic layer for agentic workflows
 
-Invariant is a repository-native control plane for coding agents and harnesses, delivered as a
-standalone Python CLI. It maintains durable repository context and governs verified lifecycle
-transitions without hosting or executing the model loop. Humans provide goals, resolve escalated
+Invariant is a repository-native semantic control plane for coding agents and harnesses. Humans provide goals, resolve escalated
 conflicts or ambiguity, and may control lifecycle transitions; agents handle repository internals. Within one local clone,
 Invariant advances the integration branch only after exact-candidate verification succeeds and
 keeps remote publication disabled by default. Its semantic records make review assertions
@@ -19,8 +17,8 @@ It connects four critical axes for agentic work:
 - **Git-grounded lifecycle** — isolated work, exact-candidate verification, and atomic local landing
   keep long-running changes stable and resumable.
 
-Durable repository context is the semantic counterpart to temporal coordination: architecture and
-contracts remain after the work ends; plans, claims, and leases do not.
+Durable repository meaning is the semantic counterpart to temporal coordination: architecture and
+contracts remain after the work ends; plans, claims, and leases do not. 
 
 ![A Git-grounded lifecycle carries a user goal through coordination, execution, verification, conflict resolution by an agent or human, and local landing. A durable semantic layer maps domains to architecture files and contracts to contract files.](.github/assets/lifecycle.svg)
 
@@ -30,7 +28,7 @@ The complete design is in [SPEC.md](docs/SPEC.md).
 
 ## Install
 
-Invariant requires Git support for linked worktrees and `merge-tree --write-tree`. `invariant init`
+Invariant is shipped as a standalone python CLI. It requires Git support for linked worktrees and `merge-tree --write-tree`. `invariant init`
 and `task begin` probe these capabilities before writing lifecycle state and report every missing
 feature together.
 
@@ -52,47 +50,17 @@ Confirm the installation:
 invariant --version
 ```
 
-## Initialize a repository
-
-From the repository root, run:
-
-```bash
-invariant init
-```
-
-Interactive setup explains each repository setting and uses arrow-key radio choices. The optional
-named integration branch remains a text field. Setup configures Codex, Claude Code, or both; writes
-the selected values to `.invariant/config.yml`; and safely adds a
-managed Invariant workflow to the applicable root instruction files without replacing existing
-content.
-
-Use every safe default without prompts:
-
-```bash
-invariant init --defaults
-```
-
-This selects both Codex and Claude Code, agent semantic authority, automatic lifecycle execution,
-the primary lifecycle checkout's current branch as the automatic integration target, local-only
-landing, and the optional lifecycle bookends disabled. Initialization does not run a model; after
-setup it prints a natural-language request for your coding agent to run a governance pass from saved
-audit through adoption.
-
-Interactive setup presents the optional task contract adapter as one bundled choice. The default
-is model-led: it relies on the coding agent's own understanding and normal candidate review. A
-repository can instead enable request expansion and exact-candidate contract review together.
-
 ## Use Invariant
 
 Invariant does not contain or connect to a model. Codex, Claude Code, or another coding harness
-provides the model, conversation, and tools; Invariant provides the durable repository context and
+provides the model, conversation, and tools; the core function is to manage the semantic layer and
 verified lifecycle that the harness invokes.
 
 | Actor | Responsibility |
 |---|---|
 | Human | State the goal and acceptance expectations, resolve escalated semantic or merge conflicts, and optionally approve lifecycle transitions. |
 | Coding agent or harness | Inspect the code, select relevant paths and domains, implement the change, prepare candidate assessments, and invoke Invariant. |
-| Invariant CLI | Retrieve durable context, maintain receipts and coordination state, manage isolated Git work, verify the exact candidate, and land it under repository policy. |
+| Invariant CLI | Retrieve durable semantics, maintain receipts and coordination state, manage isolated Git work, verify the exact candidate, and land it under repository policy. |
 
 The human does not need to inspect repository internals, choose domains or paths, author assessment
 files, or manage branches. Those are agent and Invariant responsibilities.
@@ -123,6 +91,23 @@ verification, and landing; it is not something Invariant expects a human to disc
 
 See [CLI basics](docs/cli-basics.md) for human commands, a complete task example, governance-pass
 examples, and a map of the agent-facing command groups.
+
+## Initialize in a repository
+
+From the repository root, run:
+
+```bash
+invariant init
+```
+
+Interactive setup explains each repo level settings and writes
+the selected values to `.invariant/config.yml`.
+
+Optionally, you can use the default settings:
+
+```bash
+invariant init --defaults
+```
 
 ## Configure Invariant
 
