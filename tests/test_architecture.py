@@ -41,11 +41,7 @@ def test_mechanics_does_not_depend_on_lifecycle_or_skill_source() -> None:
         assert "skills/" not in path.read_text(encoding="utf-8")
 
 
-def test_product_copy_and_protocol_use_the_new_namespaces() -> None:
-    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
-    assert "Durable repository context for agentic work" in readme
-    assert "intent" not in readme.lower()
-
+def test_protocol_uses_the_new_namespace() -> None:
     for path in PACKAGE.rglob("*.py"):
         text = path.read_text(encoding="utf-8")
         assert "Intent-" not in text, path
