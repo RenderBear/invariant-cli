@@ -2,7 +2,6 @@
 *.skill
 dist/
 .venv/
-uv.lock
 __pycache__/
 *.py[cod]
 .pytest_cache/

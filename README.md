@@ -26,7 +26,7 @@ contracts remain after the work ends; plans, claims, and leases do not.
 
 
 
-The complete design is in [SPEC.md](SPEC.md).
+The complete design is in [SPEC.md](docs/SPEC.md).
 
 ## Install
 
