@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "invariant-cli"
 version = "0.1.0"
-description = "Preserve durable architectural intent across repository change"
+description = "Preserve durable repository governance across repository change"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"

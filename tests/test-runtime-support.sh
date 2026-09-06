@@ -63,9 +63,9 @@ EOF
 printf 'landed\n' >>"$fixture/seed"
 git -C "$fixture" commit -qam "land runtime fixtures
 
-Intent-Unit: one
-Intent-Unit: two
-Intent-Scope: area.root"
+Invariant-Unit: one
+Invariant-Unit: two
+Invariant-Scope: area.root"
 out=$(cd "$fixture" && "$compat" runtime status)
 printf '%s\n' "$out" | grep -q "^RUNTIME: $runtime$" || die "status hides runtime path"
 printf '%s\n' "$out" | grep -q '^PLAN: done$' || die "status omits plan"

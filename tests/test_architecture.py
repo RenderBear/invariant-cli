@@ -38,7 +38,19 @@ def test_mechanics_does_not_depend_on_lifecycle_or_skill_source() -> None:
     for path in (PACKAGE / "mechanics").glob("*.py"):
         imports = imported_modules(path)
         assert not any(name.startswith("invariant.lifecycle") for name in imports), path
-        assert "skills/intent-" not in path.read_text(encoding="utf-8")
+        assert "skills/" not in path.read_text(encoding="utf-8")
+
+
+def test_product_copy_and_protocol_use_the_new_namespaces() -> None:
+    readme = (REPOSITORY / "README.md").read_text(encoding="utf-8")
+    assert "Durable repository context for agentic work" in readme
+    assert "intent" not in readme.lower()
+
+    for path in PACKAGE.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        assert "Intent-" not in text, path
+        assert "intent/work/" not in text, path
+        assert "GIT_INTENT_" not in text, path
 
 
 def test_task_acceptance_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> None:
@@ -49,7 +61,7 @@ def test_task_acceptance_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> 
                 "version": 1,
                 "adapter": "task_acceptance",
                 "source_goal_digest": "goal-id",
-                "intent": {
+                "requirements": {
                     "goal": "Restore active jobs after reopening.",
                     "outcomes": [{"id": "O1", "prose": "Active jobs remain visible."}],
                     "acceptance": [{"id": "A1", "prose": "Each job appears once."}],
@@ -140,7 +152,7 @@ def test_task_acceptance_is_a_bundled_adapter_not_semantics() -> None:
     adapter = adapters.task_acceptance_examples()
     assert adapter["contract"]["adapter"] == "task_acceptance"
     assert adapter["review"]["adapter"] == "task_acceptance"
-    assert not (PACKAGE / "semantics" / "guidance" / "intent-expansion.md").exists()
+    assert not (PACKAGE / "semantics" / "guidance" / "task-acceptance.md").exists()
     assert not (PACKAGE / "semantics" / "guidance" / "outcome-review.md").exists()
     for path in (PACKAGE / "adapters").rglob("*.py"):
         imports = imported_modules(path)

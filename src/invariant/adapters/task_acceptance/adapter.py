@@ -232,12 +232,12 @@ def contract_schema() -> dict[str, object]:
         "title": "Invariant task acceptance contract",
         "type": "object",
         "additionalProperties": False,
-        "required": ["version", "adapter", "source_goal_digest", "intent", "verification"],
+        "required": ["version", "adapter", "source_goal_digest", "requirements", "verification"],
         "properties": {
             "version": {"const": 1},
             "adapter": {"const": "task_acceptance"},
             "source_goal_digest": {"type": "string", "minLength": 1},
-            "intent": {
+            "requirements": {
                 "type": "object",
                 "additionalProperties": False,
                 "required": ["goal"],
@@ -302,7 +302,7 @@ def examples() -> dict[str, object]:
             "version": 1,
             "adapter": "task_acceptance",
             "source_goal_digest": digest,
-            "intent": {
+            "requirements": {
                 "goal": "Change the button label to Save changes.",
                 "outcomes": [],
                 "acceptance": [{"id": "label", "prose": "The button displays Save changes."}],

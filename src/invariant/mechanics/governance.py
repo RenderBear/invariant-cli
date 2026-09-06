@@ -749,9 +749,9 @@ def commit_message(
     if not unit_values or not scope_values:
         raise InvariantError("Invariant: commit message requires units and scopes")
     lines = [subject, ""]
-    lines.extend(f"Intent-Unit: {item}" for item in unit_values)
-    lines.extend(f"Intent-Scope: {item}" for item in scope_values)
-    lines.extend(f"Intent-Domain: {item}" for item in selected_domains)
+    lines.extend(f"Invariant-Unit: {item}" for item in unit_values)
+    lines.extend(f"Invariant-Scope: {item}" for item in scope_values)
+    lines.extend(f"Invariant-Domain: {item}" for item in selected_domains)
     if plan:
         plan_file = git.primary_worktree(repo) / ".invariant" / "runtime" / "plans" / f"{plan}.yml"
         if not plan_file.is_file():
@@ -759,29 +759,29 @@ def commit_message(
         import zlib
 
         data = plan_file.read_bytes()
-        lines.append(f"Intent-Plan: {plan}")
-        lines.append(f"Intent-Plan-Digest: {zlib.crc32(data) & 0xffffffff}-{len(data)}")
+        lines.append(f"Invariant-Plan: {plan}")
+        lines.append(f"Invariant-Plan-Digest: {zlib.crc32(data) & 0xffffffff}-{len(data)}")
     return "\n".join(lines) + "\n"
 
 
 def validate_trailer(repo: Path, commit: str) -> list[str]:
-    claimed = git.trailers(repo, commit, "Intent-Scope")
+    claimed = git.trailers(repo, commit, "Invariant-Scope")
     if not claimed:
-        raise InvariantError(f"TRAILER: missing Intent-Scope on {commit}", exit_code=1, code="invalid_trailer")
+        raise InvariantError(f"TRAILER: missing Invariant-Scope on {commit}", exit_code=1, code="invalid_trailer")
     domain_ids = {str(row.get("id")) for row in domains(repo)}
-    for domain in git.trailers(repo, commit, "Intent-Domain"):
+    for domain in git.trailers(repo, commit, "Invariant-Domain"):
         if domain not in domain_ids:
-            raise InvariantError(f"TRAILER: unknown Intent-Domain {domain}", exit_code=1, code="invalid_trailer")
+            raise InvariantError(f"TRAILER: unknown Invariant-Domain {domain}", exit_code=1, code="invalid_trailer")
     architecture = {
         locator
         for row in [*domains(repo), *contracts(repo)]
         for locator in architecture_refs(row.get("architecture", row.get("material")))
     }
-    for review in git.trailers(repo, commit, "Intent-Architecture"):
+    for review in git.trailers(repo, commit, "Invariant-Architecture"):
         if not review.startswith("architecture:"):
-            raise InvariantError(f"TRAILER: invalid Intent-Architecture {review}", exit_code=1)
+            raise InvariantError(f"TRAILER: invalid Invariant-Architecture {review}", exit_code=1)
         if review not in architecture:
-            raise InvariantError(f"TRAILER: unreferenced Intent-Architecture {review}", exit_code=1)
+            raise InvariantError(f"TRAILER: unreferenced Invariant-Architecture {review}", exit_code=1)
     parent = git.resolve(repo, f"{commit}^")
     changed = git.changed_paths(repo, parent, commit) if parent else git.run(
         ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", commit], cwd=repo

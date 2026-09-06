@@ -194,7 +194,7 @@ def validate_plan(repo: Path, value: str) -> list[str]:
 
 def _landed_units(repo: Path, target: str) -> set[str]:
     result = git.run(
-        ["log", "--first-parent", target, "--format=%(trailers:key=Intent-Unit,valueonly,separator=%x0a)"],
+        ["log", "--first-parent", target, "--format=%(trailers:key=Invariant-Unit,valueonly,separator=%x0a)"],
         cwd=repo,
         check=False,
     )

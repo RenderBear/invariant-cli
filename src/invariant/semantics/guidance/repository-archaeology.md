@@ -104,7 +104,7 @@ For stateful behavior, map:
 - reconstruction after restart or reconnection;
 - concurrent writers, stale readers, and conflict resolution;
 - expiration, cancellation, tombstones, cleanup, and migration;
-- what is intentionally ephemeral and must not be restored.
+- what is deliberately ephemeral and must not be restored.
 
 Search for both the normal path and compensating behavior. A repository may implement persistence in
 a startup loader, failure handler, migration, or polling loop rather than near the original write.
@@ -137,5 +137,5 @@ where demand appears.
 
 A useful finding contains an observation, exact-tree basis, relevance to current or future work,
 alternative interpretations when needed, and a disposition. Keep descriptive evidence separate from
-the normative conclusion. Resolution may establish durable intent, repair implementation, add tests
+the normative conclusion. Resolution may establish durable governance, repair implementation, add tests
 or documentation, schedule follow-up, split the question, or conclude that no artifact is needed.

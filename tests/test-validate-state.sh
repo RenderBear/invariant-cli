@@ -196,9 +196,9 @@ git -C "$history" config commit.gpgsign false
 printf 'seed\n' >"$history/file.txt"
 git -C "$history" add file.txt
 git -C "$history" commit -qm seed
-git -C "$history" commit -q --allow-empty -m "adopt landing history" -m "Intent-Unit: adoption
-Intent-Scope: area.root
-Intent-Boundary: no-record"
+git -C "$history" commit -q --allow-empty -m "adopt landing history" -m "Invariant-Unit: adoption
+Invariant-Scope: area.root
+Invariant-Boundary: no-record"
 attested=$(git -C "$history" rev-parse HEAD)
 printf 'ordinary\n' >>"$history/file.txt"
 git -C "$history" commit -qam "ordinary integration edit"
@@ -206,14 +206,14 @@ unattested=$(git -C "$history" rev-parse HEAD)
 if out=$(cd "$history" && "$compat" state --landing 2>&1); then
   die "unattested integration suffix passed strict landing validation"
 fi
-printf '%s\n' "$out" | grep -q '^FAIL unattested integration range .* requires the next landing to carry Intent-Covers$' ||
+printf '%s\n' "$out" | grep -q '^FAIL unattested integration range .* requires the next landing to carry Invariant-Covers$' ||
   die "unattested range lacks a precise diagnostic"
 ok "ordinary integration commits remain append-only but visibly unattested"
 
-git -C "$history" commit -q --allow-empty -m "bad range attestation" -m "Intent-Unit: bad
-Intent-Scope: area.root
-Intent-Boundary: no-record
-Intent-Covers: wrong..range"
+git -C "$history" commit -q --allow-empty -m "bad range attestation" -m "Invariant-Unit: bad
+Invariant-Scope: area.root
+Invariant-Boundary: no-record
+Invariant-Covers: wrong..range"
 if out=$(cd "$history" && "$compat" state --landing 2>&1); then
   die "incorrect range attestation passed validation"
 fi
@@ -221,10 +221,10 @@ printf '%s\n' "$out" | grep -q 'covers wrong..range but expected' || die "incorr
 ok "range attestations must cover the exact first-parent suffix"
 
 git -C "$history" switch -qc correct "$unattested"
-git -C "$history" commit -q --allow-empty -m "correct range attestation" -m "Intent-Unit: correct
-Intent-Scope: area.root
-Intent-Boundary: no-record
-Intent-Covers: $attested..$unattested"
+git -C "$history" commit -q --allow-empty -m "correct range attestation" -m "Invariant-Unit: correct
+Invariant-Scope: area.root
+Invariant-Boundary: no-record
+Invariant-Covers: $attested..$unattested"
 (cd "$history" && "$compat" state --landing >/dev/null) || die "exact contiguous range attestation failed"
 ok "exact range attestation restores strict landing validity without rewriting"
 

@@ -252,7 +252,7 @@ printf '%s\n' "$out" | grep -q '^VERIFY: contract:ocr.audit-protocol.v1 command:
 ok "new governance contracts run their declared verifiers"
 
 msg=$(cd "$fixture" && "$compat" brief message "change engine" --unit engine --scope area.src --domain ocr.external)
-printf '%s\n' "$msg" | grep -q '^Intent-Domain: ocr.external$' || die "semantic domain trailer missing"
+printf '%s\n' "$msg" | grep -q '^Invariant-Domain: ocr.external$' || die "semantic domain trailer missing"
 printf 'changed\n' >>"$fixture/src/ocr/engine.txt"
 git -C "$fixture" commit -qam "$msg"
 (cd "$fixture" && "$compat" brief trailer HEAD >/dev/null) || die "honest derived scope/domain trailers failed"

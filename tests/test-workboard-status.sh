@@ -125,8 +125,8 @@ ok "unit state derives from dependencies"
 
 git -C "$fixture" commit --allow-empty -qm "land protocol
 
-Intent-Unit: protocol
-Intent-Scope: area.root"
+Invariant-Unit: protocol
+Invariant-Scope: area.root"
 out=$(cd "$fixture" && "$compat" workboard-status demo)
 printf '%s\n' "$out" | grep -Eq '^protocol +landed' || die "trailer did not derive landed state"
 printf '%s\n' "$out" | grep -Eq '^api +dispatchable' || die "dependency landing did not unlock consumer"
@@ -143,8 +143,8 @@ ok "pinned set is landed plus leased"
 
 msg=$(cd "$fixture" && "$compat" brief message "land clients" --unit api --unit web \
   --scope area.services --scope area.apps --plan demo)
-printf '%s\n' "$msg" | grep -q '^Intent-Plan: demo$' || die "message omits plan trailer"
-printf '%s\n' "$msg" | grep -q '^Intent-Unit: web$' || die "message omits bundled unit"
+printf '%s\n' "$msg" | grep -q '^Invariant-Plan: demo$' || die "message omits plan trailer"
+printf '%s\n' "$msg" | grep -q '^Invariant-Unit: web$' || die "message omits bundled unit"
 ok "one convergence message can contain several bundled units"
 
 echo "8 plan checks passed"

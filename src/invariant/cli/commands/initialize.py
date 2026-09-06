@@ -162,7 +162,7 @@ def _logo() -> None:
     print(f"{_color('1;35', '│ ≡ │')}")
     print(
         f"{_color('1;35', '╰───╯')}  "
-        f"{_color('2', 'Durable architectural intent for agentic work')}"
+        f"{_color('2', 'Durable repository governance for agentic work')}"
     )
 
 
@@ -195,7 +195,7 @@ def _interactive(repo) -> bootstrap.BootstrapSettings:
     }[agent_choice]
     authority = _select(
         "Semantic authority",
-        "Who may define repository-wide meaning, resolve contradictions, and approve durable intent?",
+        "Who may define repository-wide meaning, resolve contradictions, and approve durable governance?",
         (
             (
                 "agent",
@@ -256,7 +256,7 @@ def _interactive(repo) -> bootstrap.BootstrapSettings:
             (
                 "acceptance",
                 "Task acceptance adapter",
-                "Expand intent before work and review the exact candidate with proportional evidence.",
+                "Expand requirements before work and review the exact candidate with proportional evidence.",
             ),
         ),
         "model",

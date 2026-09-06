@@ -75,7 +75,7 @@ def test_landing_rejects_a_tree_changed_after_adapter_review(
         units=("task",),
         scopes=("area.root",),
         boundary="no-record",
-        merge_branch="intent/work/task",
+        merge_branch="invariant/work/task",
         target="main",
         expected_tree="4" * 40,
     )

@@ -94,7 +94,7 @@ def _validate_request(request: LandRequest) -> None:
 def _last_attested(repo: Path, old: str) -> str | None:
     commits = git.run(["rev-list", "--first-parent", old], cwd=repo, check=False).stdout.splitlines()
     for commit in commits:
-        if git.trailers(repo, commit, "Intent-Boundary"):
+        if git.trailers(repo, commit, "Invariant-Boundary"):
             return commit
     return None
 
@@ -108,14 +108,14 @@ def _message(repo: Path, request: LandRequest, covers: str | None) -> str:
         request.domains,
         request.plan,
     )
-    message += f"Intent-Boundary: {request.boundary}\n"
+    message += f"Invariant-Boundary: {request.boundary}\n"
     if covers:
-        message += f"Intent-Covers: {covers}\n"
+        message += f"Invariant-Covers: {covers}\n"
     for reference in request.governance_refs:
-        message += f"Intent-Governance: {reference}\n"
+        message += f"Invariant-Governance: {reference}\n"
     for reference in request.reviewed:
         if reference.startswith("architecture:"):
-            message += f"Intent-Architecture: {reference}\n"
+            message += f"Invariant-Architecture: {reference}\n"
     return message
 
 
@@ -754,22 +754,22 @@ def verify_and_land(repo: Path, request: LandRequest, *, update_ref: bool = True
                 f"Invariant: staged edit has {verdict} reach; use normal work-branch landing",
                 lines=output,
             )
-        prior_target = os.environ.get("GIT_INTENT_INTEGRATION_TARGET")
-        prior_unborn = os.environ.get("GIT_INTENT_ALLOW_UNBORN")
-        os.environ["GIT_INTENT_INTEGRATION_TARGET"] = target
-        os.environ["GIT_INTENT_ALLOW_UNBORN"] = "1" if candidate.unborn else "0"
+        prior_target = os.environ.get("INVARIANT_INTEGRATION_TARGET")
+        prior_unborn = os.environ.get("INVARIANT_ALLOW_UNBORN")
+        os.environ["INVARIANT_INTEGRATION_TARGET"] = target
+        os.environ["INVARIANT_ALLOW_UNBORN"] = "1" if candidate.unborn else "0"
         try:
             state_lines = state.validate(verify_dir, landing=True)
         finally:
             if prior_target is None:
-                os.environ.pop("GIT_INTENT_INTEGRATION_TARGET", None)
+                os.environ.pop("INVARIANT_INTEGRATION_TARGET", None)
             else:
-                os.environ["GIT_INTENT_INTEGRATION_TARGET"] = prior_target
+                os.environ["INVARIANT_INTEGRATION_TARGET"] = prior_target
             if prior_unborn is None:
-                os.environ.pop("GIT_INTENT_ALLOW_UNBORN", None)
+                os.environ.pop("INVARIANT_ALLOW_UNBORN", None)
             else:
-                os.environ["GIT_INTENT_ALLOW_UNBORN"] = prior_unborn
-        if state_lines[-1] != "intent state valid" and state_lines[-1] != "no intent state — nothing to validate":
+                os.environ["INVARIANT_ALLOW_UNBORN"] = prior_unborn
+        if state_lines[-1] != "Invariant state valid" and state_lines[-1] != "no Invariant state — nothing to validate":
             raise Blocked("Invariant: candidate state validation failed", code="invalid_state", lines=state_lines)
         governance.validate_trailer(verify_dir, candidate.commit)
         output.extend(_boundary_review(verify_dir, request, reach_lines))

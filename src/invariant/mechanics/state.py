@@ -237,14 +237,14 @@ def _landing_history(repo: Path) -> list[str]:
     gap = False
     gap_tip = ""
     for commit in commits.stdout.splitlines():
-        boundary = git.trailers(repo, commit, "Intent-Boundary")
-        governance = git.trailers(repo, commit, "Intent-Governance")
-        covers = git.trailers(repo, commit, "Intent-Covers")
+        boundary = git.trailers(repo, commit, "Invariant-Boundary")
+        governance = git.trailers(repo, commit, "Invariant-Governance")
+        covers = git.trailers(repo, commit, "Invariant-Covers")
         label = f"landing history commit {commit[:12]}"
         if not adopted and boundary:
             adopted = True
             if covers:
-                errors.append(f"{label} has unexpected Intent-Covers")
+                errors.append(f"{label} has unexpected Invariant-Covers")
         if not adopted:
             continue
         if not boundary:
@@ -252,14 +252,14 @@ def _landing_history(repo: Path) -> list[str]:
             gap_tip = commit
             continue
         if len(boundary) > 1:
-            errors.append(f"{label} has multiple Intent-Boundary trailers")
+            errors.append(f"{label} has multiple Invariant-Boundary trailers")
             continue
         value = boundary[0]
         if value not in {"no-record", "recorded"} and not re.fullmatch(r"audit:[A-Za-z0-9._-]+", value):
-            errors.append(f"{label} has an invalid Intent-Boundary disposition")
+            errors.append(f"{label} has an invalid Invariant-Boundary disposition")
             continue
         if value == "recorded" and not governance:
-            errors.append(f"{label} uses Intent-Boundary recorded without Intent-Governance")
+            errors.append(f"{label} uses Invariant-Boundary recorded without Invariant-Governance")
         if last:
             if gap:
                 parent = git.resolve(repo, f"{commit}^1") or ""
@@ -267,15 +267,15 @@ def _landing_history(repo: Path) -> list[str]:
                 if not covers:
                     errors.append(f"{label} must cover unattested range {expected}")
                 elif len(covers) > 1:
-                    errors.append(f"{label} has multiple Intent-Covers trailers")
+                    errors.append(f"{label} has multiple Invariant-Covers trailers")
                 elif covers[0] != expected:
                     errors.append(f"{label} covers {covers[0]} but expected {expected}")
             elif covers:
-                errors.append(f"{label} has Intent-Covers without an unattested range")
+                errors.append(f"{label} has Invariant-Covers without an unattested range")
         last = commit
         gap = False
     if adopted and gap:
-        errors.append(f"unattested integration range {last}..{gap_tip} requires the next landing to carry Intent-Covers")
+        errors.append(f"unattested integration range {last}..{gap_tip} requires the next landing to carry Invariant-Covers")
     return errors
 
 
@@ -284,8 +284,8 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
     files = _yaml_files(repo, named)
     if not files:
         if failures:
-            return [*(f"FAIL {item}" for item in failures), f"{len(failures)} intent state violation(s)"]
-        return ["no intent state — nothing to validate"]
+            return [*(f"FAIL {item}" for item in failures), f"{len(failures)} Invariant state violation(s)"]
+        return ["no Invariant state — nothing to validate"]
 
     parsed: dict[Path, dict[str, Any]] = {}
     for path in files:
@@ -500,5 +500,5 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
             failures.extend(_evidence(repo, locator, label, str(ground) if ground else None))
 
     if failures:
-        return [*(f"FAIL {item}" for item in failures), f"{len(failures)} intent state violation(s)"]
-    return ["intent state valid"]
+        return [*(f"FAIL {item}" for item in failures), f"{len(failures)} Invariant state violation(s)"]
+    return ["Invariant state valid"]

@@ -13,7 +13,7 @@ The design separates three concerns:
 3. **Lifecycle** advances work through briefing, isolation, verification, and landing.
 
 The CLI owns mechanics and lifecycle. A coding agent or harness owns repository investigation and
-implementation. Humans provide intent, resolve escalated ambiguity or conflict, and may approve
+implementation. Humans provide goals, resolve escalated ambiguity or conflict, and may approve
 lifecycle transitions; they are not expected to inspect repository internals. Explicit repository
 configuration may authorize one bounded external effect—publishing a verified landing to an
 existing Git upstream—and the host owns every other external effect. None of these layers may
@@ -59,7 +59,7 @@ Invariant does not:
 ### 3.1 Semantics
 
 Semantic work is normally performed by the coding agent, with human authority requested only when
-accepted intent is insufficient or contradictory. It owns:
+accepted governance is insufficient or contradictory. It owns:
 
 - interpreting the user's requested outcome;
 - selecting relevant semantic domains;
@@ -135,7 +135,7 @@ repository investigation or implementation.
 The dependency direction is always:
 
 ```text
-human intent, authority, and optional approvals
+human goals, authority, and optional approvals
           |
           v
 coding agent / IDE / harness / automation
@@ -291,7 +291,7 @@ adapters:
 initialization. It controls instruction-file setup, not semantic authority or model execution.
 
 `authority` names who may define repository-wide semantics, resolve conflicts, and approve durable
-intent:
+requirements:
 
 - `human` previews discovery capture and resolution without mutation, then sends the semantic
   proposal to a human for approval;
@@ -299,7 +299,7 @@ intent:
   sufficient.
 
 The agent supplies causal evidence, searched paths, domains, and record structure in both modes.
-The human supplies intent or authority only; after approval, the harness reapplies a human-authority
+The human supplies goals or authority only; after approval, the harness reapplies a human-authority
 transition with `--apply`. Agent authority requires both accepted and proposed configuration to
 remain `agent`: enabling takes effect after integration, while returning to `human` is immediate.
 
@@ -371,7 +371,7 @@ setting.
 Optional additions to the fixed core are configured under `adapters`. The bundled
 `task_acceptance` adapter is one indivisible unit: its pre-hook expands the request into a local
 acceptance contract with stable IDs, and its post-hook assesses those IDs against the exact
-prospective tree. It is either enabled in full or disabled; intent expansion and outcome review are
+prospective tree. It is either enabled in full or disabled; requirements expansion and outcome review are
 not independent lifecycle modes. The model-led default leaves the adapter disabled and relies on
 the coding agent's normal understanding plus normal candidate review.
 
@@ -466,7 +466,7 @@ When `adapters.task_acceptance` is enabled, the host supplies a task-local accep
 version: 1
 adapter: task_acceptance
 source_goal_digest: <goal-digest-from-task-begin>
-intent:
+requirements:
   goal: Restore active jobs when the browser is reopened.
   outcomes:
     - id: O1
@@ -762,7 +762,7 @@ when the searched scope and exact tree are explicit.
 
 `task guidance` compiles the selected context rather than merely printing locators. It includes:
 
-- the task's free-form expanded intent, when enabled;
+- the task's free-form expanded requirements, when enabled;
 - selected durable rows and their anchored architecture sections at the captured integration head;
 - the observation, basis, evidence, searched scope, and relevance of open discoveries intersecting
   the task;
@@ -772,7 +772,7 @@ Architecture is read from the captured accepted ground so candidate edits cannot
 the premise used to interpret their own change. Discoveries remain non-authoritative and may evolve
 progressively; including their prose in context does not promote them to governance.
 
-When the resolution does adopt durable intent, it edits the smallest canonical architecture,
+When the resolution does adopt durable governance, it edits the smallest canonical architecture,
 domain, or contract record and then runs `invariant state validate`. The CLI validates adoption; it
 does not manufacture accepted meaning.
 
@@ -865,7 +865,7 @@ durable-meaning review, exact-tree verification, and atomic landing remain manda
 
 ## 15. Skills
 
-Skills remain useful only where model judgment adds value. The intended skill set is thin:
+Skills remain useful only where model judgment adds value. The selected skill set is thin:
 
 - context interpretation and domain selection;
 - durable-meaning review;
@@ -877,9 +877,9 @@ A skill may instruct an agent to call `invariant`, but it must not duplicate CLI
 reimplement the lifecycle. Skills must be independently useful and must not hash or import each
 other as freshness dependencies.
 
-The repository's existing `intent-*` prose remains useful as optional semantic reference material.
-Its script paths are deprecated source-tree adapters that invoke the package only. They are not
-distributed as the application and cannot be imported by the mechanics or lifecycle layers.
+Repository-local semantic prose remains optional reference material. Source-tree test adapters may
+invoke the package, but they are not distributed as the application and cannot be imported by the
+mechanics or lifecycle layers.
 
 ## 16. Safety and authority
 
@@ -918,8 +918,7 @@ special binding beyond process execution and JSON. A future MCP or harness adapt
 same command contract rather than duplicate it.
 
 Tracked governance remains version 1 unless an actual model change requires another version. The
-repository rename from `.intent/` to `.invariant/` was a path migration only; legacy discovery
-records are accepted while the generalized ontology is adopted incrementally.
+version-one protocol uses only the Invariant namespace and does not translate earlier names.
 
 ## 18. Version-one acceptance criteria
 

@@ -26,8 +26,8 @@ def _status(args: argparse.Namespace) -> list[str]:
     resolved = config.resolve(repo)
     validation = state.validate(repo)
     valid = validation[-1] in {
-        "intent state valid",
-        "no intent state — nothing to validate",
+        "Invariant state valid",
+        "no Invariant state — nothing to validate",
     }
     lines = [
         f"REPOSITORY: {repo}",

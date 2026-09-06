@@ -21,17 +21,17 @@ def _valid_boundary(value: str) -> bool:
 
 
 def _target_config(repo: Path, target: str | None = None) -> config.Config:
-    previous = os.environ.get("GIT_INTENT_INTEGRATION_TARGET")
+    previous = os.environ.get("INVARIANT_INTEGRATION_TARGET")
     if target:
-        os.environ["GIT_INTENT_INTEGRATION_TARGET"] = target
+        os.environ["INVARIANT_INTEGRATION_TARGET"] = target
     try:
         return config.resolve(repo)
     finally:
         if target:
             if previous is None:
-                os.environ.pop("GIT_INTENT_INTEGRATION_TARGET", None)
+                os.environ.pop("INVARIANT_INTEGRATION_TARGET", None)
             else:
-                os.environ["GIT_INTENT_INTEGRATION_TARGET"] = previous
+                os.environ["INVARIANT_INTEGRATION_TARGET"] = previous
 
 
 def _branch_name(repo: Path, task: str, head: str) -> str:
@@ -39,11 +39,11 @@ def _branch_name(repo: Path, task: str, head: str) -> str:
         repo,
         f"{git.common_dir(repo)}\n{task}\n{head}\n{os.getpid()}-{time.time_ns()}\n",
     )[:12]
-    return f"intent/work/{task}-{nonce}"
+    return f"invariant/work/{task}-{nonce}"
 
 
 def _worktree_path(repo: Path, branch: str) -> Path:
-    name = branch.removeprefix("intent/work/")
+    name = branch.removeprefix("invariant/work/")
     return coordinate.ensure_runtime(repo) / "worktrees" / name
 
 
@@ -384,8 +384,8 @@ def finish(
     target = str(receipt.get("integration_target") or "")
     base = str(receipt.get("integration_head") or "")
     cached_goal = str(receipt.get("goal_digest") or "")
-    intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
-    cached_boundary = str(intent.get("boundary") or "")
+    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
+    cached_boundary = str(governance_state.get("boundary") or "")
     if active_stage == "implementing":
         _require_lifecycle_checkout(repo, branch)
     if assessment.goal_digest != cached_goal:
@@ -644,8 +644,8 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         {".invariant/DOMAINS.yml", ".invariant/CONTRACTS.yml", ".invariant/CONSTRAINTS.yml"}
         .intersection(paths)
     )
-    intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
-    boundary = str(intent.get("boundary") or "unresolved")
+    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
+    boundary = str(governance_state.get("boundary") or "unresolved")
     if boundary == "unresolved":
         if governance_refs or durable_registry_changed:
             boundary = "recorded"
@@ -789,7 +789,7 @@ def task_guidance(repo: Path, task: str) -> list[str]:
     receipt = receipts.load(repo, task)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     scope = receipt.get("scope") if isinstance(receipt.get("scope"), dict) else {}
-    intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
+    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
     domains = [str(item) for item in scope.get("domains", [])]
     initial_paths = [str(item) for item in scope.get("paths", [])]
     interfaces = [str(item) for item in scope.get("interfaces", [])]
@@ -815,7 +815,7 @@ def task_guidance(repo: Path, task: str) -> list[str]:
         "",
         f"Task: {task}",
         f"Stage: {stage}",
-        f"Boundary: {intent.get('boundary') or 'unknown'}",
+        f"Boundary: {governance_state.get('boundary') or 'unknown'}",
         f"Accepted ground: {captured_head or 'unknown'}",
         f"Paths ({path_basis}): {', '.join(paths) or 'none selected'}",
         f"Interfaces: {', '.join(interfaces) or 'none selected'}",
@@ -826,7 +826,7 @@ def task_guidance(repo: Path, task: str) -> list[str]:
         output.extend(["", *adapter_context])
     rows = governance.display_rows(repo, domains, accepted_at)
     if domains:
-        output.extend(["", "# Selected durable intent", "", *rows])
+        output.extend(["", "# Selected durable governance", "", *rows])
     architecture = governance.architecture_context(repo, domains, accepted_at)
     if architecture:
         output.extend(["", "# Selected architecture prose", "", *architecture])

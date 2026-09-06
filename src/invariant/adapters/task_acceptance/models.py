@@ -85,7 +85,7 @@ class TaskAcceptanceContract:
     @classmethod
     def load(cls, path: str | Path) -> "TaskAcceptanceContract":
         raw = _load(path, "task acceptance contract")
-        allowed = {"version", "adapter", "source_goal_digest", "intent", "verification"}
+        allowed = {"version", "adapter", "source_goal_digest", "requirements", "verification"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
             raise UsageError(f"task acceptance contract has unknown field '{unknown[0]}'")
@@ -94,15 +94,19 @@ class TaskAcceptanceContract:
         source_goal_digest = _text(
             raw.get("source_goal_digest"), "task acceptance source_goal_digest"
         )
-        intent = raw.get("intent")
-        if not isinstance(intent, dict):
-            raise UsageError("task acceptance contract requires an intent mapping")
-        intent_unknown = sorted(set(intent) - {"goal", "outcomes", "acceptance", "constraints"})
-        if intent_unknown:
-            raise UsageError(f"task acceptance intent has unknown field '{intent_unknown[0]}'")
+        requirements = raw.get("requirements")
+        if not isinstance(requirements, dict):
+            raise UsageError("task acceptance contract requires a requirements mapping")
+        requirement_unknown = sorted(
+            set(requirements) - {"goal", "outcomes", "acceptance", "constraints"}
+        )
+        if requirement_unknown:
+            raise UsageError(
+                f"task acceptance requirements have unknown field '{requirement_unknown[0]}'"
+            )
 
         def nodes(section: str) -> list[AcceptanceNode]:
-            values = intent.get(section, [])
+            values = requirements.get(section, [])
             if not isinstance(values, list):
                 raise UsageError(f"task acceptance {section} must be a list")
             return [AcceptanceNode.from_value(item, section, index) for index, item in enumerate(values)]
@@ -129,7 +133,7 @@ class TaskAcceptanceContract:
             )
         return cls(
             source_goal_digest=source_goal_digest,
-            goal=_text(intent.get("goal"), "task acceptance goal"),
+            goal=_text(requirements.get("goal"), "task acceptance goal"),
             verification_level=str(level),
             verification_rationale=_text(
                 verification.get("rationale"), "task acceptance verification rationale"

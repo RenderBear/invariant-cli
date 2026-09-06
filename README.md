@@ -1,9 +1,9 @@
-# Invariant: Durable architectural intent for agentic work
+# Invariant: Durable repository context for agentic work
 
 Invariant is a repository-native control plane for coding agents and harnesses, delivered as a
-standalone Python CLI. It governs durable intent and verified lifecycle transitions without hosting
-or executing the model loop. Humans provide intent, resolve escalated conflicts or ambiguity, and
-may control lifecycle transitions; agents handle repository internals. Within one local clone,
+standalone Python CLI. It maintains durable repository context and governs verified lifecycle
+transitions without hosting or executing the model loop. Humans provide goals, resolve escalated
+conflicts or ambiguity, and may control lifecycle transitions; agents handle repository internals. Within one local clone,
 Invariant advances the integration branch only after exact-candidate verification succeeds and
 keeps remote publication disabled by default. Its semantic records make review assertions
 inspectable and attributable; they cannot prove that a reviewer reasoned sincerely.
@@ -19,8 +19,8 @@ It connects four critical axes for agentic work:
 - **Git-grounded lifecycle** — isolated work, exact-candidate verification, and atomic local landing
   keep long-running changes stable and resumable.
 
-Durable intent is the semantic counterpart to temporal coordination: architecture and contracts
-remain after the work ends; plans, claims, and leases do not.
+Durable repository context is the semantic counterpart to temporal coordination: architecture and
+contracts remain after the work ends; plans, claims, and leases do not.
 
 ![A Git-grounded lifecycle carries a user goal through coordination, execution, verification, conflict resolution by an agent or human, and local landing. A durable semantic layer maps domains to architecture files and contracts to contract files.](.github/assets/lifecycle.svg)
 
@@ -75,12 +75,12 @@ invariant init --defaults
 This selects both Codex and Claude Code, agent semantic authority, automatic lifecycle execution,
 the primary lifecycle checkout's current branch as the automatic integration target, local-only
 landing, and the optional lifecycle bookends disabled. Initialization does not run a model; after
-setup it prints a natural-language request for your coding agent to run the complete initial
-governance workflow from saved audit through adoption.
+setup it prints a natural-language request for your coding agent to run a governance pass from saved
+audit through adoption.
 
-Interactive setup presents the two optional intent controls as one choice. The default is
-model-led: it relies on the coding agent's own understanding and normal candidate review. A
-repository can instead add a custom pre-step, a custom post-step, or both.
+Interactive setup presents the optional task acceptance adapter as one bundled choice. The default
+is model-led: it relies on the coding agent's own understanding and normal candidate review. A
+repository can instead enable request expansion and exact-candidate acceptance review together.
 
 ## Use Invariant
 
@@ -90,7 +90,7 @@ verified lifecycle that the harness invokes.
 
 | Actor | Responsibility |
 |---|---|
-| Human | State the goal and acceptance intent, resolve escalated semantic or merge conflicts, and optionally approve lifecycle transitions. |
+| Human | State the goal and acceptance expectations, resolve escalated semantic or merge conflicts, and optionally approve lifecycle transitions. |
 | Coding agent or harness | Inspect the code, select relevant paths and domains, implement the change, prepare candidate assessments, and invoke Invariant. |
 | Invariant CLI | Retrieve durable context, maintain receipts and coordination state, manage isolated Git work, verify the exact candidate, and land it under repository policy. |
 
@@ -147,7 +147,7 @@ Settings:
 |---|---|---|---|
 | `version` | `1` | `1` | Configuration schema version. It is fixed and not user-configurable. |
 | `coding_agents` | `[codex, claude]` | Any non-empty subset of `codex`, `claude` | Which root agent instruction files receive the managed Invariant workflow during initialization. |
-| `authority` | `agent` | `agent`, `human` | Who may define repository-wide semantics, resolve contradictions, and approve durable intent. |
+| `authority` | `agent` | `agent`, `human` | Who may define repository-wide semantics, resolve contradictions, and approve durable repository meaning. |
 | `execution` | `auto` | `auto`, `assisted` | Whether state-changing lifecycle transitions run immediately or pause for explicit continuation. |
 | `integration_branch` | `auto` | `auto`, local branch name | The branch that receives verified landings. `auto` uses the primary lifecycle checkout's current branch when a task begins; a name fixes one local convergence target. |
 | `push_remote` | `off` | `off`, `on` | Whether a successful landing stays local or pushes the exact verified commit to the integration branch's existing upstream. |
@@ -193,7 +193,7 @@ receipts let `task finish` reuse a matching prior candidate verification; reach,
 the prospective tree, and the integration compare-and-swap are still recomputed live. Set a runner's
 cache to `exact-tree` only when that reuse is sound; named runners default to `never`.
 
-## Establish architectural intent
+## Establish durable repository context
 
 Invariant does not require a complete model up front: start with a governance pass, then let normal
 work deepen it progressively. Run another pass after committed repository changes when existing
@@ -213,7 +213,7 @@ persists it as `audit-<UTC timestamp>.yml`.
 ### Continue with progressive discovery
 
 During normal work, the agent inspects outward from the goal and surfaces missing, contradictory, or
-outdated intent. With human authority, the human decides whether each finding should be preserved
+outdated context. With human authority, the human decides whether each finding should be preserved
 or resolved; with agent authority, accepted repository policy allows the agent to proceed within
 its granted scope. Unresolved discoveries remain evidence, while accepted resolutions can
 update architecture, contracts, code, tests, or no artifact at all.
@@ -256,6 +256,6 @@ request
 
 uncertainty
   → discovery evidence
-  → intentional resolution
+  → deliberate resolution
   → architecture, contract, code, tests, documentation, follow-up, or no action
 ```

@@ -27,7 +27,7 @@ class Parser(argparse.ArgumentParser):
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = Parser(prog="invariant", description="Preserve durable architectural intent")
+    parser = Parser(prog="invariant", description="Preserve durable repository governance")
     parser.add_argument("--format", choices=["text", "json"], default="text")
     parser.add_argument(
         "--verbose",

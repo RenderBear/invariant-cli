@@ -19,7 +19,7 @@ Observed behavior is evidence, not automatic authority. Documentation is not aut
 because it is prose, and implementation is not automatically normative because it runs. When the
 three accounts disagree, name the contradiction instead of silently choosing the most convenient
 one. Decide whether it is an implementation defect, stale documentation, an unresolved discovery,
-or an intentional change that needs authority.
+or a deliberate change that needs authority.
 
 ## Look for durable meaning
 

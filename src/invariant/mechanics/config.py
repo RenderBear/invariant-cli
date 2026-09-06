@@ -72,7 +72,7 @@ class Config:
 
 
 def _current(repo: Path) -> tuple[str, str]:
-    captured = os.environ.get("GIT_INTENT_INTEGRATION_TARGET")
+    captured = os.environ.get("INVARIANT_INTEGRATION_TARGET")
     if captured:
         return captured, "captured"
     branch = git.current_branch(repo)
@@ -431,8 +431,8 @@ def _finish(
         allowed_unborn = (
             symbolic == branch and git.resolve(repo, "HEAD") is None
         ) or (
-            os.environ.get("GIT_INTENT_ALLOW_UNBORN") == "1"
-            and os.environ.get("GIT_INTENT_INTEGRATION_TARGET") == branch
+            os.environ.get("INVARIANT_ALLOW_UNBORN") == "1"
+            and os.environ.get("INVARIANT_INTEGRATION_TARGET") == branch
         )
         if not allowed_unborn:
             raise InvariantError(f"Invariant: configured integration branch '{branch}' does not exist locally")

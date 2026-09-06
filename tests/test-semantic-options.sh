@@ -64,14 +64,14 @@ fi
 printf '%s\n' "$out" | grep -q '^STATUS: awaiting-task-acceptance$' ||
   die "task acceptance did not expose its lifecycle gate"
 [ "$(git -C "$fixture" branch --show-current)" = main ] ||
-  die "intent expansion gate created the work branch early"
+  die "task acceptance gate created the work branch early"
 ok "task acceptance is an optional pre-implementation adapter gate"
 
 cat >"$contract_file" <<EOF
 version: 1
 adapter: task_acceptance
 source_goal_digest: $goal_digest
-intent:
+requirements:
   goal: $goal
   outcomes:
     - id: O1
@@ -81,7 +81,7 @@ intent:
       prose: The committed source contains the new value.
   constraints:
     - id: C1
-      prose: Existing repository intent remains unchanged.
+      prose: Existing repository governance remains unchanged.
 verification:
   level: targeted
   rationale: This bounded source change has focused repository evidence.
@@ -167,7 +167,7 @@ results:
     evidence: [repo:src/a.txt]
   - satisfies: C1
     disposition: satisfied
-    prose: The candidate leaves durable repository intent unchanged.
+    prose: The candidate leaves durable repository governance unchanged.
     evidence: [inspection:.invariant]
 EOF
 out=$(cd "$fixture" && "$cli" task finish semantic-flow --assessment "$assessment" --acceptance-review "$review_file")

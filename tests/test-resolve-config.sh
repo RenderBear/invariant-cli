@@ -123,7 +123,7 @@ if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
   exit 1
 fi
 
-captured=$(cd "$fixture" && GIT_INTENT_INTEGRATION_TARGET=trunk "$cli" config show)
+captured=$(cd "$fixture" && INVARIANT_INTEGRATION_TARGET=trunk "$cli" config show)
 printf '%s\n' "$captured" | grep -q '^integration_branch_resolved: trunk$'
 printf '%s\n' "$captured" | grep -q '^branch_source: captured$'
 

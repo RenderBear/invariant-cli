@@ -86,7 +86,7 @@ def open_receipt(
     target = resolved.integration_branch
     head = integration_head(repo, target)
     selected = sorted(set(domains))
-    intent = {
+    governance_state = {
         "governance_digest": governance.digest(repo, selected),
         "integration_governance_digest": (
             governance.digest(repo, selected, head) if head != "unborn" else git.hash_text(repo, "")
@@ -94,7 +94,7 @@ def open_receipt(
         "boundary": boundary,
     }
     if posture:
-        intent["posture"] = posture
+        governance_state["posture"] = posture
     receipt = {
         "version": 1,
         "repository": repository_identity(repo, target),
@@ -108,7 +108,7 @@ def open_receipt(
             "interfaces": sorted(set(interfaces)),
             "domains": selected,
         },
-        "intent": intent,
+        "governance": governance_state,
         "adapters": sorted(set(adapters)),
     }
     save(repo, task, receipt)
@@ -136,15 +136,15 @@ def check_receipt(
 ) -> tuple[dict[str, Any], list[str]]:
     receipt = load(repo, task)
     captured_target = str(receipt.get("integration_target", ""))
-    previous = os.environ.get("GIT_INTENT_INTEGRATION_TARGET")
-    os.environ["GIT_INTENT_INTEGRATION_TARGET"] = captured_target
+    previous = os.environ.get("INVARIANT_INTEGRATION_TARGET")
+    os.environ["INVARIANT_INTEGRATION_TARGET"] = captured_target
     try:
         target = config.resolve(repo).integration_branch
     finally:
         if previous is None:
-            os.environ.pop("GIT_INTENT_INTEGRATION_TARGET", None)
+            os.environ.pop("INVARIANT_INTEGRATION_TARGET", None)
         else:
-            os.environ["GIT_INTENT_INTEGRATION_TARGET"] = previous
+            os.environ["INVARIANT_INTEGRATION_TARGET"] = previous
     if target != captured_target:
         raise Blocked(
             f"STALE: integration target changed from {captured_target} to {target}", code="stale_receipt"
@@ -154,8 +154,8 @@ def check_receipt(
     if mechanics_digest() != receipt.get("mechanics_digest"):
         raise Blocked("STALE: CLI mechanics changed", code="stale_receipt")
     selected = _scope(receipt, "domains")
-    intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
-    if governance.digest(repo, selected) != intent.get("governance_digest"):
+    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
+    if governance.digest(repo, selected) != governance_state.get("governance_digest"):
         raise Blocked("STALE: selected governance changed", code="stale_receipt")
 
     if (goal is None) == (goal_digest is None):
@@ -180,7 +180,7 @@ def check_receipt(
     cached_head = str(receipt.get("integration_head"))
     current_head = integration_head(repo, target)
     head_advanced = current_head != cached_head
-    integration_digest = intent.get("integration_governance_digest")
+    integration_digest = governance_state.get("integration_governance_digest")
     if head_advanced:
         if "unborn" in {cached_head, current_head}:
             raise Blocked("STALE: integration branch birth state changed", code="stale_receipt")
@@ -189,7 +189,7 @@ def check_receipt(
                 "STALE: integration history no longer descends from the cached head", code="stale_receipt"
             )
         integration_digest = governance.digest(repo, selected, current_head)
-        if integration_digest != intent.get("integration_governance_digest"):
+        if integration_digest != governance_state.get("integration_governance_digest"):
             raise Blocked(
                 "STALE: selected governance changed on the integration branch", code="stale_receipt"
             )
@@ -215,8 +215,8 @@ def check_receipt(
     if head_advanced or goal_changed:
         receipt["integration_head"] = current_head
         receipt["goal_digest"] = current_goal
-        intent["integration_governance_digest"] = integration_digest
-        receipt["intent"] = intent
+        governance_state["integration_governance_digest"] = integration_digest
+        receipt["governance"] = governance_state
         save(repo, task, receipt)
     output: list[str] = []
     if head_advanced:
@@ -224,9 +224,9 @@ def check_receipt(
     if goal_changed:
         output.append("GOAL: changed text accepted for cached semantic envelope")
     output.extend([f"BRIEF: fresh {task}", "REUSE: cached semantic envelope"])
-    if intent.get("posture"):
-        output.append(f"POSTURE: {intent['posture']}")
-    output.append(f"BOUNDARY: {intent.get('boundary', '')}")
+    if governance_state.get("posture"):
+        output.append(f"POSTURE: {governance_state['posture']}")
+    output.append(f"BOUNDARY: {governance_state.get('boundary', '')}")
     return receipt, output
 
 

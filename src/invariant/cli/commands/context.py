@@ -16,7 +16,7 @@ def _scope_options(parser: argparse.ArgumentParser) -> None:
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = subparsers.add_parser("context", help="Inspect reach and selected durable intent")
+    parser = subparsers.add_parser("context", help="Inspect reach and selected durable governance")
     commands = parser.add_subparsers(dest="context_command", required=True)
     mapping = commands.add_parser("map")
     mapping.set_defaults(_handler=lambda _: governance.context_map(git.root()), _command="context.map")
@@ -105,4 +105,3 @@ def _message(args: argparse.Namespace) -> list[str]:
 
 def _trailer(args: argparse.Namespace) -> list[str]:
     return governance.validate_trailer(git.root(), args.commit)
-

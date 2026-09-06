@@ -28,7 +28,7 @@ out=$(cd "$fixture" && "$cli" task begin cli-flow --goal "$goal" \
 printf '%s\n' "$out" | grep -q '^STATUS: implementing$' || die "automatic begin did not enter implementation"
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
 worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
-case "$branch" in intent/work/cli-flow-*) ;; *) die "begin did not generate a task branch" ;; esac
+case "$branch" in invariant/work/cli-flow-*) ;; *) die "begin did not generate a task branch" ;; esac
 [ "$(git -C "$fixture" branch --show-current)" = main ] || die "begin moved the integration checkout"
 [ "$(git -C "$worktree" branch --show-current)" = "$branch" ] || die "begin did not create the task worktree"
 receipt="$fixture/.git/invariant/briefs/cli-flow.yml"
@@ -149,9 +149,9 @@ exit 1
 EOF
 chmod +x "$fixture/checks/fail.sh"
 git -C "$fixture" add checks/fail.sh
-git -C "$fixture" commit -q -m "add failing check" -m "Intent-Unit: test-setup
-Intent-Scope: area.checks
-Intent-Boundary: no-record"
+git -C "$fixture" commit -q -m "add failing check" -m "Invariant-Unit: test-setup
+Invariant-Scope: area.checks
+Invariant-Boundary: no-record"
 failed_goal='Keep failed work recoverable'
 failed_digest=$(printf '%s' "$failed_goal" | git -C "$fixture" hash-object --stdin)
 out=$(cd "$fixture" && "$cli" task begin failed-flow --goal "$failed_goal" \
@@ -206,9 +206,9 @@ execution: assisted
 integration_branch: main
 EOF
 git -C "$fixture" add .invariant/config.yml
-git -C "$fixture" commit -q -m "configure assisted execution" -m "Intent-Unit: test-setup
-Intent-Scope: area.root
-Intent-Boundary: no-record"
+git -C "$fixture" commit -q -m "configure assisted execution" -m "Invariant-Unit: test-setup
+Invariant-Scope: area.root
+Invariant-Boundary: no-record"
 
 out=$(cd "$fixture" && "$cli" task begin assisted-flow --goal "Pause before branch creation" \
   --boundary no-record --path src/a.txt)

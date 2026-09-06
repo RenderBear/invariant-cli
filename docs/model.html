@@ -691,7 +691,7 @@ candidate  A──B──C──M
         <summary>
           <span class="deep-summary-copy">
             <strong>Open the detailed lifecycle</strong>
-            <small>See what each skill owns, when it runs, and which Git guarantees it relies on.</small>
+            <small>See what each command owns, when it runs, and which Git guarantees it relies on.</small>
           </span>
           <span class="summary-action" aria-hidden="true">
             <span class="summary-icon">+</span>
@@ -701,20 +701,20 @@ candidate  A──B──C──M
         </summary>
 
         <div class="deep-content">
-          <div class="lifecycle-map" aria-label="Invariant skill lifecycle">
+          <div class="lifecycle-map" aria-label="Invariant command lifecycle">
             <div class="life-stage">
               <span>1 · Understand</span>
-              <strong>intent-brief</strong>
+              <strong>invariant task</strong>
               <small>Always starts read-only</small>
             </div>
             <div class="life-stage">
               <span>2 · Change</span>
-              <strong>intent-audit · intent-record · intent-coordinate</strong>
+              <strong>invariant evidence · invariant governance · invariant coordinate</strong>
               <small>Used only when the work needs them</small>
             </div>
             <div class="life-stage">
               <span>3 · Converge</span>
-              <strong>intent-land</strong>
+              <strong>invariant task finish</strong>
               <small>Always checks the prospective result</small>
             </div>
           </div>
@@ -723,7 +723,7 @@ candidate  A──B──C──M
             <details class="skill-row">
               <summary class="skill-summary">
                 <span class="skill-name">
-                  <code>intent-brief</code>
+                  <code>invariant task</code>
                   <span class="phase">Intake · refreshed before landing</span>
                 </span>
                 <span class="skill-preview">Builds the smallest read-only working envelope before anything changes.</span>
@@ -736,8 +736,8 @@ candidate  A──B──C──M
                     <li>Resolve the integration target once, then capture the request’s outcomes, paths, interfaces, and likely domains.</li>
                     <li>Compute reach, load only the applicable domain rows, architecture anchors, contracts, and discovery warnings, then retain their governance digest.</li>
                     <li>Apply the durable-meaning test and label the posture <code>local</code>, <code>bounded</code>, <code>open</code>, or <code>gated</code>.</li>
-                    <li>Open a reusable receipt; before the first mutation, create a generated <code>intent/work/&lt;uuid&gt;</code> branch from the captured head.</li>
-                    <li>Before landing, recompute scope from the exact diff and hand the boundary decision, checks, domains, and architecture reviews to <code>intent-land</code>.</li>
+                    <li>Open a reusable receipt; before the first mutation, create a generated <code>invariant/work/&lt;uuid&gt;</code> branch from the captured head.</li>
+                    <li>Before landing, recompute scope from the exact diff and hand the boundary decision, checks, domains, and architecture reviews to <code>invariant task finish</code>.</li>
                   </ol>
                 </div>
                 <div class="skill-panel semantics-panel">
@@ -747,7 +747,7 @@ candidate  A──B──C──M
                 <div class="skill-panel mechanics-panel">
                   <h3>Git mechanics</h3>
                   <p>The captured integration commit is the causal ground. A receipt under <code>&lt;git-common-dir&gt;/invariant/briefs/</code> caches hashes, scope, target, and digest—but carries no authority. It survives an unrelated mergeable head advance, and becomes stale when governing content changes, scope expands, or the work branch conflicts.</p>
-                  <p class="mechanic-note">read: HEAD + .invariant governance → write: disposable receipt → branch: intent/work/&lt;uuid&gt;</p>
+                  <p class="mechanic-note">read: HEAD + .invariant governance → write: disposable receipt → branch: invariant/work/&lt;uuid&gt;</p>
                 </div>
               </div>
             </details>
@@ -755,7 +755,7 @@ candidate  A──B──C──M
             <details class="skill-row">
               <summary class="skill-summary">
                 <span class="skill-name">
-                  <code>intent-audit</code>
+                  <code>invariant evidence</code>
                   <span class="phase">Discovery · only when meaning is uncertain</span>
                 </span>
                 <span class="skill-preview">Creates bounded, causal evidence without making that evidence authoritative.</span>
@@ -787,7 +787,7 @@ candidate  A──B──C──M
             <details class="skill-row">
               <summary class="skill-summary">
                 <span class="skill-name">
-                  <code>intent-record</code>
+                  <code>invariant governance</code>
                   <span class="phase">Adoption · before dependent work diverges</span>
                 </span>
                 <span class="skill-preview">Turns an authorized decision into durable, routable, verifiable repository meaning.</span>
@@ -801,7 +801,7 @@ candidate  A──B──C──M
                     <li>Put rationale and non-executable decisions in an anchored architecture section.</li>
                     <li>Change only the smallest domain responsibilities and pointers needed for routing; add contract metadata only for a relied-on cross-domain promise.</li>
                     <li>Require executable evidence for every contract and resolve a promoted discovery in the same change.</li>
-                    <li>Validate all intent state, run affected verifiers, review architecture semantically, then recompile the brief before dependent work proceeds.</li>
+                    <li>Validate all Invariant state, run affected verifiers, review architecture semantically, then recompile the brief before dependent work proceeds.</li>
                   </ol>
                 </div>
                 <div class="skill-panel semantics-panel">
@@ -819,7 +819,7 @@ candidate  A──B──C──M
             <details class="skill-row">
               <summary class="skill-summary">
                 <span class="skill-name">
-                  <code>intent-coordinate</code>
+                  <code>invariant coordinate</code>
                   <span class="phase">Execution · parallel or handoff-sensitive work only</span>
                 </span>
                 <span class="skill-preview">Makes concurrent ownership explicit with a dependency graph and causal leases.</span>
@@ -843,7 +843,7 @@ candidate  A──B──C──M
                 <div class="skill-panel mechanics-panel">
                   <h3>Git mechanics</h3>
                   <p>Generated task branches use linked worktrees starting at the captured integration ground. Ignored runtime state lives in the primary worktree so all linked worktrees see the same leases. A lease binds owner, branch, worktree, target, ground, causal tip, digest, and claims. An intersecting landing makes it stale; expiry merely schedules a liveness check.</p>
-                  <p class="mechanic-note">ignored: .invariant/runtime/{plans,leases}/ · landed state: first-parent Intent-Unit trailers · freshness: ancestry + claims</p>
+                  <p class="mechanic-note">ignored: .invariant/runtime/{plans,leases}/ · landed state: first-parent Invariant-Unit trailers · freshness: ancestry + claims</p>
                 </div>
               </div>
             </details>
@@ -851,7 +851,7 @@ candidate  A──B──C──M
             <details class="skill-row">
               <summary class="skill-summary">
                 <span class="skill-name">
-                  <code>intent-land</code>
+                  <code>invariant task finish</code>
                   <span class="phase">Convergence · every repository mutation</span>
                 </span>
                 <span class="skill-preview">Constructs, reviews, verifies, and atomically publishes the prospective Git tree.</span>
@@ -863,14 +863,14 @@ candidate  A──B──C──M
                   <ol class="procedure-list">
                     <li>Capture the current integration head and construct the merge candidate without moving that branch.</li>
                     <li>From the candidate’s exact diff, recompute reach, flag new topology, and require exactly one boundary disposition: <code>no-record</code>, a conclusive fresh audit, or recorded governance references.</li>
-                    <li>Validate intent state and derived scopes; review every affected architecture pointer and run all selected contract and repository checks.</li>
+                    <li>Validate Invariant state and derived scopes; review every affected architecture pointer and run all selected contract and repository checks.</li>
                     <li>Authenticate any coordinated leases against their branches, target, and combined claims.</li>
                     <li>Atomically move the target only if it still equals the captured head, then release completed runtime state.</li>
                   </ol>
                 </div>
                 <div class="skill-panel semantics-panel">
                   <h3>Semantic responsibility</h3>
-                  <p>Landing never invents governance. It demands an explicit answer to “who owns the durable meaning in this tree?” Architecture is reviewed by judgment; contracts are checked executably. The candidate records the answer in <code>Intent-Boundary</code>, <code>Intent-Governance</code>, and <code>Intent-Architecture</code> trailers. A later attested landing can cover an intervening first-parent range without rewriting history.</p>
+                  <p>Landing never invents governance. It demands an explicit answer to “who owns the durable meaning in this tree?” Architecture is reviewed by judgment; contracts are checked executably. The candidate records the answer in <code>Invariant-Boundary</code>, <code>Invariant-Governance</code>, and <code>Invariant-Architecture</code> trailers. A later attested landing can cover an intervening first-parent range without rewriting history.</p>
                 </div>
                 <div class="skill-panel mechanics-panel">
                   <h3>Git mechanics</h3>

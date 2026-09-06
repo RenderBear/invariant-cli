@@ -145,4 +145,4 @@ Git-local acceptance contract before implementation and reviews that contract ag
 prospective tree before landing. Use proportional evidence: inspection can satisfy a local
 presentation change, while affected behavior, cross-domain, persistence, security, or compatibility
 work needs focused or broad executable verification. Do not manufacture a persisted test merely
-because the adapter is enabled. When disabled, the fixed durable-intent lifecycle remains unchanged.
+because the adapter is enabled. When disabled, the fixed Invariant lifecycle remains unchanged.

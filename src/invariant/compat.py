@@ -1,6 +1,6 @@
 """Compatibility adapters for the pre-package shell command surfaces.
 
-The adapters intentionally contain argument translation only.  Semantics,
+The adapters deliberately contain argument translation only.  Semantics,
 mechanics, and lifecycle live in the normal package modules, so the old skill
 script paths cannot become a second implementation.
 """
@@ -89,7 +89,7 @@ def _state(argv: list[str]) -> list[str]:
     if argv and argv[0] in {"--landing", "--audit"}:
         landing_mode = argv.pop(0) == "--landing"
     lines = state.validate(git.root(), landing=landing_mode, named=argv)
-    if lines[-1].endswith("intent state violation(s)"):
+    if lines[-1].endswith("Invariant state violation(s)"):
         raise Blocked(lines[-1], code="invalid_state", lines=lines[:-1])
     return lines
 
