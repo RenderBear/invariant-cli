@@ -1,0 +1,29 @@
+version: 1
+domains:
+- id: lifecycle
+  responsibility: Owns task state transitions, isolated work, semantic suspension points, resumption,
+    verification sequencing, landing orchestration, and completion cleanup.
+  authority: design:repo:docs/SPEC.md#33-lifecycle
+  architecture:
+  - architecture:docs/SPEC.md#33-lifecycle
+  contracts:
+  - exact-candidate-landing
+  - semantic-hook-transport
+- id: mechanics
+  responsibility: Owns deterministic repository facts, validation, exact candidate construction, verifier
+    execution, and guarded local ref updates.
+  authority: design:repo:docs/SPEC.md#32-mechanics
+  architecture:
+  - architecture:docs/SPEC.md#32-mechanics
+  contracts:
+  - exact-candidate-landing
+  - semantic-authority-boundary
+- id: semantics
+  responsibility: Owns interpretation, durable meaning, evidence classification, and semantic review inputs
+    without controlling repository mutation.
+  authority: design:repo:docs/SPEC.md#31-semantics
+  architecture:
+  - architecture:docs/SPEC.md#31-semantics
+  contracts:
+  - semantic-authority-boundary
+  - semantic-hook-transport

@@ -1,0 +1,114 @@
+version: 1
+records:
+- id: cli-harness-boundary
+  document: architecture:docs/SPEC.md#4-application-boundary
+  authority: design:repo:docs/SPEC.md#4-application-boundary
+  applies_to:
+  - repo:src/invariant/cli
+  - repo:src/invariant/lifecycle
+  revisit_on:
+  - repo:src/invariant/adapters
+  - repo:src/invariant/mechanics/landing.py
+  verifies:
+  - test:tests/test-agent-protocol.sh
+  - test:tests/test_remote_push.py
+  facets:
+    caller_owns:
+    - conversation
+    - implementation
+    - unbounded external effects
+    cli_owns:
+    - deterministic mechanics
+    - fixed lifecycle
+    - structured protocol
+- id: evidence-before-authority
+  document: architecture:docs/SPEC.md#11-audits-and-discoveries
+  authority: design:repo:docs/SPEC.md#11-audits-and-discoveries
+  applies_to:
+  - domain:mechanics
+  - domain:semantics
+  revisit_on:
+  - repo:src/invariant/mechanics/audit.py
+  - repo:src/invariant/semantics/adoption.py
+  - repo:src/invariant/semantics/discovery.py
+  verifies:
+  - test:tests/test-validate-state.sh
+  relations:
+    constrained_by:
+    - contract:semantic-authority-boundary
+  facets:
+    audit_standing: evidence-only
+    discovery_standing: evidence-only
+- id: exact-candidate-before-ref-update
+  document: architecture:docs/SPEC.md#10-candidate-verification-and-landing
+  authority: design:repo:docs/SPEC.md#10-candidate-verification-and-landing
+  applies_to:
+  - domain:lifecycle
+  - domain:mechanics
+  revisit_on:
+  - repo:src/invariant/lifecycle/tasks.py
+  - repo:src/invariant/mechanics/landing.py
+  verifies:
+  - test:tests/test-cli.sh
+  - test:tests/test-land-support.sh
+  relations:
+    enforced_by:
+    - contract:exact-candidate-landing
+  facets:
+    failure_result: Integration target remains unchanged and task work remains recoverable.
+- id: layer-ownership
+  document: architecture:docs/SPEC.md#3-layer-ownership
+  authority: design:repo:docs/SPEC.md#3-layer-ownership
+  applies_to:
+  - domain:lifecycle
+  - domain:mechanics
+  - domain:semantics
+  revisit_on:
+  - repo:src/invariant/lifecycle
+  - repo:src/invariant/mechanics
+  - repo:src/invariant/semantics
+  verifies:
+  - test:tests/test_architecture.py
+  relations:
+    implemented_by:
+    - contract:exact-candidate-landing
+    - contract:semantic-authority-boundary
+    - contract:semantic-hook-transport
+  facets:
+    interpretation: Responsibilities are semantic boundaries, not directory ownership.
+- id: local-runtime-is-not-authority
+  document: architecture:docs/SPEC.md#5-state-and-authority
+  authority: design:repo:docs/SPEC.md#5-state-and-authority
+  applies_to:
+  - repo:src/invariant/mechanics/coordinate.py
+  - repo:src/invariant/mechanics/landing.py
+  - repo:src/invariant/mechanics/receipts.py
+  revisit_on:
+  - repo:.invariant/runtime
+  - repo:src/invariant/lifecycle/tasks.py
+  verifies:
+  - test:tests/test-runtime-support.sh
+  - test:tests/test-session-brief.sh
+  facets:
+    namespace: .invariant/runtime
+    standing: ignored non-authoritative local state
+- id: two-semantic-suspension-points
+  document: architecture:docs/SPEC.md#83-lifecycle-hook-protocol
+  authority: design:repo:docs/SPEC.md#83-lifecycle-hook-protocol
+  applies_to:
+  - domain:lifecycle
+  - domain:semantics
+  - interface:lifecycle-hooks
+  revisit_on:
+  - repo:src/invariant/adapters
+  - repo:src/invariant/lifecycle/tasks.py
+  verifies:
+  - test:tests/test_architecture.py
+  - test:tests/test-semantic-options.sh
+  relations:
+    transported_by:
+    - contract:semantic-hook-transport
+  facets:
+    phases:
+    - task.created
+    - candidate.evidenced
