@@ -56,6 +56,40 @@ def pending(receipt: Mapping[str, object]) -> list[dict[str, Any]]:
     return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
 
+def action_descriptor(request: Mapping[str, object]) -> dict[str, Any]:
+    """Return the stable, compact public form of a persisted action."""
+
+    raw_context = request.get("context")
+    context = dict(raw_context) if isinstance(raw_context, dict) else {}
+    evidence = context.pop("evidence", [])
+    if isinstance(evidence, list):
+        context["evidence_ids"] = [
+            str(item.get("evidence_id"))
+            for item in evidence
+            if isinstance(item, dict) and item.get("evidence_id")
+        ]
+    if "brief" in context:
+        context.pop("brief", None)
+        context["brief_artifact"] = "intent-brief"
+    kind = str(request.get("kind") or "action")
+    return {
+        "id": str(request.get("id") or ""),
+        "adapter": str(request.get("adapter") or ""),
+        "phase": str(request.get("phase") or ""),
+        "kind": kind,
+        "prompt": str(request.get("prompt") or ""),
+        "schema_id": str(
+            request.get("schema_id") or f"invariant://schemas/actions/{kind}/v1"
+        ),
+        "blocking": bool(request.get("blocking", True)),
+        "context": context,
+    }
+
+
+def action_descriptors(receipt: Mapping[str, object]) -> list[dict[str, Any]]:
+    return [action_descriptor(item) for item in pending(receipt)]
+
+
 def run_hook(
     task_root: Path,
     receipt: dict[str, object],
@@ -64,6 +98,7 @@ def run_hook(
     *,
     candidate_tree: str | None = None,
     evidence: tuple[dict[str, Any], ...] = (),
+    retained_discoveries: tuple[str, ...] = (),
 ) -> list[HookRequest]:
     """Run all adapters for a lifecycle phase and collect every request.
 
@@ -91,6 +126,7 @@ def run_hook(
         goal_digest=str(receipt.get("goal_digest") or ""),
         candidate_tree=candidate_tree,
         evidence=evidence,
+        retained_discoveries=retained_discoveries,
     )
     for identifier in identifiers:
         result = _REGISTRY[identifier].handle(

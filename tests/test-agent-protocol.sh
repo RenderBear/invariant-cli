@@ -54,6 +54,9 @@ printf '%s\n' "$brief_schema" | grep -q '"expand_intent"\|"brief"' ||
 printf '%s\n' "$brief_schema" | grep -q '"candidate_tree"' ||
   die "intent brief schema omitted exact-tree review binding"
 if printf '%s\n' "$assessment_schema" | grep -q '"output"'; then die "schema JSON duplicated its text form"; fi
+projection_schema=$(cd "$governance" && "$cli" --format json governance projection schema)
+printf '%s\n' "$projection_schema" | grep -q '"retained_as"' ||
+  die "governance projection schema omitted retained discoveries"
 ok "audit, assessment, and adapter schemas are machine-readable and compact"
 
 out=$(cd "$governance" && "$cli" governance begin baseline-governance)
@@ -68,8 +71,15 @@ findings:
   - id: record-app-boundary
     summary: The application boundary should be recorded.
     evidence: [repo:app.txt]
-    proposed: architecture
+    proposed: domain
     disposition: adoptable
+    authority: user:task:baseline-governance#finding
+    records:
+      - kind: domain
+        value:
+          id: application
+          responsibility: Owns application behavior and recovery.
+          authority: user:task:baseline-governance#finding
 EOF
 out=$(cd "$governance" && "$cli" governance audit-save baseline-governance --input "$findings")
 audit_id=$(printf '%s\n' "$out" | sed -n 's/^AUDIT: //p')
@@ -77,12 +87,25 @@ printf '%s\n' "$audit_id" | grep -Eq '^audit-[0-9]{8}T[0-9]{6}Z$' || die "govern
 printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: adopt$' || die "agent authority did not advance audit to adoption"
 grep -q '^  phase: adopt$' "$governance/.git/invariant/briefs/baseline-governance.yml" || die "governance phase was not resumable"
 grep -q '^  - record-app-boundary$' "$governance/.git/invariant/briefs/baseline-governance.yml" || die "ready finding was not selected automatically"
+out=$(cd "$governance" && "$cli" governance project baseline-governance)
+printf '%s\n' "$out" | grep -q '^FINDING-COVERAGE: record-app-boundary — projected — domain:application$' ||
+  die "audit-authored governance was not projected"
+printf '%s\n' "$out" | grep -q '^COVERAGE: 1/1 selected findings dispositioned$' ||
+  die "selected-finding coverage was not explicit"
+[ -f "$governance_worktree/.invariant/DOMAINS.yml" ] ||
+  die "projection did not generate the domain registry"
+coverage=$(cd "$governance" && "$cli" --format json governance coverage baseline-governance)
+printf '%s\n' "$coverage" | grep -q '"record-app-boundary":{' ||
+  die "coverage API omitted the selected finding"
+printf '%s\n' "$coverage" | grep -q '"records":\["domain:application"\]' ||
+  die "coverage API did not map the finding to its generated record"
 printf 'candidate\n' >>"$governance_worktree/app.txt"
-git -C "$governance_worktree" add app.txt ".invariant/audits/$audit_id.yml"
+git -C "$governance_worktree" add app.txt .invariant
 git -C "$governance_worktree" commit -qm "record audited candidate"
 prepared=$(cd "$governance" && "$cli" --format json task assessment prepare baseline-governance)
 printf '%s\n' "$prepared" | grep -q '"candidate_tree"' || die "assessment preparation omitted the candidate tree"
-printf '%s\n' "$prepared" | grep -q '"paths":\[".invariant/audits/' || die "assessment preparation did not use exact candidate paths"
+printf '%s\n' "$prepared" | grep -q '".invariant/DOMAINS.yml"' || die "assessment preparation omitted generated governance"
+printf '%s\n' "$prepared" | grep -q '".invariant/audits/' || die "assessment preparation omitted the canonical audit"
 [ -f "$governance/.git/invariant/tasks/baseline-governance/prepared-assessment.yml" ] ||
   die "assessment preparation did not save its Git-local draft"
 status=$(cd "$governance" && "$cli" status)
@@ -111,6 +134,15 @@ printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: deferred$' || die "audit defe
 [ "$(git -C "$deferred" branch --show-current)" = main ] || die "audit-only deferral did not restore main"
 git -C "$deferred" cat-file -e "main:.invariant/audits/$deferred_audit.yml" || die "deferred audit was not landed"
 [ ! -f "$deferred/.git/invariant/briefs/deferred.yml" ] || die "deferred governance receipt was not cleaned"
+status=$(cd "$deferred" && "$cli" governance status deferred)
+printf '%s\n' "$status" | grep -q '^GOVERNANCE-PHASE: completed$' ||
+  die "completed governance pass had no retrospective status"
+printf '%s\n' "$status" | grep -q '^ADOPTION-PHASE: deferred$' ||
+  die "completed governance status lost its adoption disposition"
+deferred_commit=$(git -C "$deferred" rev-parse main)
+grep -q 'id: record-app-boundary$' \
+  "$deferred/.git/invariant/history/tasks/deferred/$deferred_commit/summary.yml" ||
+  die "completed governance summary lost its audit findings"
 ok "human authority can land a saved audit while deferring adoption"
 
 out=$(cd "$deferred" && "$cli" governance begin governance-refresh)
@@ -164,6 +196,20 @@ printf '%s\n' "$review_request" | grep -q '"id":"core:candidate-review"' ||
   die "finish did not expose one candidate-bound semantic review action"
 printf '%s\n' "$review_request" | grep -q '"affected_semantics":\["architecture:docs/architecture.md#application-boundary"\]' ||
   die "finish did not include every affected semantic in the review packet"
+if printf '%s\n' "$review_request" | grep -q '"input_schema"'; then
+  die "default finish payload repeated the action schema"
+fi
+printf '%s\n' "$review_request" | grep -q '"evidence_ids":\[' ||
+  die "default finish payload did not use evidence references"
+action=$(cd "$architecture" && "$cli" --format json task action architecture core:candidate-review)
+printf '%s\n' "$action" | grep -q '"input_schema":{' ||
+  die "action expansion did not retrieve the response schema"
+if printf '%s\n' "$action" | grep -q '"evidence":\['; then
+  die "expanded action repeated full candidate evidence"
+fi
+evidence=$(cd "$architecture" && "$cli" --format json task evidence architecture)
+printf '%s\n' "$evidence" | grep -q '"id":"candidate:' ||
+  die "evidence listing did not expose retrievable stable ids"
 prepared=$(cd "$architecture" && "$cli" --format json task assessment prepare architecture)
 printf '%s\n' "$prepared" | grep -q '"boundary":{"disposition":"recorded"}' ||
   die "architecture prose was not inferred as a durable boundary change"

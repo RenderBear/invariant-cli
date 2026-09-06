@@ -78,9 +78,25 @@ printf '%s\n' "$out" | grep -q '"stage":"completed"' || die "finish JSON omitted
 landed=$(git -C "$fixture" rev-parse main)
 printf '%s\n' "$out" | grep -q "\"completion\":{\"commit\":\"$landed\"}" ||
   die "finish JSON did not identify the archived completion"
+printf '%s\n' "$out" | grep -q '"boundary":"no-record"' ||
+  die "completed task retained its initial unresolved boundary"
+printf '%s\n' "$out" | grep -q '"structural":{"status":"passed"' ||
+  die "completion did not separate structural assurance"
 [ ! -f "$receipt" ] || die "finish did not invalidate the receipt"
 [ ! -e "$worktree" ] || die "finish did not remove the managed task worktree"
 if git -C "$fixture" show-ref --verify -q "refs/heads/$branch"; then die "finish did not remove the landed task branch"; fi
+out=$(cd "$fixture" && "$cli" task status cli-flow)
+printf '%s\n' "$out" | grep -q '^STATUS: completed$' ||
+  die "completed task disappeared into missing-task state"
+printf '%s\n' "$out" | grep -q '^BOUNDARY: no-record$' ||
+  die "completed task status did not preserve its final boundary"
+summary="$fixture/.git/invariant/history/tasks/cli-flow/$landed/summary.yml"
+[ -f "$summary" ] || die "completion did not persist a retrospective summary"
+grep -q '^  final: no-record$' "$summary" || die "completion summary retained unresolved boundary"
+grep -q '^  structural:$' "$summary" || die "completion summary omitted assurance classes"
+evidence=$(cd "$fixture" && "$cli" --format json task evidence cli-flow)
+printf '%s\n' "$evidence" | grep -q '"id":"state:' ||
+  die "completed task evidence was not retrievable"
 ok "finish verifies, lands, restores the target, and cleans lifecycle state"
 
 governance_goal='Establish initial repository governance'

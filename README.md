@@ -173,6 +173,10 @@ or require a second `task begin`. A response is bound to its hook context; chang
 adapter code, or candidate invalidates it. `status: ok` with `outcome: needs_input` means the command
 succeeded and is waiting for judgment, rather than suffering a mechanical failure.
 
+Default action payloads are deliberately small: they carry stable schema, artifact, and evidence
+IDs instead of repeating full schemas, briefs, and verifier output. Expand only what the current
+step needs with `task action <task> <action-id>` and `task evidence <task> [<evidence-id>]`.
+
 ```bash
 invariant --format json task begin import-processor --goal "Import the processor"
 invariant --format json task respond import-processor intent_brief:task.created --input brief.yml
@@ -221,6 +225,17 @@ independently controls branch and landing pauses. The agent-facing audit handoff
 Invariant stamps the exact Git ground, tree, and UTC creation time, validates the findings, and
 persists it as `audit-<UTC timestamp>.yml`.
 
+The audit is also the canonical authoring source for unambiguous adoption. A finding may contain
+complete `records` projections; `invariant governance project <task-id>` validates and materializes
+those records into `SEMANTICS.yml`, `DOMAINS.yml`, `CONTRACTS.yml`, or `CONSTRAINTS.yml`. If a
+mapping really is ambiguous, the command writes a small adoption draft and refuses to proceed until
+that finding is mapped to records, deliberately retained as a `discovery:<id>`, or explicitly
+deferred. `invariant governance coverage <task-id>` reports every selected finding and the records
+or evidence that cover it.
+The projection `kind` chooses a registry, not a closed claim taxonomy: canonical architectural
+arguments remain prose, and semantic records retain open `relations` and `facets` for retrieval and
+invalidation.
+
 ### Continue with progressive discovery
 
 During normal work, the agent inspects outward from the goal and surfaces missing, contradictory, or
@@ -262,6 +277,13 @@ your-repository/
 - **Evidence receipt:** a candidate-bound observation captured by the CLI, including the exact tree,
   command identity, environment fingerprints, result, output digest, and retained log.
 - **Coordination:** temporary dependencies and ownership while parallel work is active.
+
+Completed tasks remain inspectable with `task status` and `task evidence`. Their Git-local archive
+contains `summary.yml`, which preserves the audit and finding coverage, landing commit, exact
+candidate tree, initial and final boundary, and three distinct assurance results: structural
+validity, behavioral verification, and semantic judgment. Semantic review is self-attested by
+default; a host that actually routes it to a separate reviewer can declare
+`review_mode: independent` in the review response.
 
 The short form is:
 

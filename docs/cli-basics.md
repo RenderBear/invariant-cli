@@ -78,10 +78,19 @@ invariant --format json task respond fix-job-recovery core:candidate-review \
   --input semantic-review.yml
 ```
 
+The default action contains stable schema and evidence IDs. Fetch deeper material only when needed:
+
+```bash
+invariant --format json task action fix-job-recovery core:candidate-review
+invariant --format json task evidence fix-job-recovery
+invariant --format json task evidence fix-job-recovery state:<id>
+```
+
 `task assessment prepare` remains available for low-level inspection. A failed finish
 preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
-Successful completion archives the brief, review packet, evidence, and final receipt under
-Git-common Invariant history keyed by the landed commit.
+Successful completion archives the brief, review packet, evidence, final receipt, and a compact
+`summary.yml` under Git-common Invariant history keyed by the landed commit. `task status` and
+`task evidence` continue to work after completion.
 
 When `adapters.intent_brief` is enabled, the single `task begin` creates the normal isolated worktree
 and returns a `task.created` action. The adapter writes one prose brief and asks only questions whose
@@ -115,8 +124,15 @@ all ready findings, adoption of selected findings, or deferral.
 ```bash
 invariant governance adopt governance-baseline --all-ready
 invariant governance adopt governance-baseline --finding recovery-ownership
+invariant governance project governance-baseline
+invariant governance coverage governance-baseline
 invariant governance defer governance-baseline
 ```
+
+An audit finding can carry complete `records` projections. The project command materializes those
+unambiguous mappings and validates the generated registries. If semantic content is missing, it
+writes a draft whose unresolved entries must be mapped to records, retained discoveries, or
+explicit deferrals; coverage reports every selected finding.
 
 ## Agent and harness interfaces
 

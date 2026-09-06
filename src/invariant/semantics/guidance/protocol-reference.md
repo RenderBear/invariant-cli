@@ -30,6 +30,9 @@ is not an authority claim. A discovery or audit is evidence, not a governance re
 During a governance pass, begin without nonexistent domains and select newly created domains in the
 final recorded assessment. Invariant accepts them when the candidate establishes those domain
 records. A later pass may instead reconcile existing records with changed repository evidence.
+Put complete record projections directly on audit findings when the mapping is unambiguous, then
+run `invariant governance project <task-id>`. Inspect selected-finding coverage with `invariant
+governance coverage <task-id>`; edit the generated adoption draft only for unresolved mappings.
 
 ### Prepare structured inputs
 
@@ -42,3 +45,6 @@ intent-brief schema`; keep its task-local prose separate from repository governa
 
 Prefer compact JSON for automation. Treat `status: ok, outcome: needs_input` as a successful
 suspension for judgment, consume every returned action, and never infer lifecycle state from prose.
+Use `invariant task action <task-id> <action-id>` to fetch a response schema and `invariant task
+evidence <task-id> [<evidence-id>]` to retrieve captured evidence. Accepted reviews use
+`candidate_defects` for blocking problems and `retained_discoveries` for non-blocking audit evidence.

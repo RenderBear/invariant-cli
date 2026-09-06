@@ -59,6 +59,31 @@ def audit_input_schema() -> dict[str, Any]:
                             "minLength": 1,
                             "description": "Optional inspectable user:, design:, or architecture: locator.",
                         },
+                        "records": {
+                            "type": "array",
+                            "minItems": 1,
+                            "description": (
+                                "Optional complete domain, contract, constraint, or semantic "
+                                "records. Selected findings with records can be projected without "
+                                "a second authoring pass."
+                            ),
+                            "items": {
+                                "type": "object",
+                                "additionalProperties": False,
+                                "required": ["kind", "value"],
+                                "properties": {
+                                    "kind": {
+                                        "enum": [
+                                            "semantic",
+                                            "domain",
+                                            "contract",
+                                            "constraint",
+                                        ]
+                                    },
+                                    "value": {"type": "object"},
+                                },
+                            },
+                        },
                     },
                 },
             },
@@ -72,10 +97,21 @@ def audit_input_example() -> dict[str, Any]:
         "findings": [
             {
                 "id": "job-recovery-boundary",
-                "summary": "Restart recovery behavior is relied on but not recorded.",
+                "summary": "Job recovery has a stable ownership boundary.",
                 "evidence": ["repo:src/jobs.py", "repo:tests/test_jobs.py"],
-                "proposed": "architecture",
+                "proposed": "domain",
                 "disposition": "adoptable",
+                "authority": "user:task:recovery#decision",
+                "records": [
+                    {
+                        "kind": "domain",
+                        "value": {
+                            "id": "jobs",
+                            "responsibility": "Owns job execution and restart recovery.",
+                            "authority": "user:task:recovery#decision",
+                        },
+                    }
+                ],
             }
         ],
     }

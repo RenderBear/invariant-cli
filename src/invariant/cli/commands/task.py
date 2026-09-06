@@ -7,6 +7,7 @@ import yaml
 
 from invariant import adapters
 from invariant.cli.output import CommandResult
+from invariant.errors import Blocked
 from invariant.lifecycle import tasks
 from invariant.mechanics import git, receipts
 from invariant.mechanics.documents import dump_yaml
@@ -79,6 +80,20 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     respond.add_argument("--input", required=True, help="YAML or JSON response document")
     respond.set_defaults(_handler=_respond, _command="task.respond")
 
+    action = commands.add_parser(
+        "action", help="Expand one pending action, including its response schema"
+    )
+    action.add_argument("task_id", help=TASK_ID_HELP)
+    action.add_argument("request_id")
+    action.set_defaults(_handler=_action, _command="task.action")
+
+    evidence = commands.add_parser(
+        "evidence", help="List or retrieve candidate evidence by stable id"
+    )
+    evidence.add_argument("task_id", help=TASK_ID_HELP)
+    evidence.add_argument("evidence_id", nargs="?")
+    evidence.set_defaults(_handler=_evidence, _command="task.evidence")
+
     continuation = commands.add_parser("continue")
     continuation.add_argument("task_id", help=TASK_ID_HELP)
     continuation.add_argument("--apply", action="store_true")
@@ -146,6 +161,8 @@ def _receipt_payload(task_id: str, receipt: dict[str, object]) -> dict[str, obje
         if isinstance(receipt.get("change_classification"), dict)
         else {}
     )
+    initial_boundary = str(change.get("boundary") or "unresolved")
+    final_boundary = str(receipt.get("resolved_boundary") or "")
     return {
         "id": task_id,
         "stage": str(lifecycle.get("stage") or "briefed"),
@@ -155,7 +172,11 @@ def _receipt_payload(task_id: str, receipt: dict[str, object]) -> dict[str, obje
             "interfaces": list(scope.get("interfaces", [])),
             "domains": list(scope.get("domains", [])),
         },
-        "boundary": str(change.get("boundary") or "unresolved"),
+        "boundary": final_boundary or initial_boundary,
+        "boundary_state": {
+            "initial": initial_boundary,
+            "final": final_boundary,
+        },
         "integration": {
             "target": str(receipt.get("integration_target") or ""),
             "base": str(receipt.get("integration_head") or ""),
@@ -165,14 +186,23 @@ def _receipt_payload(task_id: str, receipt: dict[str, object]) -> dict[str, obje
             "worktree": str(lifecycle.get("worktree") or ""),
         },
         "adapters": list(adapters.enabled(receipt)),
-        "actions": adapters.pending(receipt),
+        "actions": adapters.action_descriptors(receipt),
         "artifacts": receipt.get("hook_artifacts", []),
+        "assurance": receipt.get("assurance", {}),
         "completion": {"commit": str(receipt.get("completed_commit") or "")},
     }
 
 
 def _task_payload(repo: Path, task_id: str) -> dict[str, object]:
-    return _receipt_payload(task_id, receipts.load(repo, task_id))
+    try:
+        receipt = receipts.load(repo, task_id)
+    except Blocked as exc:
+        if exc.code != "missing_task":
+            raise
+        receipt = receipts.load_completed(repo, task_id)
+        if receipt is None:
+            raise
+    return _receipt_payload(task_id, receipt)
 
 
 def _terminal_task_payload(
@@ -187,11 +217,13 @@ def _terminal_task_payload(
         "goal_digest": "",
         "scope": {"paths": [], "interfaces": [], "domains": []},
         "boundary": "unresolved",
+        "boundary_state": {"initial": "unresolved", "final": ""},
         "integration": {"target": "", "base": ""},
         "work": {"branch": "", "worktree": ""},
         "adapters": [],
         "actions": [],
         "artifacts": [],
+        "assurance": {},
         "completion": {"commit": ""},
     }
 
@@ -200,7 +232,9 @@ def _task_result(repo: Path, task_id: str, lines: list[str]) -> CommandResult:
     payload = _task_payload(repo, task_id)
     stage = str(payload["stage"])
     outcome = (
-        "needs_input"
+        "completed"
+        if stage == "completed"
+        else "needs_input"
         if payload["actions"]
         else "awaiting_approval"
         if stage in {"awaiting-branch", "awaiting-landing"}
@@ -218,12 +252,15 @@ def _flow_result(
         task_payload = _terminal_task_payload(repo, task_id)
     data: dict[str, object] = {"task": task_payload}
     candidate_tree = result.data.get("candidate_tree")
-    evidence = result.data.get("evidence")
-    if candidate_tree or evidence:
+    evidence_ids = result.data.get("evidence_ids")
+    if candidate_tree or evidence_ids:
         data["candidate"] = {
             "tree": str(candidate_tree or ""),
-            "evidence": evidence if isinstance(evidence, list) else [],
+            "evidence_ids": evidence_ids if isinstance(evidence_ids, list) else [],
         }
+    assurance = result.data.get("assurance")
+    if isinstance(assurance, dict):
+        data["assurance"] = assurance
     return CommandResult(result.lines, data, result.outcome)
 
 
@@ -288,6 +325,92 @@ def _respond(args: argparse.Namespace) -> CommandResult:
     repo = _repo()
     result = tasks.respond(repo, args.task_id, args.request_id, args.input)
     return _flow_result(repo, args.task_id, result)
+
+
+def _action(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    receipt = receipts.load(repo, args.task_id)
+    matches = [
+        item for item in adapters.pending(receipt) if item.get("id") == args.request_id
+    ]
+    if len(matches) != 1:
+        raise Blocked(
+            f"Invariant: task '{args.task_id}' has no pending action '{args.request_id}'",
+            code="unknown_action",
+        )
+    raw = matches[0]
+    value = {
+        **adapters.action_descriptor(raw),
+        "input_schema": raw.get("input_schema", {}),
+    }
+    raw_context = raw.get("context") if isinstance(raw.get("context"), dict) else {}
+    if "brief" in raw_context:
+        context = value.get("context")
+        if isinstance(context, dict):
+            value["context"] = {**context, "brief": raw_context["brief"]}
+    lines = [
+        f"ACTION: {value.get('id')} — {value.get('kind')}",
+        f"SCHEMA: {value.get('schema_id') or 'embedded'}",
+    ]
+    return CommandResult(lines, {"action": value})
+
+
+def _evidence_root(repo: Path, task_id: str) -> Path:
+    active = receipts.task_root(repo, task_id)
+    if receipts.receipt_path(repo, task_id).is_file() and active.is_dir():
+        return active
+    completed = receipts.completed_task_root(repo, task_id)
+    if completed is not None:
+        return completed
+    raise Blocked(f"Invariant: no active or completed task '{task_id}'", code="missing_task")
+
+
+def _evidence(args: argparse.Namespace) -> CommandResult:
+    root = _evidence_root(_repo(), args.task_id) / "evidence"
+    values: list[dict[str, object]] = []
+    if root.is_dir():
+        for path in sorted(root.glob("*.yml")):
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw.get("evidence_id"):
+                values.append(raw)
+    if args.evidence_id:
+        matches = [
+            value for value in values if value.get("evidence_id") == args.evidence_id
+        ]
+        if len(matches) != 1:
+            raise Blocked(
+                f"Invariant: task '{args.task_id}' has no evidence '{args.evidence_id}'",
+                code="missing_evidence",
+            )
+        value = matches[0]
+        return CommandResult(
+            [
+                f"EVIDENCE: {value.get('evidence_id')}",
+                f"KIND: {value.get('kind') or 'verification'}",
+                f"STATUS: {value.get('status') or 'captured'}",
+            ],
+            {"evidence": value},
+        )
+    summaries = [
+        {
+            "id": str(value.get("evidence_id")),
+            "kind": str(value.get("kind") or "verification"),
+            "status": str(value.get("status") or "captured"),
+            "tree": str(value.get("tree") or ""),
+            "locator": str(value.get("locator") or ""),
+        }
+        for value in values
+    ]
+    return CommandResult(
+        [
+            *[
+                f"EVIDENCE: {item['id']} — {item['kind']} ({item['status']})"
+                for item in summaries
+            ],
+            f"EVIDENCE-COUNT: {len(summaries)}",
+        ],
+        {"evidence": summaries},
+    )
 
 
 def _continue(args: argparse.Namespace) -> CommandResult:

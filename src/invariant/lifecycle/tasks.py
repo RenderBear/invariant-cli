@@ -93,6 +93,103 @@ def _blocking_hook_requests(receipt: Mapping[str, object]) -> list[dict[str, obj
     return [item for item in adapters.pending(receipt) if item.get("blocking", True)]
 
 
+def _retained_discoveries(receipt: Mapping[str, object]) -> list[str]:
+    session = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    coverage = session.get("coverage") if isinstance(session.get("coverage"), dict) else {}
+    findings = (
+        coverage.get("findings")
+        if isinstance(coverage.get("findings"), dict)
+        else {}
+    )
+    return sorted(
+        {
+            str(value.get("retained_as"))
+            for value in findings.values()
+            if isinstance(value, dict) and value.get("status") == "retained"
+        }
+    )
+
+
+def _assurance_summary(
+    evidence: Iterable[Mapping[str, object]],
+    requests: Iterable[Mapping[str, object]],
+) -> dict[str, object]:
+    values = list(evidence)
+    structural = [
+        str(item.get("evidence_id"))
+        for item in values
+        if item.get("kind") == "state_validation" and item.get("evidence_id")
+    ]
+    behavioral = [
+        str(item.get("evidence_id"))
+        for item in values
+        if str(item.get("evidence_id") or "").startswith("verification:")
+    ]
+    review_ids = [
+        str(item.get("id"))
+        for item in requests
+        if item.get("phase") == CANDIDATE_EVIDENCED and item.get("id")
+    ]
+    return {
+        "structural": {"status": "passed", "evidence_ids": structural},
+        "behavioral": {
+            "status": "passed" if behavioral else "not_required",
+            "evidence_ids": behavioral,
+        },
+        "semantic": {
+            "status": "pending" if review_ids else "not_required",
+            "review_ids": review_ids,
+        },
+    }
+
+
+def _accept_semantic_assurance(receipt: dict[str, object]) -> None:
+    assurance = receipt.get("assurance")
+    if not isinstance(assurance, dict):
+        return
+    semantic = assurance.get("semantic")
+    if not isinstance(semantic, dict) or semantic.get("status") != "pending":
+        return
+    assurance["semantic"] = {**semantic, "status": "accepted"}
+    receipt["assurance"] = assurance
+
+
+def _record_completion(
+    repo: Path,
+    task: str,
+    receipt: dict[str, object],
+    assessment: Assessment,
+    candidate_tree: str | None,
+) -> None:
+    """Persist the final semantic disposition before the task is archived."""
+
+    receipt["resolved_boundary"] = assessment.boundary.disposition
+    if candidate_tree:
+        receipt["candidate_tree"] = candidate_tree
+    assurance = receipt.get("assurance")
+    if not isinstance(assurance, dict):
+        assurance = {
+            "structural": {"status": "passed", "evidence_ids": []},
+            "behavioral": {
+                "status": "passed" if assessment.checks else "not_required",
+                "evidence_ids": [],
+            },
+            "semantic": {
+                "status": "accepted" if assessment.architecture_reviews else "not_required",
+                "review_ids": [],
+            },
+        }
+    semantic = assurance.get("semantic")
+    if isinstance(semantic, dict) and semantic.get("status") == "pending":
+        assurance["semantic"] = {**semantic, "status": "accepted"}
+    receipt["assurance"] = assurance
+    receipts.save(repo, task, receipt)
+
+
 def _hook_lines(receipt: Mapping[str, object]) -> list[str]:
     lines: list[str] = []
     for request in adapters.pending(receipt):
@@ -248,6 +345,73 @@ def _status_lines(repo: Path, receipt: dict[str, object]) -> list[str]:
         f"WORKTREE: {lifecycle.get('worktree') or 'unknown'}",
         f"ADAPTERS: {', '.join(adapter_ids) or 'none'}",
     ]
+    assurance = receipt.get("assurance")
+    if isinstance(assurance, dict):
+        for name in ("structural", "behavioral", "semantic"):
+            value = assurance.get(name)
+            if isinstance(value, dict):
+                output.append(
+                    f"ASSURANCE-{name.upper()}: {value.get('status') or 'unknown'}"
+                )
+        semantic = assurance.get("semantic")
+        if isinstance(semantic, dict) and semantic.get("review_mode"):
+            output.append(
+                "SEMANTIC-REVIEW: "
+                f"{semantic.get('review_mode')} — {semantic.get('authority') or 'unknown'}"
+            )
+    return output
+
+
+def _completed_status_lines(receipt: dict[str, object]) -> list[str]:
+    classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    governance_run = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    output = [
+        f"TASK: {receipt.get('task')}",
+        "STATUS: completed",
+        f"TARGET: {receipt.get('integration_target')}",
+        f"LANDING-COMMIT: {receipt.get('completed_commit')}",
+        f"GOAL-DIGEST: {receipt.get('goal_digest')}",
+        f"BOUNDARY-INITIAL: {classification.get('boundary') or 'unresolved'}",
+        f"BOUNDARY: {receipt.get('resolved_boundary') or 'unresolved'}",
+        "CANDIDATE-TREE: "
+        + str(
+            receipt.get("candidate_tree")
+            or receipt.get("review_candidate_tree")
+            or "unknown"
+        ),
+    ]
+    if governance_run:
+        output.extend(
+            [
+                f"AUDIT: {governance_run.get('audit') or 'none'}",
+                "SELECTED-FINDINGS: "
+                + ", ".join(
+                    str(item) for item in governance_run.get("selected_findings", [])
+                ),
+            ]
+        )
+    assurance = receipt.get("assurance")
+    if isinstance(assurance, dict):
+        for name in ("structural", "behavioral", "semantic"):
+            value = assurance.get(name)
+            if isinstance(value, dict):
+                output.append(
+                    f"ASSURANCE-{name.upper()}: {value.get('status') or 'unknown'}"
+                )
+        semantic = assurance.get("semantic")
+        if isinstance(semantic, dict) and semantic.get("review_mode"):
+            output.append(
+                "SEMANTIC-REVIEW: "
+                f"{semantic.get('review_mode')} — {semantic.get('authority') or 'unknown'}"
+            )
     return output
 
 
@@ -256,6 +420,9 @@ def status(repo: Path, task: str) -> list[str]:
         raise InvariantError(f"Invariant: invalid task id '{task}'")
     path = receipts.receipt_path(repo, task)
     if not path.is_file():
+        completed = receipts.load_completed(repo, task)
+        if completed is not None:
+            return _completed_status_lines(completed)
         raise Blocked(f"TASK: {task}\nSTATUS: absent", code="missing_task")
     receipt = receipts.load(repo, task)
     return [*_status_lines(repo, receipt), *_hook_lines(receipt)]
@@ -304,7 +471,23 @@ def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
         if item.get("adapter") == "core" and item.get("id") != request_id
     ]
     if adapter == "core":
-        _apply_core_review(repo, task, request, source)
+        review = _apply_core_review(repo, task, request, source)
+        receipt["semantic_review"] = {
+            "review_id": review.review_id,
+            "authority": review.authority,
+            "review_mode": review.review_mode,
+            "summary": review.summary,
+        }
+        assurance = receipt.get("assurance")
+        if isinstance(assurance, dict):
+            semantic = assurance.get("semantic")
+            if isinstance(semantic, dict):
+                assurance["semantic"] = {
+                    **semantic,
+                    "authority": review.authority,
+                    "review_mode": review.review_mode,
+                }
+                receipt["assurance"] = assurance
         receipt["hook_requests"] = [
             item for item in adapters.pending(receipt) if item.get("id") != request_id
         ]
@@ -321,6 +504,11 @@ def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
                 item
                 for item in context.get("evidence", [])
                 if isinstance(item, dict)
+            ),
+            retained_discoveries=tuple(
+                str(item)
+                for item in context.get("retained_discoveries", [])
+                if isinstance(item, str)
             ),
         )
         receipt["hook_requests"] = [*adapters.pending(receipt), *existing_core]
@@ -357,6 +545,7 @@ def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
             str(lifecycle.get("branch") or ""),
             str(lifecycle.get("worktree") or repo),
         )
+        _accept_semantic_assurance(receipt)
         receipts.save(repo, task, receipt)
         output = finish(
             repo,
@@ -587,7 +776,11 @@ def finish(
                     f"CANDIDATE-TREE: {candidate_tree}",
                     *_hook_lines(receipt),
                 ],
-                data={"task": task, "stage": "awaiting-review", "actions": adapters.pending(receipt)},
+                data={
+                    "task": task,
+                    "stage": "awaiting-review",
+                    "actions": adapters.action_descriptors(receipt),
+                },
             )
         if stage == "awaiting-review":
             _transition(
@@ -640,6 +833,7 @@ def finish(
     try:
         output = landing.verify_and_land(repo, request)
     except RemotePushFailed as exc:
+        _record_completion(repo, task, receipt, assessment, expected_tree)
         _complete_task(repo, task, active_stage, branch, target)
         exc.lines.extend([f"TASK: {task}", "STATUS: completed-locally"])
         raise
@@ -654,6 +848,7 @@ def finish(
             ]
         )
         raise
+    _record_completion(repo, task, receipt, assessment, expected_tree)
     _complete_task(repo, task, active_stage, branch, target)
     return [*output, f"TASK: {task}", "STATUS: completed"]
 
@@ -872,6 +1067,7 @@ def _request_packet(
     assessment: dict[str, object],
     analysis: dict[str, object],
     evidence: list[dict[str, object]],
+    retained_discoveries: list[str],
 ) -> tuple[dict[str, object], dict[str, object]]:
     packet_body: dict[str, object] = {
         "version": 1,
@@ -883,7 +1079,10 @@ def _request_packet(
         "affected_semantics": analysis["recommended_architecture_reviews"],
         "governance": assessment["governance"],
         "will_run": analysis["will_run"],
-        "evidence": evidence,
+        "evidence_ids": [
+            str(item.get("evidence_id")) for item in evidence if item.get("evidence_id")
+        ],
+        "retained_discoveries": retained_discoveries,
     }
     review_id = git.hash_text(repo, repr(packet_body))
     packet = {**packet_body, "review_id": review_id}
@@ -894,9 +1093,13 @@ def _request_packet(
         "kind": "review_semantics",
         "prompt": (
             "Review the exact candidate against the affected canonical prose. Return one "
-            "semantic effect, an attributable summary, and only genuine exceptions."
+            "semantic effect and attributable summary. Candidate defects block acceptance; "
+            "discoveries deliberately retained in the audit are non-blocking references. "
+            "Set review_mode to independent only when the host actually routed this action "
+            "away from the candidate author."
         ),
         "input_schema": candidate_review_schema(),
+        "schema_id": "invariant://schemas/actions/review-semantics/v1",
         "blocking": True,
         "context": packet,
     }
@@ -972,20 +1175,30 @@ def prepare_finish(
     receipt = receipts.load(repo, task)
     receipt["finish_subject"] = subject or f"Invariant task {task}"
     receipt["review_candidate_tree"] = candidate.tree
+    retained_discoveries = _retained_discoveries(receipt)
     adapters.run_hook(
         local,
         receipt,
         CANDIDATE_EVIDENCED,
         candidate_tree=candidate.tree,
         evidence=tuple(evidence),
+        retained_discoveries=tuple(retained_discoveries),
     )
     requests = adapters.pending(receipt)
     semantic_required = bool(analysis.get("required"))
     if semantic_required:
-        packet, core_request = _request_packet(repo, task, assessment, analysis, evidence)
+        packet, core_request = _request_packet(
+            repo,
+            task,
+            assessment,
+            analysis,
+            evidence,
+            retained_discoveries,
+        )
         dump_yaml(local / "review-packet.yml", packet)
         requests.append(core_request)
     receipt["hook_requests"] = requests
+    receipt["assurance"] = _assurance_summary(evidence, requests)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     if requests:
         receipt = _transition(
@@ -1009,11 +1222,17 @@ def prepare_finish(
                 "task": task,
                 "stage": "awaiting-review",
                 "candidate_tree": candidate.tree,
-                "actions": requests,
-                "evidence": evidence,
+                "actions": adapters.action_descriptors(receipt),
+                "evidence_ids": [
+                    str(item.get("evidence_id"))
+                    for item in evidence
+                    if item.get("evidence_id")
+                ],
+                "assurance": receipt["assurance"],
             },
             "needs_input",
         )
+    receipts.save(repo, task, receipt)
     output = finish(
         repo,
         task,
@@ -1031,7 +1250,7 @@ def _apply_core_review(
     task: str,
     request: dict[str, object],
     source: str,
-) -> None:
+) -> CandidateReview:
     review = CandidateReview.load(source)
     context = request.get("context") if isinstance(request.get("context"), dict) else {}
     if (
@@ -1042,10 +1261,21 @@ def _apply_core_review(
             "Invariant: candidate review is stale for the current review packet",
             code="stale_candidate_review",
         )
-    if review.verdict != "accepted" or review.exceptions:
+    if review.verdict != "accepted" or review.candidate_defects:
         raise Blocked(
-            "Invariant: candidate review must accept the candidate without unresolved exceptions",
+            "Invariant: candidate review must accept the candidate without unresolved candidate defects",
             code="candidate_not_accepted",
+        )
+    allowed_discoveries = {
+        str(item)
+        for item in context.get("retained_discoveries", [])
+        if isinstance(item, str)
+    }
+    unknown_discoveries = sorted(set(review.retained_discoveries) - allowed_discoveries)
+    if unknown_discoveries:
+        raise Blocked(
+            f"Invariant: candidate review references unknown retained discovery '{unknown_discoveries[0]}'",
+            code="invalid_review_discovery",
         )
     resolved = config.resolve(repo)
     if resolved.authority == "human" and not review.authority.startswith("user:"):
@@ -1075,6 +1305,7 @@ def _apply_core_review(
     raw["prose"] = review.summary
     dump_yaml(local / "accepted-assessment.yml", raw)
     shutil.copyfile(source, local / "candidate-review.yml")
+    return review
 
 
 def _assessment_for_completion(repo: Path, task: str) -> Path:

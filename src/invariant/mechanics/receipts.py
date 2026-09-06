@@ -6,6 +6,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable
 
+import yaml
+
 from invariant.errors import Blocked, InvariantError
 from invariant.mechanics import config, git, governance
 from invariant.mechanics.documents import dump_yaml, load_yaml
@@ -66,16 +68,23 @@ def load(repo: Path, task: str) -> dict[str, Any]:
     return raw
 
 
-def load_completed(repo: Path, task: str) -> dict[str, Any] | None:
-    """Load the most recently archived completion for a reusable task id."""
-
+def completed_task_root(repo: Path, task: str) -> Path | None:
     root = git.common_dir(repo) / "invariant" / "history" / "tasks" / task
     if not root.is_dir():
         return None
     candidates = list(root.glob("*/receipt.yml"))
     if not candidates:
         return None
-    path = max(candidates, key=lambda candidate: candidate.stat().st_mtime_ns)
+    return max(candidates, key=lambda candidate: candidate.stat().st_mtime_ns).parent
+
+
+def load_completed(repo: Path, task: str) -> dict[str, Any] | None:
+    """Load the most recently archived completion for a reusable task id."""
+
+    root = completed_task_root(repo, task)
+    if root is None:
+        return None
+    path = root / "receipt.yml"
     raw = load_yaml(path)
     if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("task") != task:
         raise InvariantError(
@@ -311,9 +320,79 @@ def complete(repo: Path, task: str, landed_commit: str) -> Path:
     receipt["completed_commit"] = landed_commit
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     receipt["lifecycle"] = {**lifecycle, "stage": "completed"}
+    classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    governance_run = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    coverage = (
+        governance_run.get("coverage")
+        if isinstance(governance_run.get("coverage"), dict)
+        else {}
+    )
+    selected_findings = governance_run.get("selected_findings", [])
+    projected_records = coverage.get("projected_records", [])
+    finding_coverage = coverage.get("findings", {})
+    audit_id = str(governance_run.get("audit") or "")
+    audit_findings: list[dict[str, Any]] = []
+    if audit_id:
+        result = git.run(
+            ["show", f"{landed_commit}:.invariant/audits/{audit_id}.yml"],
+            cwd=repo,
+            check=False,
+        )
+        if result.returncode == 0:
+            audit_document = yaml.safe_load(result.stdout)
+            raw_findings = (
+                audit_document.get("findings", [])
+                if isinstance(audit_document, dict)
+                else []
+            )
+            audit_findings = [
+                dict(finding) for finding in raw_findings if isinstance(finding, dict)
+            ]
+    summary = {
+        "version": 1,
+        "task": task,
+        "status": "completed",
+        "goal_digest": str(receipt.get("goal_digest") or ""),
+        "landing": {
+            "target": str(receipt.get("integration_target") or ""),
+            "commit": landed_commit,
+            "candidate_tree": str(
+                receipt.get("candidate_tree")
+                or receipt.get("review_candidate_tree")
+                or ""
+            ),
+        },
+        "boundary": {
+            "initial": str(classification.get("boundary") or "unresolved"),
+            "final": str(receipt.get("resolved_boundary") or "unresolved"),
+        },
+        "governance": {
+            "audit": audit_id,
+            "audit_findings": audit_findings,
+            "selected_findings": (
+                list(selected_findings) if isinstance(selected_findings, list) else []
+            ),
+            "finding_coverage": (
+                dict(finding_coverage) if isinstance(finding_coverage, dict) else {}
+            ),
+            "projected_records": (
+                list(projected_records) if isinstance(projected_records, list) else []
+            ),
+        },
+        "assurance": receipt.get("assurance", {}),
+    }
     local_task = task_root(repo, task)
     local_task.mkdir(parents=True, exist_ok=True)
     dump_yaml(local_task / "receipt.yml", receipt)
+    dump_yaml(local_task / "summary.yml", summary)
     destination = (
         git.common_dir(repo)
         / "invariant"

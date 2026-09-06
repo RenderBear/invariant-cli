@@ -29,7 +29,13 @@ HOOK_PHASES = {
     CANDIDATE_EVIDENCED: HookPhase(
         CANDIDATE_EVIDENCED,
         "after an exact candidate tree is built and mechanical evidence is collected, before landing",
-        ("task", "goal_digest", "candidate_tree", "evidence"),
+        (
+            "task",
+            "goal_digest",
+            "candidate_tree",
+            "evidence",
+            "retained_discoveries",
+        ),
         True,
     ),
 }
@@ -44,6 +50,7 @@ class HookContext:
     goal_digest: str
     candidate_tree: str | None = None
     evidence: tuple[dict[str, Any], ...] = ()
+    retained_discoveries: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -54,6 +61,7 @@ class HookRequest:
     kind: str
     prompt: str
     input_schema: dict[str, Any]
+    schema_id: str = ""
     blocking: bool = True
     context: dict[str, Any] = field(default_factory=dict)
 
@@ -65,6 +73,7 @@ class HookRequest:
             "kind": self.kind,
             "prompt": self.prompt,
             "input_schema": self.input_schema,
+            "schema_id": self.schema_id or f"invariant://schemas/actions/{self.kind}/v1",
             "blocking": self.blocking,
             "context": self.context,
         }

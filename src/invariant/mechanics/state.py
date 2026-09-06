@@ -5,9 +5,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
+from invariant.errors import UsageError
 from invariant.mechanics import config, git, governance
 from invariant.mechanics.documents import load_yaml
 from invariant.mechanics.governance import architecture_refs, refs
+from invariant.semantics.adoption import ProjectedRecord
 from invariant.semantics.discovery import Discovery, validate_shape
 from invariant.semantics.records import SemanticRecord, parse_document
 
@@ -198,7 +200,16 @@ def validate_audit(repo: Path, path: Path, raw: dict[str, Any], domain_ids: Iter
             failures.append(f"{relative} finding must be a mapping")
             continue
         finding_unknown = sorted(
-            set(finding) - {"id", "summary", "evidence", "proposed", "disposition", "authority"}
+            set(finding)
+            - {
+                "id",
+                "summary",
+                "evidence",
+                "proposed",
+                "disposition",
+                "authority",
+                "records",
+            }
         )
         if finding_unknown:
             failures.append(f"{relative} finding has unknown field '{finding_unknown[0]}'")
@@ -225,6 +236,15 @@ def validate_audit(repo: Path, path: Path, raw: dict[str, Any], domain_ids: Iter
             failures.append(f"{flabel} invalid disposition '{finding.get('disposition')}'")
         if finding.get("authority"):
             failures.extend(_authority(repo, finding.get("authority"), flabel))
+        projected = finding.get("records", [])
+        if projected and not isinstance(projected, list):
+            failures.append(f"{flabel} records must be a list")
+        elif isinstance(projected, list):
+            for index, record in enumerate(projected):
+                try:
+                    ProjectedRecord.parse(record, f"{flabel}.records[{index}]")
+                except UsageError as exc:
+                    failures.append(str(exc))
     if len(finding_ids) != len(set(finding_ids)):
         failures.append(f"{relative} finding ids must be unique")
     return failures

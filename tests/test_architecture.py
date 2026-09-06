@@ -9,6 +9,7 @@ from invariant import adapters
 from invariant.adapters.base import CANDIDATE_EVIDENCED, HOOK_PHASES, TASK_CREATED
 from invariant.adapters.intent_brief.models import IntentBrief, IntentReview
 from invariant.semantics import guidance
+from invariant.semantics.adoption import AdoptionManifest
 from invariant.semantics.discovery import Discovery, validate_shape
 from invariant.semantics.models import Assessment
 from invariant.semantics.records import parse_document
@@ -72,7 +73,9 @@ def test_intent_brief_keeps_one_prose_body_and_material_questions(tmp_path: Path
     assert [question.identifier for question in brief.unanswered] == ["retention"]
 
 
-def test_intent_review_is_one_exact_tree_verdict(tmp_path: Path) -> None:
+def test_intent_review_separates_candidate_defects_from_retained_discoveries(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "review.yml"
     path.write_text(
         yaml.safe_dump(
@@ -84,7 +87,8 @@ def test_intent_review_is_one_exact_tree_verdict(tmp_path: Path) -> None:
                 "candidate_tree": "tree-id",
                 "verdict": "accepted",
                 "summary": "The exact candidate restores each job once.",
-                "exceptions": [],
+                "candidate_defects": [],
+                "retained_discoveries": ["discovery:legacy-recovery-gap"],
             }
         ),
         encoding="utf-8",
@@ -92,7 +96,33 @@ def test_intent_review_is_one_exact_tree_verdict(tmp_path: Path) -> None:
     review = IntentReview.load(path)
     assert review.candidate_tree == "tree-id"
     assert review.verdict == "accepted"
-    assert review.exceptions == []
+    assert review.candidate_defects == []
+    assert review.retained_discoveries == ["discovery:legacy-recovery-gap"]
+
+
+def test_adoption_draft_projects_audit_records_and_flags_only_ambiguity() -> None:
+    manifest = AdoptionManifest.from_audit(
+        "audit-1",
+        [
+            {
+                "id": "known-domain",
+                "records": [
+                    {
+                        "kind": "domain",
+                        "value": {
+                            "id": "jobs",
+                            "responsibility": "Owns job recovery.",
+                            "authority": "user:task:review#decision",
+                        },
+                    }
+                ],
+            },
+            {"id": "ambiguous-contract"},
+        ],
+        ["known-domain", "ambiguous-contract"],
+    )
+    assert manifest.mappings[0].records[0].reference == "domain:jobs"
+    assert manifest.mappings[1].unresolved
 
 
 def test_discovery_can_resolve_without_a_contract() -> None:
@@ -120,9 +150,9 @@ def test_discovery_can_resolve_without_a_contract() -> None:
 
 def test_stage_guidance_remains_free_form_and_composable() -> None:
     text = guidance.for_stage("implementing")
-    assert "# Brief" in text
     assert "# Land" in text
-    assert "# Human ergonomics" in text
+    assert "# Brief" not in text
+    assert "# Human ergonomics" not in text
     assert "# Repository archaeology" not in text
     full = guidance.for_stage("implementing", full=True)
     assert "# Durable semantic reasoning" in full

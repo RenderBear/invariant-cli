@@ -92,7 +92,14 @@ class IntentReview:
     candidate_tree: str
     verdict: str
     summary: str
-    exceptions: list[str]
+    candidate_defects: list[str]
+    retained_discoveries: list[str]
+
+    @property
+    def exceptions(self) -> list[str]:
+        """Compatibility alias for the former ambiguous field name."""
+
+        return self.candidate_defects
 
     @classmethod
     def load(cls, path: str | Path) -> "IntentReview":
@@ -106,6 +113,8 @@ class IntentReview:
             "verdict",
             "summary",
             "exceptions",
+            "candidate_defects",
+            "retained_discoveries",
         }
         unknown = sorted(set(raw) - allowed)
         if unknown:
@@ -115,16 +124,29 @@ class IntentReview:
         verdict = raw.get("verdict")
         if verdict not in {"accepted", "rejected", "uncertain"}:
             raise UsageError("intent review verdict must be accepted, rejected, or uncertain")
-        exceptions = raw.get("exceptions", [])
-        if not isinstance(exceptions, list) or any(
-            not isinstance(item, str) or not item.strip() for item in exceptions
+        if "exceptions" in raw and "candidate_defects" in raw:
+            raise UsageError(
+                "intent review must use candidate_defects or legacy exceptions, not both"
+            )
+        defects = raw.get("candidate_defects", raw.get("exceptions", []))
+        if not isinstance(defects, list) or any(
+            not isinstance(item, str) or not item.strip() for item in defects
         ):
-            raise UsageError("intent review exceptions must be a string list")
+            raise UsageError("intent review candidate_defects must be a string list")
+        retained = raw.get("retained_discoveries", [])
+        if not isinstance(retained, list) or any(
+            not isinstance(item, str) or not item.startswith("discovery:")
+            for item in retained
+        ):
+            raise UsageError(
+                "intent review retained_discoveries must use discovery:<id> references"
+            )
         return cls(
             _text(raw.get("source_goal_digest"), "intent review source_goal_digest"),
             _text(raw.get("brief_digest"), "intent review brief_digest"),
             _text(raw.get("candidate_tree"), "intent review candidate_tree"),
             str(verdict),
             _text(raw.get("summary"), "intent review summary"),
-            sorted(set(exceptions)),
+            sorted(set(defects)),
+            sorted(set(retained)),
         )

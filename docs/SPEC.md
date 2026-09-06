@@ -549,7 +549,8 @@ verification labels.
 
 At `candidate.evidenced`, the adapter receives the exact candidate tree, brief digest, goal digest,
 and evidence already captured by core. It returns one `accepted`, `rejected`, or `uncertain` verdict,
-one substantive summary, and genuine exceptions. It does not manually restate one result per
+one substantive summary, unresolved `candidate_defects`, and any non-blocking
+`retained_discoveries`. It does not manually restate one result per
 sentence or transcribe evidence the CLI already owns. A changed candidate, goal, brief, or adapter
 implementation invalidates the review.
 
@@ -572,6 +573,9 @@ invariant status [<task-id>]
 invariant governance begin <task-id>
 invariant governance audit-save <task-id> --input <findings-file>
 invariant governance adopt <task-id> <--all-ready|--finding <id>...>
+invariant governance project <task-id> [--input <adoption-manifest>]
+invariant governance coverage <task-id>
+invariant governance projection <schema|example>
 invariant governance defer <task-id>
 invariant governance status <task-id>
 invariant config show
@@ -584,6 +588,8 @@ invariant task status <task-id>
 invariant task check <task-id> [semantic scope...]
 invariant task finish <task-id> [--check <locator>]...
 invariant task respond <task-id> <action-id> --input <file>
+invariant task action <task-id> <action-id>
+invariant task evidence <task-id> [<evidence-id>]
 invariant task continue <task-id> [--apply]
 invariant task invalidate <task-id>
 invariant task guidance <task-id> [--full]
@@ -651,7 +657,8 @@ brief_digest: <brief-digest>
 candidate_tree: <exact-tree-id>
 verdict: accepted
 summary: The exact candidate satisfies the whole intent brief and the collected evidence supports it.
-exceptions: []
+candidate_defects: []
+retained_discoveries: []
 ```
 
 `invariant task intent-brief schema` exposes both adapter response shapes.
@@ -688,14 +695,19 @@ JSON uses one envelope:
           "kind": "review_semantics",
           "blocking": true,
           "prompt": "Review the exact candidate against the affected canonical prose.",
-          "input_schema": {},
-          "context": {"candidate_tree": "<tree>"}
+          "schema_id": "invariant://schemas/actions/review-semantics/v1",
+          "context": {"candidate_tree": "<tree>", "evidence_ids": ["state:<id>"]}
         }
       ],
       "artifacts": [],
+      "assurance": {
+        "structural": {"status": "passed", "evidence_ids": ["state:<id>"]},
+        "behavioral": {"status": "not_required", "evidence_ids": []},
+        "semantic": {"status": "pending", "review_ids": ["core:candidate-review"]}
+      },
       "completion": {"commit": ""}
     },
-    "candidate": {"tree": "<tree>", "evidence": []}
+    "candidate": {"tree": "<tree>", "evidence_ids": ["state:<id>"]}
   },
   "diagnostics": []
 }
@@ -705,6 +717,9 @@ JSON uses one envelope:
 assisted approval from actual failures. Stable diagnostic codes carry changed governance, stale
 evidence, verification failure, conflict, or concurrent ref movement. Applications must use fields,
 action IDs, and schemas—not parse human prose or inspect Git-common runtime paths.
+The default task result is delta-oriented: action schemas are expanded by `task action`, while
+captured observations are listed or retrieved by `task evidence`. This keeps the normal protocol
+small without making its supporting material inaccessible.
 
 Process exits remain deliberately small:
 
@@ -747,6 +762,9 @@ Hook execution follows these rules:
    invoke Git transitions, mark mechanical evidence passed, or authorize repository-wide meaning.
 7. Core semantic review uses the same action transport, so hosts need one response API rather than
    a special assessment-file editing path.
+8. A semantic review separates unresolved `candidate_defects` from non-blocking
+   `retained_discoveries`. `review_mode` is `self-attested` unless a host actually dispatches the
+   action to an independent reviewer; Invariant records this provenance but does not invent it.
 
 There is intentionally no blocking post-update hook: after compare-and-swap succeeds, an optional
 integration must not retroactively make the local landing ambiguous. Notifications or publication
@@ -892,9 +910,12 @@ Architecture is read from the captured accepted ground so candidate edits cannot
 the premise used to interpret their own change. Discoveries remain non-authoritative and may evolve
 progressively; including their prose in context does not promote them to governance.
 
-When the resolution does adopt durable governance, it edits the smallest canonical architecture,
-domain, or contract record and then runs `invariant state validate`. The CLI validates adoption; it
-does not manufacture accepted meaning.
+An audit finding may carry complete `records` projections when the evidence-to-record mapping is
+unambiguous. For selected findings, `governance project` materializes those projections and runs
+structural validation. Findings without a complete projection remain `unresolved` in the generated
+adoption draft; the author edits only those mappings to name records, a retained discovery, or an
+explicit deferral. `governance coverage` maps every selected finding to its disposition. The CLI
+projects and validates accepted meaning from the audit; it does not infer missing semantic content.
 
 ## 12. Coordination
 
@@ -948,8 +969,12 @@ hash skill packages. Skill loading and context compaction belong to the host. Ve
 may be reused only for the exact tree and base, verification mechanics version, runner configuration,
 working directory, executable environment, and verifier identity that produced it; changing the
 candidate always invalidates that evidence. Active receipts and logs live under Git-local Invariant
-runtime. On successful landing, the task receipt, evidence, brief, and reviews are archived under
-`invariant/history/tasks/<task>/<landed-commit>/`; active task state disappears. Reach, semantic
+runtime. On successful landing, the task receipt, evidence, brief, reviews, and a stable
+`summary.yml` are archived under `invariant/history/tasks/<task>/<landed-commit>/`. The active
+receipt disappears, but `task status`, `governance status`, and `task evidence` resolve the latest
+completed archive. The summary records initial and final boundary dispositions, governance audit
+and finding coverage, landing commit, candidate tree, and structural, behavioral, and semantic
+assurance separately. Reach, semantic
 reviews, candidate state, prospective-tree construction,
 and compare-and-swap target checks are always recomputed even when an expensive verifier result is
 reused. Volatile runners use `cache: never`.

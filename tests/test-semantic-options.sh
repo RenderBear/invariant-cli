@@ -163,7 +163,8 @@ brief_digest: $brief_digest
 candidate_tree: $candidate_tree
 verdict: accepted
 summary: The exact candidate implements the whole intent brief.
-exceptions: []
+candidate_defects: []
+retained_discoveries: []
 EOF
 out=$(cd "$fixture" && "$cli" task respond semantic-flow intent_brief:candidate.evidenced \
   --input "$review_file")
@@ -177,7 +178,9 @@ verdict: accepted
 summary: The bounded source change preserves the accepted ownership decision.
 semantic_effect: no-record
 authority: agent:semantic-flow
-exceptions: []
+review_mode: independent
+candidate_defects: []
+retained_discoveries: []
 EOF
 out=$(cd "$fixture" && "$cli" task respond semantic-flow core:candidate-review \
   --input "$semantic_review")
@@ -194,6 +197,16 @@ landed=$(git -C "$fixture" rev-parse main)
   die "completion discarded the argument trail"
 [ -d "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/evidence" ] ||
   die "completion discarded exact-tree evidence"
+[ -f "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/summary.yml" ] ||
+  die "completion discarded its retrospective summary"
+grep -q '^    review_mode: independent$' \
+  "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/summary.yml" ||
+  die "completion did not preserve independent reviewer attribution"
+status=$(cd "$fixture" && "$cli" task status semantic-flow)
+printf '%s\n' "$status" | grep -q '^ASSURANCE-SEMANTIC: accepted$' ||
+  die "completed review did not preserve semantic assurance separately"
+printf '%s\n' "$status" | grep -q '^SEMANTIC-REVIEW: independent — agent:semantic-flow$' ||
+  die "completed status did not expose independent reviewer attribution"
 ok "whole-intent and semantic reviews bind archived evidence to the exact candidate"
 
 git -C "$unborn" init -qb main

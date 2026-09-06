@@ -44,6 +44,7 @@ class IntentBriefAdapter:
             kind=kind,
             prompt=prompt,
             input_schema=schema,
+            schema_id=f"invariant://schemas/intent-brief/{kind}/v1",
             context=request_context,
         )
 
@@ -148,7 +149,9 @@ class IntentBriefAdapter:
                 kind="review_intent",
                 prompt=(
                     "Review the exact candidate against the entire intent brief and return one "
-                    "verdict, a substantive summary, and only genuine exceptions."
+                    "verdict and substantive summary. Put unresolved candidate defects in "
+                    "candidate_defects; deliberately unadopted evidence belongs only in "
+                    "retained_discoveries and does not contradict acceptance."
                 ),
                 schema=intent_review_schema(),
                 request_context={
@@ -156,7 +159,12 @@ class IntentBriefAdapter:
                     "goal_digest": context.goal_digest,
                     "brief_digest": str(state.get("brief_digest") or ""),
                     "brief": brief.brief,
-                    "evidence": list(context.evidence),
+                    "evidence_ids": [
+                        str(item.get("evidence_id"))
+                        for item in context.evidence
+                        if item.get("evidence_id")
+                    ],
+                    "retained_discoveries": list(context.retained_discoveries),
                 },
             )
             return HookResult({**state, "status": "awaiting_review"}, (request,))
@@ -170,10 +178,20 @@ class IntentBriefAdapter:
                 "Invariant: intent review is stale for the current goal, brief, or candidate",
                 code="stale_intent_review",
             )
-        if review.verdict != "accepted" or review.exceptions:
+        if review.verdict != "accepted" or review.candidate_defects:
             raise Blocked(
-                "Invariant: intent review must accept the candidate without unresolved exceptions",
+                "Invariant: intent review must accept the candidate without unresolved candidate defects",
                 code="intent_not_accepted",
+            )
+        allowed_discoveries = set(context.retained_discoveries)
+        unknown_discoveries = sorted(
+            set(review.retained_discoveries) - allowed_discoveries
+        )
+        if unknown_discoveries:
+            raise Blocked(
+                "Invariant: intent review references unknown retained discovery "
+                f"'{unknown_discoveries[0]}'",
+                code="invalid_review_discovery",
             )
         if Path(source).resolve() != destination.resolve():
             shutil.copyfile(source, destination)
@@ -250,7 +268,7 @@ def intent_review_schema() -> dict[str, Any]:
         "additionalProperties": False,
         "required": [
             "version", "adapter", "source_goal_digest", "brief_digest",
-            "candidate_tree", "verdict", "summary", "exceptions",
+            "candidate_tree", "verdict", "summary", "candidate_defects",
         ],
         "properties": {
             "version": {"const": 1},
@@ -260,7 +278,16 @@ def intent_review_schema() -> dict[str, Any]:
             "candidate_tree": {"type": "string", "minLength": 1},
             "verdict": {"enum": ["accepted", "rejected", "uncertain"]},
             "summary": {"type": "string", "minLength": 1},
-            "exceptions": {"type": "array", "items": {"type": "string", "minLength": 1}},
+            "candidate_defects": {
+                "type": "array",
+                "description": "Unresolved defects in the candidate; must be empty when verdict is accepted.",
+                "items": {"type": "string", "minLength": 1},
+            },
+            "retained_discoveries": {
+                "type": "array",
+                "description": "Non-blocking discoveries deliberately retained as evidence.",
+                "items": {"type": "string", "pattern": "^discovery:[A-Za-z0-9][A-Za-z0-9._-]*$"},
+            },
         },
     }
 
@@ -286,6 +313,7 @@ def intent_brief_examples() -> dict[str, Any]:
             "candidate_tree": "<from task finish>",
             "verdict": "accepted",
             "summary": "The exact candidate satisfies the intent brief and collected checks pass.",
-            "exceptions": [],
+            "candidate_defects": [],
+            "retained_discoveries": [],
         },
     }
