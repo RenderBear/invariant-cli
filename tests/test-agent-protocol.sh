@@ -85,8 +85,8 @@ out=$(cd "$governance" && "$cli" governance audit-save baseline-governance --inp
 audit_id=$(printf '%s\n' "$out" | sed -n 's/^AUDIT: //p')
 printf '%s\n' "$audit_id" | grep -Eq '^audit-[0-9]{8}T[0-9]{6}Z$' || die "governance audit did not use its timestamped neutral name"
 printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: adopt$' || die "agent authority did not advance audit to adoption"
-grep -q '^  phase: adopt$' "$governance/.git/invariant/briefs/baseline-governance.yml" || die "governance phase was not resumable"
-grep -q '^  - record-app-boundary$' "$governance/.git/invariant/briefs/baseline-governance.yml" || die "ready finding was not selected automatically"
+grep -q '^  phase: adopt$' "$governance/.invariant/runtime/briefs/baseline-governance.yml" || die "governance phase was not resumable"
+grep -q '^  - record-app-boundary$' "$governance/.invariant/runtime/briefs/baseline-governance.yml" || die "ready finding was not selected automatically"
 out=$(cd "$governance" && "$cli" governance project baseline-governance)
 printf '%s\n' "$out" | grep -q '^FINDING-COVERAGE: record-app-boundary — projected — domain:application$' ||
   die "audit-authored governance was not projected"
@@ -106,8 +106,8 @@ prepared=$(cd "$governance" && "$cli" --format json task assessment prepare base
 printf '%s\n' "$prepared" | grep -q '"candidate_tree"' || die "assessment preparation omitted the candidate tree"
 printf '%s\n' "$prepared" | grep -q '".invariant/DOMAINS.yml"' || die "assessment preparation omitted generated governance"
 printf '%s\n' "$prepared" | grep -q '".invariant/audits/' || die "assessment preparation omitted the canonical audit"
-[ -f "$governance/.git/invariant/tasks/baseline-governance/prepared-assessment.yml" ] ||
-  die "assessment preparation did not save its Git-local draft"
+[ -f "$governance/.invariant/runtime/tasks/baseline-governance/prepared-assessment.yml" ] ||
+  die "assessment preparation did not save its ignored runtime draft"
 status=$(cd "$governance" && "$cli" status)
 printf '%s\n' "$status" | grep -q '^TASK: baseline-governance (implementing)$' || die "top-level status omitted the active task"
 ok "a governance pass keeps audit and adoption inside one resumable managed session"
@@ -133,7 +133,7 @@ out=$(cd "$deferred" && "$cli" governance defer deferred)
 printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: deferred$' || die "audit deferral was not reported"
 [ "$(git -C "$deferred" branch --show-current)" = main ] || die "audit-only deferral did not restore main"
 git -C "$deferred" cat-file -e "main:.invariant/audits/$deferred_audit.yml" || die "deferred audit was not landed"
-[ ! -f "$deferred/.git/invariant/briefs/deferred.yml" ] || die "deferred governance receipt was not cleaned"
+[ ! -f "$deferred/.invariant/runtime/briefs/deferred.yml" ] || die "deferred governance receipt was not cleaned"
 status=$(cd "$deferred" && "$cli" governance status deferred)
 printf '%s\n' "$status" | grep -q '^GOVERNANCE-PHASE: completed$' ||
   die "completed governance pass had no retrospective status"
@@ -141,7 +141,7 @@ printf '%s\n' "$status" | grep -q '^ADOPTION-PHASE: deferred$' ||
   die "completed governance status lost its adoption disposition"
 deferred_commit=$(git -C "$deferred" rev-parse main)
 grep -q 'id: record-app-boundary$' \
-  "$deferred/.git/invariant/history/tasks/deferred/$deferred_commit/summary.yml" ||
+  "$deferred/.invariant/runtime/history/tasks/deferred/$deferred_commit/summary.yml" ||
   die "completed governance summary lost its audit findings"
 ok "human authority can land a saved audit while deferring adoption"
 
@@ -226,7 +226,8 @@ printf 'one\n' >"$runner/app.txt"
 cat >"$runner/backend/verify.sh" <<'EOF'
 #!/bin/sh
 set -eu
-count_file=$(git rev-parse --git-common-dir)/runner-count
+primary=$(git worktree list --porcelain | sed -n '1s/^worktree //p')
+count_file=$primary/.invariant/runtime/runner-count
 count=0
 if [ -f "$count_file" ]; then count=$(cat "$count_file"); fi
 count=$((count + 1))
@@ -268,15 +269,15 @@ governance: []
 architecture_reviews: []
 checks: [runner:backend#tests/smoke]
 EOF
-mkdir -p "$runner/.git/invariant/tasks/cache"
-cp "$assessment" "$runner/.git/invariant/tasks/cache/prepared-assessment.yml"
+mkdir -p "$runner/.invariant/runtime/tasks/cache"
+cp "$assessment" "$runner/.invariant/runtime/tasks/cache/prepared-assessment.yml"
 out=$(cd "$runner" && "$cli" candidate verify "$branch" --assessment "$assessment")
 printf '%s\n' "$out" | grep -q '^CHECK: passed — runner:backend#tests/smoke$' || die "named runner did not execute"
 if printf '%s\n' "$out" | grep -q 'NOISY-SUCCESS-OUTPUT'; then die "successful verifier logs leaked into normal output"; fi
 out=$(cd "$runner" && "$cli" task finish cache --check runner:backend#tests/smoke)
 printf '%s\n' "$out" | grep -q '^CHECK: reused — runner:backend#tests/smoke$' || die "finish did not reuse exact-candidate verification"
 printf '%s\n' "$out" | grep -q '^CHECK-CACHE: 1 reused$' || die "verification cache summary was missing"
-[ "$(cat "$runner/.git/runner-count")" = 1 ] || die "cached verifier executed more than once"
+[ "$(cat "$runner/.invariant/runtime/runner-count")" = 1 ] || die "cached verifier executed more than once"
 ok "project-aware runners retain logs and reuse exact-candidate verification receipts"
 
 echo "6 agent protocol checks passed"

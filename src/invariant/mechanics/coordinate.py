@@ -513,14 +513,43 @@ def runtime_status(repo: Path) -> list[str]:
     output = [f"RUNTIME: {runtime}"]
     if not runtime.is_dir():
         return [*output, "STATUS: empty"]
-    plans = sorted((runtime / "plans").glob("*.yml")) if (runtime / "plans").is_dir() else []
+    briefs = (
+        sorted((runtime / "briefs").glob("*.yml"))
+        if (runtime / "briefs").is_dir()
+        else []
+    )
+    output.extend(f"ACTIVE-TASK: {path.stem}" for path in briefs)
+    if not briefs:
+        output.append("ACTIVE-TASKS: none")
+    history = runtime / "history" / "tasks"
+    completions = sorted(history.glob("*/*/summary.yml")) if history.is_dir() else []
+    output.extend(
+        f"COMPLETED-TASK: {path.parents[1].name}@{path.parent.name}"
+        for path in completions
+    )
+    if not completions:
+        output.append("COMPLETED-TASKS: none")
+    verifications = runtime / "verifications"
+    verification_receipts = (
+        sorted(verifications.glob("*.yml")) if verifications.is_dir() else []
+    )
+    output.append(f"VERIFICATION-RECEIPTS: {len(verification_receipts)}")
+    plans = (
+        sorted((runtime / "plans").glob("*.yml"))
+        if (runtime / "plans").is_dir()
+        else []
+    )
     for path in plans:
         output.append(f"PLAN: {path.stem}")
         output.extend(f"  {line}" for line in plan_status(repo, path.stem))
     if not plans:
         output.append("PLANS: none")
     output.extend(list_leases(repo))
-    leases = sorted((runtime / "leases").glob("*.yml")) if (runtime / "leases").is_dir() else []
+    leases = (
+        sorted((runtime / "leases").glob("*.yml"))
+        if (runtime / "leases").is_dir()
+        else []
+    )
     for path in leases:
         try:
             raw = load_yaml(path)
@@ -531,12 +560,18 @@ def runtime_status(repo: Path) -> list[str]:
 
 
 def clean_runtime(repo: Path, *, apply: bool = False) -> list[str]:
+    if apply:
+        ensure_runtime(repo)
     runtime = runtime_root(repo)
     if not runtime.is_dir():
         return ["CLEAN: nothing to do"]
     result = reap_leases(repo, apply=apply)
     output = list(result.lines)
-    plans = sorted((runtime / "plans").glob("*.yml")) if (runtime / "plans").is_dir() else []
+    plans = (
+        sorted((runtime / "plans").glob("*.yml"))
+        if (runtime / "plans").is_dir()
+        else []
+    )
     for path in plans:
         status = plan_status(repo, path.stem)
         complete = all(" landed " in f" {line} " for line in status[1:] if line.strip())
@@ -546,13 +581,36 @@ def clean_runtime(repo: Path, *, apply: bool = False) -> list[str]:
                 output.append(f"CLEANED: completed plan {path.stem}")
             else:
                 output.append(f"CLEANABLE: completed plan {path.stem}")
+    history = runtime / "history" / "tasks"
+    completions = sorted(history.glob("*/*")) if history.is_dir() else []
+    for path in completions:
+        if not path.is_dir():
+            continue
+        label = f"{path.parent.name}@{path.name}"
+        if apply:
+            shutil.rmtree(path)
+            output.append(f"CLEANED: completed task {label}")
+        else:
+            output.append(f"CLEANABLE: completed task {label}")
+    verifications = runtime / "verifications"
+    verification_files = sorted(verifications.iterdir()) if verifications.is_dir() else []
+    if verification_files:
+        if apply:
+            shutil.rmtree(verifications)
+            output.append(f"CLEANED: {len(verification_files)} verification cache file(s)")
+        else:
+            output.append(f"CLEANABLE: {len(verification_files)} verification cache file(s)")
     if apply:
         for directory in sorted((item for item in runtime.rglob("*") if item.is_dir()), reverse=True):
             try:
                 directory.rmdir()
             except OSError:
                 pass
-        payload = [item for item in runtime.iterdir() if item.name != ".gitignore"] if runtime.exists() else []
+        payload = (
+            [item for item in runtime.iterdir() if item.name != ".gitignore"]
+            if runtime.exists()
+            else []
+        )
         if not payload:
             (runtime / ".gitignore").unlink(missing_ok=True)
             try:

@@ -89,7 +89,7 @@ invariant --format json task evidence fix-job-recovery state:<id>
 `task assessment prepare` remains available for low-level inspection. A failed finish
 preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
 Successful completion archives the brief, review packet, evidence, final receipt, and a compact
-`summary.yml` under Git-common Invariant history keyed by the landed commit. `task status` and
+`summary.yml` under `.invariant/runtime/history/`, keyed by the landed commit. `task status` and
 `task evidence` continue to work after completion.
 
 When `adapters.intent_brief` is enabled, the single `task begin` creates the normal isolated worktree

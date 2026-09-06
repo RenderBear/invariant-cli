@@ -47,7 +47,7 @@ Leave the primary repository checkout on the integration branch and run lifecycl
 repository evidence separate from accepted architectural authority. Preserve unresolved
 contradictions as evidence rather than silently choosing an interpretation.
 
-`.invariant/` contains tracked governance and evidence plus ignored coordination runtime. Domains
+`.invariant/` contains tracked governance and evidence plus self-ignored generated runtime. Domains
 name semantic responsibilities, not directories. Architecture Markdown is canonical; contracts
 are executable cross-domain promises. Audits and discoveries are evidence, never authority. A
 discovery records observation, causal basis, relevance, and disposition; it may resolve to
@@ -140,7 +140,7 @@ Invariant's landing flow. If the remote rejects the update, preserve and report 
 landing.
 
 Repositories may enable the bundled `adapters.intent_brief` unit. It expands the request into a
-Git-local prose brief and may ask only material questions. After the CLI collects exact-tree
+task-local prose brief and may ask only material questions. After the CLI collects exact-tree
 evidence, the adapter returns one verdict over the whole brief before landing. Respond through the
 action API; do not edit task runtime or transcribe check output. When disabled, the fixed Invariant
 lifecycle remains unchanged.

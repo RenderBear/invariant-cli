@@ -184,8 +184,8 @@ begin
 `invariant task begin` captures the target, gathers the mechanically available context, records the
 semantic envelope, and creates or reuses a generated branch in a dedicated linked worktree. It
 leaves the integration checkout unchanged so several tasks can begin concurrently in one clone and
-returns the task worktree plus typed lifecycle state and actions. Git-common runtime paths remain an
-implementation detail.
+returns the task worktree plus typed lifecycle state and actions. Generated runtime paths remain an
+implementation detail under the primary worktree's `.invariant/runtime/` namespace.
 
 The initial durable-meaning boundary defaults to `unresolved`. A harness may provide a grounded
 disposition early, but the CLI does not require a human or agent to predict candidate reach before
@@ -247,25 +247,21 @@ Initialization creates the configuration and selected agent instruction integrat
 contract registries are created only when accepted records exist; bootstrap does not manufacture
 empty semantic authority.
 
-Optional ignored coordination state remains:
+Generated local state is shared by linked worktrees and self-ignored at its root:
 
 ```text
+.invariant/runtime/briefs/<task-id>.yml
+.invariant/runtime/tasks/<task-id>/...
+.invariant/runtime/history/tasks/<task-id>/<landed-commit>/...
+.invariant/runtime/verifications/<evidence-id>.*
 .invariant/runtime/plans/<id>.yml
 .invariant/runtime/leases/<unit>.yml
+.invariant/runtime/worktrees/<task-id>-<nonce>/...
 ```
 
-Disposable local receipts remain outside repository state:
-
-```text
-<git-common-dir>/invariant/briefs/<task-id>.yml
-<git-common-dir>/invariant/tasks/<task-id>/...
-```
-
-After a successful landing, task-local evidence and semantic inputs move to:
-
-```text
-<git-common-dir>/invariant/history/tasks/<task-id>/<landed-commit>/...
-```
+This runtime is outside repository history, but not scattered outside the Invariant namespace.
+Active task state is cleaned on completion; the completed argument archive and reusable verifier
+receipts remain inspectable until an explicit `invariant coordinate runtime clean --apply`.
 
 The standing of each object is:
 
@@ -274,11 +270,11 @@ The standing of each object is:
 | Semantic record and canonical prose | accepted interpretation | repository history |
 | Domain and contract projections | accepted authority | repository history |
 | Audit, discovery | evidence only | repository history |
-| Intent brief and candidate reviews | task-local semantic argument | archived after landing |
+| Intent brief and candidate reviews | task-local semantic argument | ignored archive until explicit cleanup |
 | Plan, lease | coordination only | active work |
 | Active receipt | cache integrity only | active task |
 | Git tree and commit | causal implementation fact | repository history |
-| Verification result | reproducible observation for one exact tree | archived after landing |
+| Verification result | reproducible observation for one exact tree | ignored cache/archive until explicit cleanup |
 
 Only accepted governance binds future work. Evidence can motivate governance but cannot become
 authority without explicit adoption.
@@ -716,7 +712,7 @@ JSON uses one envelope:
 `outcome` distinguishes completed work, work ready for implementation, input suspension, and
 assisted approval from actual failures. Stable diagnostic codes carry changed governance, stale
 evidence, verification failure, conflict, or concurrent ref movement. Applications must use fields,
-action IDs, and schemas—not parse human prose or inspect Git-common runtime paths.
+action IDs, and schemas—not parse human prose or inspect runtime files.
 The default task result is delta-oriented: action schemas are expanded by `task action`, while
 captured observations are listed or retrieved by `task evidence`. This keeps the normal protocol
 small without making its supporting material inaccessible.
@@ -773,7 +769,7 @@ beyond the separately configured upstream push belong to the host.
 ### 8.4 Output discipline
 
 - Standard output contains only the selected result format.
-- Successful verifier output is retained in ignored Git-local logs and summarized rather than
+- Successful verifier output is retained in ignored local logs and summarized rather than
   copied into normal responses. Failure responses include the relevant output and log path.
 - Standard error contains invocation or runtime diagnostics that prevented a valid result.
 - Read-only commands never mutate Git, `.invariant`, runtime state, or receipts.
@@ -968,9 +964,9 @@ guidance do not evict the brief cache: they are recomputed or reloaded independe
 hash skill packages. Skill loading and context compaction belong to the host. Verification evidence
 may be reused only for the exact tree and base, verification mechanics version, runner configuration,
 working directory, executable environment, and verifier identity that produced it; changing the
-candidate always invalidates that evidence. Active receipts and logs live under Git-local Invariant
-runtime. On successful landing, the task receipt, evidence, brief, reviews, and a stable
-`summary.yml` are archived under `invariant/history/tasks/<task>/<landed-commit>/`. The active
+candidate always invalidates that evidence. Active receipts and logs live under self-ignored
+`.invariant/runtime/`. On successful landing, the task receipt, evidence, brief, reviews, and a stable
+`summary.yml` are archived under `.invariant/runtime/history/tasks/<task>/<landed-commit>/`. The active
 receipt disappears, but `task status`, `governance status`, and `task evidence` resolve the latest
 completed archive. The summary records initial and final boundary dispositions, governance audit
 and finding coverage, landing commit, candidate tree, and structural, behavioral, and semantic

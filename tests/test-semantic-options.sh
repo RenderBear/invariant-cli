@@ -103,7 +103,7 @@ out=$(cd "$fixture" && "$cli" task respond semantic-flow intent_brief:task.creat
   --input "$brief_file")
 printf '%s\n' "$out" | grep -q '^STATUS: implementing$' ||
   die "answered intent brief did not enter implementation"
-[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/intent_brief/brief.yml" ] ||
+[ -f "$fixture/.invariant/runtime/tasks/semantic-flow/adapters/intent_brief/brief.yml" ] ||
   die "intent brief was not stored under adapter runtime"
 cat >"$worktree/docs/architecture.md" <<'EOF'
 # Architecture
@@ -154,7 +154,7 @@ printf '%s\n' "$out" | grep -q '^ACTION: core:candidate-review — review_semant
 [ "$(git -C "$fixture" show main:src/a.txt)" = one ] ||
   die "review actions advanced the target"
 
-brief_digest=$(shasum -a 256 "$fixture/.git/invariant/tasks/semantic-flow/adapters/intent_brief/brief.yml" | awk '{print $1}')
+brief_digest=$(shasum -a 256 "$fixture/.invariant/runtime/tasks/semantic-flow/adapters/intent_brief/brief.yml" | awk '{print $1}')
 cat >"$review_file" <<EOF
 version: 1
 adapter: intent_brief
@@ -172,7 +172,7 @@ printf '%s\n' "$out" | grep -q '^STATUS: awaiting-review$' ||
   die "resolving intent review discarded the core semantic action"
 cat >"$semantic_review" <<EOF
 version: 1
-review_id: $(sed -n 's/^review_id: //p' "$fixture/.git/invariant/tasks/semantic-flow/review-packet.yml")
+review_id: $(sed -n 's/^review_id: //p' "$fixture/.invariant/runtime/tasks/semantic-flow/review-packet.yml")
 candidate_tree: $candidate_tree
 verdict: accepted
 summary: The bounded source change preserves the accepted ownership decision.
@@ -193,14 +193,14 @@ if git -C "$fixture" show-ref --verify -q "refs/heads/$branch"; then
   die "reviewed task branch survived cleanup"
 fi
 landed=$(git -C "$fixture" rev-parse main)
-[ -f "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/receipt.yml" ] ||
+[ -f "$fixture/.invariant/runtime/history/tasks/semantic-flow/$landed/receipt.yml" ] ||
   die "completion discarded the argument trail"
-[ -d "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/evidence" ] ||
+[ -d "$fixture/.invariant/runtime/history/tasks/semantic-flow/$landed/evidence" ] ||
   die "completion discarded exact-tree evidence"
-[ -f "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/summary.yml" ] ||
+[ -f "$fixture/.invariant/runtime/history/tasks/semantic-flow/$landed/summary.yml" ] ||
   die "completion discarded its retrospective summary"
 grep -q '^    review_mode: independent$' \
-  "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/summary.yml" ||
+  "$fixture/.invariant/runtime/history/tasks/semantic-flow/$landed/summary.yml" ||
   die "completion did not preserve independent reviewer attribution"
 status=$(cd "$fixture" && "$cli" task status semantic-flow)
 printf '%s\n' "$status" | grep -q '^ASSURANCE-SEMANTIC: accepted$' ||

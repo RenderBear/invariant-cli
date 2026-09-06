@@ -548,7 +548,7 @@ def _verifier_mechanics_digest() -> str:
 
 
 def _verification_paths(repo: Path, key: str) -> tuple[Path, Path]:
-    root = git.common_dir(repo) / "invariant" / "verifications"
+    root = coordinate.ensure_runtime(repo) / "verifications"
     root.mkdir(parents=True, exist_ok=True)
     return root / f"{key}.yml", root / f"{key}.log"
 

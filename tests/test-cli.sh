@@ -31,8 +31,8 @@ worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
 case "$branch" in invariant/work/cli-flow-*) ;; *) die "begin did not generate a task branch" ;; esac
 [ "$(git -C "$fixture" branch --show-current)" = main ] || die "begin moved the integration checkout"
 [ "$(git -C "$worktree" branch --show-current)" = "$branch" ] || die "begin did not create the task worktree"
-receipt="$fixture/.git/invariant/briefs/cli-flow.yml"
-[ -f "$receipt" ] || die "begin did not create a Git-local receipt"
+receipt="$fixture/.invariant/runtime/briefs/cli-flow.yml"
+[ -f "$receipt" ] || die "begin did not create an ignored runtime receipt"
 grep -q '^mechanics_digest:' "$receipt" || die "receipt does not bind CLI mechanics"
 grep -q '^governance_snapshot:$' "$receipt" || die "receipt omitted its governance snapshot"
 grep -q '^  selected_digest: ' "$receipt" || die "receipt omitted its selected governance digest"
@@ -90,7 +90,7 @@ printf '%s\n' "$out" | grep -q '^STATUS: completed$' ||
   die "completed task disappeared into missing-task state"
 printf '%s\n' "$out" | grep -q '^BOUNDARY: no-record$' ||
   die "completed task status did not preserve its final boundary"
-summary="$fixture/.git/invariant/history/tasks/cli-flow/$landed/summary.yml"
+summary="$fixture/.invariant/runtime/history/tasks/cli-flow/$landed/summary.yml"
 [ -f "$summary" ] || die "completion did not persist a retrospective summary"
 grep -q '^  final: no-record$' "$summary" || die "completion summary retained unresolved boundary"
 grep -q '^  structural:$' "$summary" || die "completion summary omitted assurance classes"
@@ -207,7 +207,7 @@ printf '%s\n' "$out" | grep -q '^RECOVERY: receipt and task branch retained; int
 printf '%s\n' "$out" | grep -q "^NEXT: inspect with 'invariant task status failed-flow'" ||
   die "failed finish did not provide a recovery command"
 [ "$(git -C "$fixture" show main:src/a.txt)" = two ] || die "failed verifier advanced main"
-[ -f "$fixture/.git/invariant/briefs/failed-flow.yml" ] || die "failed verifier discarded the receipt"
+[ -f "$fixture/.invariant/runtime/briefs/failed-flow.yml" ] || die "failed verifier discarded the receipt"
 [ "$(git -C "$failed_worktree" branch --show-current)" = "$failed_branch" ] || die "failed verifier discarded the work branch"
 git -C "$fixture" worktree remove --force "$failed_worktree"
 git -C "$fixture" branch -D "$failed_branch" >/dev/null

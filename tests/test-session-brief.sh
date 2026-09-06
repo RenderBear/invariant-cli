@@ -50,11 +50,13 @@ die() { echo "not ok - $1"; exit 1; }
 out=$(cd "$fixture" && session open task-1 --goal "Change source safely" \
   --posture bounded --boundary no-record --path "src/a file.py" --interface SourceApi --domain source)
 printf '%s\n' "$out" | grep -q '^BRIEF: opened task-1$' || die "brief did not open"
-manifest="$fixture/.git/invariant/briefs/task-1.yml"
-[ -f "$manifest" ] || die "brief receipt is not stored in the shared Git directory"
-[ ! -e "$fixture/.invariant/runtime" ] || die "brief cache polluted the coordination runtime"
+manifest="$fixture/.invariant/runtime/briefs/task-1.yml"
+[ -f "$manifest" ] || die "brief receipt is not stored in ignored Invariant runtime"
+[ -f "$fixture/.invariant/runtime/.gitignore" ] || die "runtime lacks its self-ignore marker"
+[ -z "$(git -C "$fixture" status --porcelain -- .invariant/runtime)" ] ||
+  die "brief cache polluted Git status"
 grep -q 'Change source safely' "$manifest" && die "raw goal was persisted"
-ok "brief receipt is disposable Git-local state"
+ok "brief receipt is disposable ignored runtime state"
 
 out=$(cd "$fixture" && session check task-1 --goal "Change source safely" \
   --path "src/a file.py" --interface SourceApi --domain source)
@@ -138,7 +140,7 @@ ok "selected governance digest guards semantic reuse"
 git -C "$fixture" worktree add -q -b linked "$linked"
 out=$(cd "$linked" && session check task-1 --goal "Change source safely")
 printf '%s\n' "$out" | grep -q '^BRIEF: fresh task-1$' || die "linked worktree could not reuse shared brief"
-ok "linked worktrees share the Git-local receipt"
+ok "linked worktrees share the ignored runtime receipt"
 
 printf 'unrelated\n' >"$fixture/unrelated.txt"
 git -C "$fixture" add unrelated.txt

@@ -746,7 +746,7 @@ candidate  A──B──C──M
                 </div>
                 <div class="skill-panel mechanics-panel">
                   <h3>Git mechanics</h3>
-                  <p>The captured integration commit is the causal ground. A receipt under <code>&lt;git-common-dir&gt;/invariant/briefs/</code> caches hashes, scope, target, and digest—but carries no authority. It survives an unrelated mergeable head advance, and becomes stale when governing content changes, scope expands, or the work branch conflicts.</p>
+                  <p>The captured integration commit is the causal ground. A receipt under <code>.invariant/runtime/briefs/</code> caches hashes, scope, target, and digest—but carries no authority. It survives an unrelated mergeable head advance, and becomes stale when governing content changes, scope expands, or the work branch conflicts.</p>
                   <p class="mechanic-note">read: HEAD + .invariant governance → write: disposable receipt → branch: invariant/work/&lt;uuid&gt;</p>
                 </div>
               </div>
@@ -843,7 +843,7 @@ candidate  A──B──C──M
                 <div class="skill-panel mechanics-panel">
                   <h3>Git mechanics</h3>
                   <p>Generated task branches use linked worktrees starting at the captured integration ground. Ignored runtime state lives in the primary worktree so all linked worktrees see the same leases. A lease binds owner, branch, worktree, target, ground, causal tip, digest, and claims. An intersecting landing makes it stale; expiry merely schedules a liveness check.</p>
-                  <p class="mechanic-note">ignored: .invariant/runtime/{plans,leases}/ · landed state: first-parent Invariant-Unit trailers · freshness: ancestry + claims</p>
+                  <p class="mechanic-note">ignored: .invariant/runtime/{briefs,tasks,history,verifications,plans,leases,worktrees}/ · landed state: first-parent Invariant-Unit trailers · freshness: ancestry + claims</p>
                 </div>
               </div>
             </details>

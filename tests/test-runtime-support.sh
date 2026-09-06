@@ -1,6 +1,6 @@
 #!/bin/sh
-# Verify ignored runtime plans and leases are shared across linked worktrees
-# and safely cleanable without touching repository content.
+# Verify every transient artifact uses one ignored runtime shared across linked
+# worktrees and supports explicit cleanup.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -70,17 +70,25 @@ out=$(cd "$fixture" && "$compat" runtime status)
 printf '%s\n' "$out" | grep -q "^RUNTIME: $runtime$" || die "status hides runtime path"
 printf '%s\n' "$out" | grep -q '^PLAN: done$' || die "status omits plan"
 printf '%s\n' "$out" | grep -q '^STALE: watcher — intersecting landing touched seed' || die "status omits stale lease"
-printf '%s\n' "$out" | grep -q '^CACHE:' && die "runtime still exposes non-planning caches"
-ok "runtime contains only active planning state"
+printf '%s\n' "$out" | grep -q '^VERIFICATION-RECEIPTS: 0$' || die "status omits verifier cache count"
+ok "runtime status distinguishes task, verification, and coordination state"
 
 (cd "$fixture" && "$compat" lease release watcher >/dev/null)
+mkdir -p "$runtime/history/tasks/finished/deadbeef" "$runtime/verifications"
+printf 'version: 1\n' >"$runtime/history/tasks/finished/deadbeef/summary.yml"
+printf 'status: passed\n' >"$runtime/verifications/check.yml"
+printf 'passed\n' >"$runtime/verifications/check.log"
 out=$(cd "$fixture" && "$compat" runtime clean)
 printf '%s\n' "$out" | grep -q '^CLEANABLE: completed plan done$' || die "dry run omits completed plan"
+printf '%s\n' "$out" | grep -q '^CLEANABLE: completed task finished@deadbeef$' || die "dry run omits completed task archive"
+printf '%s\n' "$out" | grep -q '^CLEANABLE: 2 verification cache file(s)$' || die "dry run omits verification cache"
 [ -f "$runtime/plans/done.yml" ] || die "dry-run cleanup mutated runtime"
 out=$(cd "$fixture" && "$compat" runtime clean --apply)
 printf '%s\n' "$out" | grep -q '^CLEANED: completed plan done$' || die "apply omits completed plan"
+printf '%s\n' "$out" | grep -q '^CLEANED: completed task finished@deadbeef$' || die "apply omits completed task archive"
+printf '%s\n' "$out" | grep -q '^CLEANED: 2 verification cache file(s)$' || die "apply omits verification cache"
 [ ! -e "$runtime" ] || die "empty runtime remains after cleanup"
 git -C "$fixture" log -1 --format=%s | grep -q '^land runtime fixtures$' || die "cleanup changed history"
-ok "cleanup is dry-run first and removes only completed planning state"
+ok "cleanup is dry-run first and removes only disposable or completed state"
 
 echo "5 runtime-support checks passed"

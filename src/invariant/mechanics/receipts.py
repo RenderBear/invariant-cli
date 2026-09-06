@@ -9,16 +9,16 @@ from typing import Any, Iterable
 import yaml
 
 from invariant.errors import Blocked, InvariantError
-from invariant.mechanics import config, git, governance
+from invariant.mechanics import config, coordinate, git, governance
 from invariant.mechanics.documents import dump_yaml, load_yaml
 
 
 def receipt_root(repo: Path) -> Path:
-    return git.common_dir(repo) / "invariant" / "briefs"
+    return coordinate.runtime_root(repo) / "briefs"
 
 
 def task_root(repo: Path, task: str) -> Path:
-    return git.common_dir(repo) / "invariant" / "tasks" / task
+    return coordinate.runtime_root(repo) / "tasks" / task
 
 
 def receipt_path(repo: Path, task: str) -> Path:
@@ -69,7 +69,7 @@ def load(repo: Path, task: str) -> dict[str, Any]:
 
 
 def completed_task_root(repo: Path, task: str) -> Path | None:
-    root = git.common_dir(repo) / "invariant" / "history" / "tasks" / task
+    root = coordinate.runtime_root(repo) / "history" / "tasks" / task
     if not root.is_dir():
         return None
     candidates = list(root.glob("*/receipt.yml"))
@@ -95,6 +95,7 @@ def load_completed(repo: Path, task: str) -> dict[str, Any] | None:
 
 
 def save(repo: Path, task: str, receipt: dict[str, Any]) -> None:
+    coordinate.ensure_runtime(repo)
     dump_yaml(receipt_path(repo, task), receipt)
 
 
@@ -303,6 +304,7 @@ def set_lifecycle(repo: Path, task: str, stage: str, branch: str, worktree: str)
 
 
 def invalidate(repo: Path, task: str) -> list[str]:
+    coordinate.ensure_runtime(repo)
     path = receipt_path(repo, task)
     existed = path.is_file()
     if existed:
@@ -389,17 +391,13 @@ def complete(repo: Path, task: str, landed_commit: str) -> Path:
         },
         "assurance": receipt.get("assurance", {}),
     }
+    coordinate.ensure_runtime(repo)
     local_task = task_root(repo, task)
     local_task.mkdir(parents=True, exist_ok=True)
     dump_yaml(local_task / "receipt.yml", receipt)
     dump_yaml(local_task / "summary.yml", summary)
     destination = (
-        git.common_dir(repo)
-        / "invariant"
-        / "history"
-        / "tasks"
-        / task
-        / landed_commit
+        coordinate.runtime_root(repo) / "history" / "tasks" / task / landed_commit
     )
     if destination.exists():
         raise InvariantError(

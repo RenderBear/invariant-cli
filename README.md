@@ -203,7 +203,7 @@ verification:
 ```
 
 A verifier such as `runner:backend#tests/test_contract.py` then executes in `backend`. Successful
-output is retained under Git-local Invariant runtime and omitted from normal responses. Exact-tree
+output is retained under ignored `.invariant/runtime/` and omitted from normal responses. Exact-tree
 receipts let `task finish` reuse a matching prior candidate verification; reach, state validation,
 the prospective tree, and the integration compare-and-swap are still recomputed live. Set a runner's
 cache to `exact-tree` only when that reuse is sound; named runners default to `never`.
@@ -256,7 +256,8 @@ your-repository/
 │   ├── DOMAINS.yml       stable responsibilities and architecture pointers
 │   ├── CONTRACTS.yml     executable promises between responsibilities
 │   ├── discoveries/      non-authoritative evidence from ongoing work
-│   └── audits/           non-authoritative broader investigations
+│   ├── audits/           non-authoritative broader investigations
+│   └── runtime/          self-ignored task state, worktrees, evidence, and caches
 └── docs/
     └── architecture.md   ordinary Markdown remains the source of truth
 ```
@@ -278,12 +279,14 @@ your-repository/
   command identity, environment fingerprints, result, output digest, and retained log.
 - **Coordination:** temporary dependencies and ownership while parallel work is active.
 
-Completed tasks remain inspectable with `task status` and `task evidence`. Their Git-local archive
-contains `summary.yml`, which preserves the audit and finding coverage, landing commit, exact
-candidate tree, initial and final boundary, and three distinct assurance results: structural
-validity, behavioral verification, and semantic judgment. Semantic review is self-attested by
-default; a host that actually routes it to a separate reviewer can declare
-`review_mode: independent` in the review response.
+Completed tasks remain inspectable with `task status` and `task evidence`. Their ignored archive at
+`.invariant/runtime/history/` contains `summary.yml`, which preserves the audit and finding
+coverage, landing commit, exact candidate tree, initial and final boundary, and three distinct
+assurance results: structural validity, behavioral verification, and semantic judgment. Semantic
+review is self-attested by default; a host that actually routes it to a separate reviewer can
+declare `review_mode: independent` in the review response. These local archives and reusable
+verification receipts can be listed with `invariant coordinate status` and removed explicitly with
+`invariant coordinate runtime clean --apply`.
 
 The short form is:
 
