@@ -173,9 +173,10 @@ or require a second `task begin`. A response is bound to its hook context; chang
 adapter code, or candidate invalidates it. `status: ok` with `outcome: needs_input` means the command
 succeeded and is waiting for judgment, rather than suffering a mechanical failure.
 
-Default action payloads are deliberately small: they carry stable schema, artifact, and evidence
-IDs instead of repeating full schemas, briefs, and verifier output. Expand only what the current
-step needs with `task action <task> <action-id>` and `task evidence <task> [<evidence-id>]`.
+Default lifecycle payloads are deliberately small: they carry stable action, schema, artifact, and
+evidence IDs instead of repeating prompts, schemas, briefs, and verifier output. Expand only what
+the current step needs with `task action <task> <action-id>` and
+`task evidence <task> [<evidence-id>]`.
 
 ```bash
 invariant --format json task begin import-processor --goal "Import the processor"
@@ -187,26 +188,18 @@ invariant --format json task respond import-processor intent_brief:candidate.evi
 
 Routine tasks with no pending semantic action still finish in one command.
 
-### Configure project-aware verification
+### Declare verification witnesses
 
-Python `test:` locators use the nearest `pyproject.toml` and tracked `uv.lock` automatically. More
-complex repositories can register named runners:
+Ordinary verification is configuration-free. Contracts name a repository witness such as
+`test:tests/test_contract.py` or `test:tests/test-cli.sh`; Invariant resolves its execution from the
+exact candidate. Python tests use the nearest `pyproject.toml`. In a locked uv project, both Python
+and shell witnesses execute through `uv run --frozen` and may reuse a receipt for the same exact
+tree. A standalone shell witness runs with POSIX `sh` and is not cached.
 
-```yaml
-verification:
-  runners:
-    backend:
-      command: [uv, run, pytest, "{target}"]
-      cwd: backend
-      cache: exact-tree
-      timeout: 300
-```
-
-A verifier such as `runner:backend#tests/test_contract.py` then executes in `backend`. Successful
-output is retained under ignored `.invariant/runtime/` and omitted from normal responses. Exact-tree
-receipts let `task finish` reuse a matching prior candidate verification; reach, state validation,
-the prospective tree, and the integration compare-and-swap are still recomputed live. Set a runner's
-cache to `exact-tree` only when that reuse is sound; named runners default to `never`.
+The resolved command, working directory, timeout, environment fingerprint, cache decision, result,
+output digest, and log path are runtime evidence under ignored `.invariant/runtime/`. They are not
+ordinary repository configuration and they do not become governance. Named runners remain an
+expert escape hatch for witnesses whose toolchain cannot be inferred.
 
 ## Establish durable repository context
 

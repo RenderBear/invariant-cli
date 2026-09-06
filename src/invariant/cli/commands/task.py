@@ -243,6 +243,22 @@ def _task_result(repo: Path, task_id: str, lines: list[str]) -> CommandResult:
     return CommandResult(lines, {"task": payload}, outcome)
 
 
+def _assurance_delta(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, object] = {}
+    for name in ("structural", "behavioral", "semantic"):
+        raw = value.get(name)
+        if not isinstance(raw, dict):
+            continue
+        item: dict[str, object] = {"status": str(raw.get("status") or "unknown")}
+        for field in ("authority", "review_mode"):
+            if raw.get(field):
+                item[field] = str(raw[field])
+        result[name] = item
+    return result
+
+
 def _flow_result(
     repo: Path, task_id: str, result: tasks.FlowResult
 ) -> CommandResult:
@@ -250,7 +266,16 @@ def _flow_result(
         task_payload = _task_payload(repo, task_id)
     else:
         task_payload = _terminal_task_payload(repo, task_id)
-    data: dict[str, object] = {"task": task_payload}
+    data: dict[str, object] = {
+        "task": {
+            "id": task_payload["id"],
+            "stage": task_payload["stage"],
+            "boundary": task_payload["boundary"],
+            "actions": task_payload["actions"],
+            "assurance": _assurance_delta(task_payload.get("assurance")),
+            "completion": task_payload["completion"],
+        }
+    }
     candidate_tree = result.data.get("candidate_tree")
     evidence_ids = result.data.get("evidence_ids")
     if candidate_tree or evidence_ids:
@@ -258,9 +283,6 @@ def _flow_result(
             "tree": str(candidate_tree or ""),
             "evidence_ids": evidence_ids if isinstance(evidence_ids, list) else [],
         }
-    assurance = result.data.get("assurance")
-    if isinstance(assurance, dict):
-        data["assurance"] = assurance
     return CommandResult(result.lines, data, result.outcome)
 
 

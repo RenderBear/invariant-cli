@@ -57,7 +57,7 @@ def pending(receipt: Mapping[str, object]) -> list[dict[str, Any]]:
 
 
 def action_descriptor(request: Mapping[str, object]) -> dict[str, Any]:
-    """Return the stable, compact public form of a persisted action."""
+    """Return the expanded public form of a persisted action."""
 
     raw_context = request.get("context")
     context = dict(raw_context) if isinstance(raw_context, dict) else {}
@@ -86,8 +86,24 @@ def action_descriptor(request: Mapping[str, object]) -> dict[str, Any]:
     }
 
 
+def action_reference(request: Mapping[str, object]) -> dict[str, Any]:
+    """Return the small lifecycle reference used before explicit expansion."""
+
+    kind = str(request.get("kind") or "action")
+    return {
+        "id": str(request.get("id") or ""),
+        "adapter": str(request.get("adapter") or ""),
+        "phase": str(request.get("phase") or ""),
+        "kind": kind,
+        "schema_id": str(
+            request.get("schema_id") or f"invariant://schemas/actions/{kind}/v1"
+        ),
+        "blocking": bool(request.get("blocking", True)),
+    }
+
+
 def action_descriptors(receipt: Mapping[str, object]) -> list[dict[str, Any]]:
-    return [action_descriptor(item) for item in pending(receipt)]
+    return [action_reference(item) for item in pending(receipt)]
 
 
 def run_hook(

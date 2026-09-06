@@ -70,7 +70,7 @@ git -C "$worktree" commit -qm implementation
 
 out=$(cd "$fixture" && "$cli" --format json --verbose task finish cli-flow --subject "change source")
 printf '%s\n' "$out" | grep -q 'ASSESSMENT: inferred cli-flow' || die "routine finish did not infer its assessment"
-printf '%s\n' "$out" | grep -q 'LANDED:' || die "finish did not use exact-tree landing"
+printf '%s\n' "$out" | grep -q 'LANDING-COMMIT:' || die "finish did not identify the exact-tree landing"
 printf '%s\n' "$out" | grep -q 'STATUS: completed' || die "finish did not complete lifecycle"
 printf '%s\n' "$out" | grep -q '"stage":"completed"' || die "finish JSON omitted terminal task state"
 [ "$(git -C "$fixture" branch --show-current)" = main ] || die "finish did not restore the integration branch"

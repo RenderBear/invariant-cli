@@ -13,6 +13,7 @@ from invariant.semantics.adoption import AdoptionManifest
 from invariant.semantics.discovery import Discovery, validate_shape
 from invariant.semantics.models import Assessment
 from invariant.semantics.records import parse_document
+from invariant.mechanics import landing
 
 
 PACKAGE = Path(__file__).parents[1] / "src" / "invariant"
@@ -42,6 +43,37 @@ def test_mechanics_does_not_depend_on_lifecycle_or_skill_source() -> None:
         imports = imported_modules(path)
         assert not any(name.startswith("invariant.lifecycle") for name in imports), path
         assert "skills/" not in path.read_text(encoding="utf-8")
+
+
+def test_landing_accepts_architecture_registered_by_an_active_semantic_record(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / ".invariant").mkdir()
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "architecture.md").write_text(
+        "# Architecture\n\n## Application boundary\n\nThe application owns recovery.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".invariant" / "SEMANTICS.yml").write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "records": [
+                    {
+                        "id": "application-boundary",
+                        "document": "architecture:docs/architecture.md#application-boundary",
+                        "authority": "design:repo:docs/architecture.md#application-boundary",
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    assert landing._governance_exists(
+        tmp_path, "architecture:docs/architecture.md#application-boundary"
+    )
 
 
 def test_protocol_uses_the_new_namespace() -> None:

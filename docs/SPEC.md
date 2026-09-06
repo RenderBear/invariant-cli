@@ -346,11 +346,13 @@ persistence, eliminating an incidental audit-only commit between `audit save` an
 Under agent authority, saving the audit automatically selects its ready findings and advances the
 session to adoption.
 
-Project-aware verifier runners may be registered under `verification.runners`. Each runner declares
-a command template, repository-relative working directory, `exact-tree` or `never` cache policy,
-and optional timeout. `runner:<name>#<target>` invokes it. Python `test:` locators locate the nearest
-candidate `pyproject.toml` and use its tracked `uv.lock` when present. Automatic reuse is enabled
-only for that locked environment; named runners must opt into exact-tree reuse explicitly.
+Ordinary `test:` verifier locators require no configuration. The verifier resolves execution from
+the exact candidate: Python tests locate the nearest `pyproject.toml`; shell tests in a locked uv
+project execute through `uv run --frozen`; standalone shell tests execute through POSIX `sh`.
+Automatic reuse is enabled only for a locked environment and the same exact candidate tree.
+Resolved commands, working directories, timeouts, environment fingerprints, cache decisions, and
+logs are evidence recorded under ignored runtime state, not governance. Named `runner:` locators
+remain an expert escape hatch for a toolchain that cannot be inferred and must opt into reuse.
 
 Absence means both supported coding agents, `authority: agent`, `execution: auto`,
 `integration_branch: auto`, `push_remote: off`, and no enabled adapters. Automatic
@@ -638,9 +640,10 @@ checks:
 The assessment records the caller's semantic decisions. It is not accepted governance and need not
 be committed. The CLI validates references, completeness, and consistency with the candidate.
 `task finish` owns assessment preparation. If no semantic judgment remains, it proceeds in the same
-command. Otherwise it returns action objects whose contexts contain the exact candidate tree,
-affected semantics, inferred governance, and captured evidence. `task assessment prepare` exposes
-the lower-level assessment for diagnostics and migration; normal hosts do not edit it.
+command. Otherwise it returns compact action references plus the exact candidate tree and captured
+evidence IDs. `task action` retrieves affected semantics, inferred governance, the response schema,
+and other action-specific context. `task assessment prepare` exposes the lower-level assessment for
+diagnostics; normal hosts do not edit it.
 
 Adapter inputs do not extend the core assessment schema. When the intent-brief adapter is enabled,
 its final action accepts a separate whole-candidate review:
@@ -677,12 +680,7 @@ JSON uses one envelope:
     "task": {
       "id": "example",
       "stage": "awaiting-review",
-      "goal_digest": "<goal-digest>",
-      "scope": {"paths": ["src/example.py"], "interfaces": [], "domains": []},
       "boundary": "no-record",
-      "integration": {"target": "main", "base": "<base-commit>"},
-      "work": {"branch": "invariant/work/example-<nonce>", "worktree": "<path>"},
-      "adapters": [],
       "actions": [
         {
           "id": "core:candidate-review",
@@ -690,16 +688,13 @@ JSON uses one envelope:
           "phase": "candidate.evidenced",
           "kind": "review_semantics",
           "blocking": true,
-          "prompt": "Review the exact candidate against the affected canonical prose.",
-          "schema_id": "invariant://schemas/actions/review-semantics/v1",
-          "context": {"candidate_tree": "<tree>", "evidence_ids": ["state:<id>"]}
+          "schema_id": "invariant://schemas/actions/review-semantics/v1"
         }
       ],
-      "artifacts": [],
       "assurance": {
-        "structural": {"status": "passed", "evidence_ids": ["state:<id>"]},
-        "behavioral": {"status": "not_required", "evidence_ids": []},
-        "semantic": {"status": "pending", "review_ids": ["core:candidate-review"]}
+        "structural": {"status": "passed"},
+        "behavioral": {"status": "not_required"},
+        "semantic": {"status": "pending"}
       },
       "completion": {"commit": ""}
     },
@@ -736,10 +731,11 @@ collection, verification, or compare-and-swap landing.
 | `task.created` | Receipt, target, base, branch name, and work location have been selected; implementation has not begun | task, original goal, goal digest | private state, artifacts, or blocking response actions |
 | `candidate.evidenced` | One exact candidate tree has been constructed and its applicable mechanical observations captured; integration has not moved | task, goal digest, candidate tree, evidence receipts | private state, artifacts, or blocking response actions |
 
-Each action contains a stable ID, owner, phase, kind, human prompt, JSON Schema, blocking flag, and
-candidate-specific context. The CLI stores it in the active receipt and returns it in typed output.
-`task respond` resolves exactly one ID. Adapter response files are transported through the CLI and
-stored privately; they are never accepted governance merely because an adapter produced them.
+Each persisted action contains a stable ID, owner, phase, kind, human prompt, JSON Schema, blocking
+flag, and candidate-specific context. Normal lifecycle output returns only its stable reference;
+`task action <task> <id>` expands the prompt, schema, and context on demand. `task respond` resolves
+exactly one ID. Adapter response files are transported through the CLI and stored privately; they
+are never accepted governance merely because an adapter produced them.
 
 Hook execution follows these rules:
 
@@ -769,6 +765,8 @@ beyond the separately configured upstream push belong to the host.
 ### 8.4 Output discipline
 
 - Standard output contains only the selected result format.
+- Successful lifecycle output is a state delta; full status, actions, and evidence are fetched by
+  their dedicated read APIs.
 - Successful verifier output is retained in ignored local logs and summarized rather than
   copied into normal responses. Failure responses include the relevant output and log path.
 - Standard error contains invocation or runtime diagnostics that prevented a valid result.

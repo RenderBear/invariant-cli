@@ -18,9 +18,9 @@ A domain or contract may use only an architecture reference whose Markdown file 
 in the candidate. A governance architecture reference must already be registered by a candidate
 domain or contract. `unresolved` is a valid boundary disposition only while work is active.
 
-Named verifier runners declare their command, working directory, timeout, and cache policy under
-`verification.runners` in `.invariant/config.yml`. Python tests automatically use the nearest
-tracked `uv.lock` and `pyproject.toml` when present.
+Ordinary shell and Python `test:` witnesses are configuration-free. Invariant uses the nearest
+`pyproject.toml`; a tracked `uv.lock` selects frozen uv execution and exact-tree receipt reuse.
+Named verifier runners remain the escape hatch for project-specific commands.
 
 ### Meaning and standing
 
