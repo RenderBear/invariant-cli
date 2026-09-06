@@ -60,7 +60,9 @@ def emit_error(
     lines = list(error.lines)
     if format_name == "json":
         status = "blocked" if error.exit_code == 1 else "error"
-        result: dict[str, Any] = {"records": _records(lines)}
+        result: dict[str, Any] = error.data or {"records": _records(lines)}
+        if error.data is not None and lines:
+            result = {**result, "records": _records(lines)}
         if verbose:
             result["output"] = "\n".join(lines) + ("\n" if lines else "")
         print(

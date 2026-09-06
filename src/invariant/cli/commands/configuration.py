@@ -30,7 +30,9 @@ def _show(_: argparse.Namespace) -> list[str]:
 
 
 def _init(_: argparse.Namespace) -> list[str]:
-    return config.initialize(_repo())
+    repo = _repo()
+    git.require_capabilities(repo)
+    return config.initialize(repo)
 
 
 def _set(args: argparse.Namespace) -> list[str]:

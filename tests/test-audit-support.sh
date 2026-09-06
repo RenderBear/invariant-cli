@@ -63,6 +63,7 @@ EOF
 out=$(cd "$fixture" && "$cli" evidence audit save ocr --mode scope --path src/ocr --input "$findings")
 audit_id=$(printf '%s\n' "$out" | sed -n 's/^AUDIT: //p')
 audit_path="$fixture/.invariant/audits/$audit_id.yml"
+printf '%s\n' "$audit_id" | grep -Eq '^ocr-[0-9]{8}T[0-9]{6}Z$' || die "audit label and timestamp were not reflected in its id"
 printf '%s\n' "$out" | grep -q "^SAVED: .invariant/audits/$audit_id.yml$" || die "timestamped audit was not saved under audits"
 printf '%s\n' "$out" | grep -Eq '^CREATED-AT: [0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' || die "audit timestamp was not reported"
 printf '%s\n' "$out" | grep -q '^NEXT: adopt every ready finding' || die "agent authority did not continue toward adoption"

@@ -6,13 +6,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from invariant.errors import InvariantError
-from invariant.mechanics import config
+from invariant.mechanics import config, git
 from invariant.semantics import guidance
 
 
 START = "<!-- invariant:workflow:start -->"
 END = "<!-- invariant:workflow:end -->"
-INITIAL_GOVERNANCE_PROMPT = "Run the initial governance for the repository with Invariant."
+GOVERNANCE_PROMPT = "Run a governance pass for the repository with Invariant."
 
 
 @dataclass(frozen=True)
@@ -105,6 +105,7 @@ def _instruction_updates(repo: Path, coding_agents: tuple[str, ...]) -> dict[Pat
 
 
 def initialize(repo: Path, settings: BootstrapSettings) -> list[str]:
+    git.require_capabilities(repo)
     updates = _instruction_updates(repo, settings.coding_agents)
     config.initialize(
         repo,
@@ -137,5 +138,5 @@ def initialize(repo: Path, settings: BootstrapSettings) -> list[str]:
         f"PUSH-REMOTE: {settings.push_remote}",
         f"TASK-ACCEPTANCE-ADAPTER: {'on' if settings.task_acceptance else 'off'}",
         *instruction_lines,
-        f"PROMPT: {INITIAL_GOVERNANCE_PROMPT}",
+        f"PROMPT: {GOVERNANCE_PROMPT}",
     ]

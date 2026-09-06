@@ -46,6 +46,29 @@ def run(
     return result
 
 
+def require_capabilities(repo: Path) -> None:
+    """Fail before mutation when Git lacks mechanics required by Invariant."""
+    version = run(["--version"], cwd=repo, check=False)
+    merge_tree_help = run(["merge-tree", "-h"], cwd=repo, check=False)
+    worktrees = run(["worktree", "list", "--porcelain"], cwd=repo, check=False)
+    missing: list[str] = []
+    if "--write-tree" not in f"{merge_tree_help.stdout}\n{merge_tree_help.stderr}":
+        missing.append("git merge-tree --write-tree")
+    if worktrees.returncode:
+        missing.append("git worktree porcelain support")
+    if missing:
+        label = version.stdout or version.stderr or "unknown Git version"
+        raise InvariantError(
+            "Invariant: installed Git lacks required exact-candidate capabilities",
+            code="unsupported_git",
+            lines=[
+                f"GIT: {label}",
+                *[f"MISSING: {capability}" for capability in missing],
+                "NEXT: install a Git release that provides the missing capabilities, then retry",
+            ],
+        )
+
+
 def root(cwd: Path | str | None = None) -> Path:
     result = run(["rev-parse", "--show-toplevel"], cwd=cwd, check=False)
     if result.returncode:

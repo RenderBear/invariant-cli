@@ -1,10 +1,10 @@
 # Invariant CLI — design of record
 
 Invariant is a repository-native control plane for long-running agentic work, delivered as a
-portable command-line application. It preserves accepted architectural meaning while repositories
-change by owning deterministic mechanics, the fixed repository lifecycle, a small semantic
-protocol, and optional integrations for agents and automation. It does not host or execute the
-model loop.
+portable command-line application. It records accepted architectural meaning and binds explicit
+review assertions to repository changes while owning deterministic mechanics, the fixed repository
+lifecycle, a small semantic protocol, and optional integrations for agents and automation. It does
+not host or execute the model loop.
 
 The design separates three concerns:
 
@@ -27,7 +27,8 @@ Invariant answers:
 2. Which facts can be derived exactly from repository state?
 3. Does a candidate preserve the accepted meaning selected by its semantic reviewer?
 4. Which executable checks apply to that exact candidate?
-5. Can a requested ref update happen without races, hidden conflicts, or unverifiable claims?
+5. Can a requested local ref update happen without races, hidden conflicts, or unverifiable
+   mechanical claims inside this clone?
 
 Invariant should be usable from:
 
@@ -86,6 +87,8 @@ The `invariant` CLI owns deterministic operations:
 - projecting selected governance;
 - calculating content digests;
 - detecting changed material;
+- proving the installed Git supports required exact-candidate and linked-worktree operations before
+  lifecycle mutation;
 - constructing exact Git candidates;
 - selecting declared verifiers;
 - running checks against an exact tree;
@@ -94,8 +97,10 @@ The `invariant` CLI owns deterministic operations:
 - atomically updating a local ref when explicitly requested;
 - pushing the exact landed commit to an existing upstream only when tracked policy opts in.
 
-The CLI does not call a model. It does not select semantic domains or infer `no-record`. It validates
-semantic assertions supplied by its caller against mechanical facts.
+The CLI does not call a model or select semantic domains. It may prepare `no-record` for a
+mechanically local or bounded routine candidate; reach never manufactures authority for an open or
+gated transition. Other semantic assertions come from the caller and are validated against
+mechanical facts.
 
 ### 3.3 Lifecycle
 
@@ -103,7 +108,7 @@ The CLI owns the fixed repository lifecycle. It owns:
 
 - capturing the integration target and causal ground;
 - creating and refreshing a task receipt;
-- creating or reusing an isolated generated work branch;
+- creating or reusing an isolated generated worktree;
 - recording lifecycle state needed for resumption;
 - constructing the prospective integration tree;
 - requiring semantic inputs at the points where mechanics cannot decide;
@@ -176,19 +181,26 @@ begin
 ```
 
 `invariant task begin` captures the target, gathers the mechanically available context, records the
-semantic envelope, and creates or reuses the generated work branch. It returns the branch and
-worktree context in which the host performs the requested implementation.
+semantic envelope, and creates or reuses a generated branch in a dedicated linked worktree. It
+leaves the integration checkout unchanged so several tasks can begin concurrently in one clone and
+returns both the task worktree and lifecycle root.
 
 The initial durable-meaning boundary defaults to `unresolved`. A harness may provide a grounded
 disposition early, but the CLI does not require a human or agent to predict candidate reach before
 the candidate exists. Final boundary review remains mandatory during `task finish`.
 
-`invariant task finish` constructs the exact prospective merge tree, recomputes reach, validates the
-current semantic assessment, runs affected checks and reviews, and compare-and-swaps the integration
-ref. If semantic input is missing, it returns the required decision without discarding valid
-mechanical work. If verification or landing fails, the work branch remains recoverable. When remote
+`invariant task finish` first generates an assessment when none exists. Routine candidates continue
+directly; when semantic input is missing, it saves the draft and returns every required decision,
+inferred field, and planned verifier together without discarding valid mechanical work. Finishing
+then constructs the exact prospective merge tree, recomputes reach, validates the assessment, runs
+affected checks and reviews, and compare-and-swaps the local integration ref. If verification or
+landing fails, the worktree remains recoverable. When remote
 publication is enabled, it occurs only after local landing; a rejected push leaves that verified
 local landing intact and reports it explicitly.
+
+Semantic acknowledgements are attributable assertions, not proof of reviewer comprehension. The
+CLI can bind them to an exact tree, expose omissions, and preserve who asserted what; it cannot
+distinguish careful reasoning from a rubber stamp.
 
 An unrelated mergeable integration advance may be adopted without restarting semantics. Expanded
 semantic scope, changed governing material, incompatible meaning, or a real conflict returns the
@@ -291,9 +303,9 @@ The human supplies intent or authority only; after approval, the harness reappli
 transition with `--apply`. Agent authority requires both accepted and proposed configuration to
 remain `agent`: enabling takes effect after integration, while returning to `human` is immediate.
 
-`integration_branch` identifies the default local convergence target. `auto` resolves the current
-branch when a new task begins; a named value fixes one existing local branch as the convergence
-target. An omitted value is read as `auto` for compatibility.
+`integration_branch` identifies the default local convergence target. `auto` resolves the primary
+lifecycle checkout's current branch when a new task begins; a named value fixes one existing local
+branch as the convergence target. An omitted value is read as `auto` for compatibility.
 
 `push_remote` is an independent remote-publication policy:
 
@@ -316,14 +328,16 @@ A full audit is read-only investigation, so `execution` does not gate it. The co
 persisted under `.invariant/audits/` with its exact ground and tree before adoption. Adoption keeps
 the two controls separate: `authority` determines who approves the findings, while `execution`
 determines whether the resulting task branch, verification, and landing advance automatically.
-With agent authority, audit through adoption is one autonomous governance run. With human authority,
+With agent authority, audit through adoption is one autonomous governance pass. With human authority,
 the saved audit is summarized before the human chooses deeper investigation, adoption of all ready
 findings, adoption of selected findings, or deferral.
 
-Initial governance is exposed as one resumable session while preserving distinct audit, adoption,
-and verification phases. The managed branch is opened before audit persistence, eliminating an
-incidental audit-only commit between `audit save` and task creation. Under agent authority, saving
-the audit automatically selects its ready findings and advances the session to adoption.
+A governance pass is exposed as one resumable session while preserving distinct audit, adoption,
+and verification phases. The first pass establishes durable governance; later passes reconcile it
+with the current committed integration state. The managed worktree is opened before audit
+persistence, eliminating an incidental audit-only commit between `audit save` and task creation.
+Under agent authority, saving the audit automatically selects its ready findings and advances the
+session to adoption.
 
 Project-aware verifier runners may be registered under `verification.runners`. Each runner declares
 a command template, repository-relative working directory, `exact-tree` or `never` cache policy,
@@ -341,9 +355,11 @@ authority.
 arrow-key radio selection; only a named integration branch requires free-form typing. `--defaults`
 selects both coding agents and every safe default without prompting. It creates
 `.invariant/config.yml`, installs or updates a marked workflow block in the selected root agent
-instruction files, and prints a natural-language request for the coding agent to run initial
-governance. It never runs a model itself. Existing unrelated agent instructions are preserved, and an
-ambiguous unmanaged Invariant section blocks initialization before project state is created.
+instruction files, and prints a natural-language request for the coding agent to run a governance
+pass. Before writing those files it proves that Git provides the linked-worktree and
+`merge-tree --write-tree` capabilities used by the lifecycle. It never runs a model itself. Existing
+unrelated agent instructions are preserved, and an ambiguous unmanaged Invariant section blocks
+initialization before project state is created.
 
 `invariant config show` displays configured and resolved values without creating state.
 `invariant config init` remains the lower-level configuration-only initializer.
@@ -501,11 +517,11 @@ Initial command groups are:
 ```text
 invariant init [--defaults]
 invariant status [<task-id>]
-invariant initial-governance begin <task-id>
-invariant initial-governance audit-save <task-id> <label> --input <findings-file>
-invariant initial-governance adopt <task-id> <--all-ready|--finding <id>...>
-invariant initial-governance defer <task-id>
-invariant initial-governance status <task-id>
+invariant governance begin <task-id>
+invariant governance audit-save <task-id> --input <findings-file>
+invariant governance adopt <task-id> <--all-ready|--finding <id>...>
+invariant governance defer <task-id>
+invariant governance status <task-id>
 invariant config show
 invariant config init
 invariant config set <key> <value>
@@ -565,13 +581,16 @@ checks:
 
 The assessment records the caller's semantic decisions. It is not accepted governance and need not
 be committed. The CLI validates references, completeness, and consistency with the candidate.
-`task assessment prepare` generates the causal fields and returns one typed object containing the
-draft, inferred values, remaining required decisions, recommended architecture reviews, and exact
-verifiers that will run. Schema and example commands expose the same source-of-truth shapes used by
+When no draft exists, `task finish` invokes assessment preparation itself. If no semantic completion
+is required, it proceeds in the same command. Otherwise it saves the draft and returns one typed
+object containing the draft, inferred values, remaining required decisions, recommended architecture
+reviews, and exact verifiers that will run. `task assessment prepare` exposes the same operation for
+explicit inspection or export. Schema and example commands expose the source-of-truth shapes used by
 validation.
 
-Adapter inputs do not extend this core assessment schema. When task acceptance is enabled,
-`task assessment prepare` also writes a separate Git-local review:
+Adapter inputs do not extend this core assessment schema. When task acceptance is enabled, the
+preparation step—invoked automatically by `task finish` or explicitly through `task assessment
+prepare`—also writes a separate Git-local review:
 
 ```yaml
 version: 1
@@ -694,10 +713,11 @@ same lifecycle with little or no semantic ceremony.
 
 An audit is tracked evidence over a declared commit and exact tree. The CLI can capture mechanical
 scope, validate evidence references, and check causal freshness. A semantic reviewer authors its
-findings and dispositions. `evidence audit save` accepts only a version marker and findings, stamps
-the audit label with a compact UTC timestamp, records the same event as RFC 3339 `created_at`, stamps
-the mode, ground, and tree, validates the complete record, and writes it under `.invariant/audits/`
-before any adoption decision. Time is descriptive only; freshness remains Git-causal.
+findings and dispositions. `evidence audit save` accepts only a version marker and findings,
+combines the audit label with a compact UTC timestamp, records the same event as RFC 3339
+`created_at`, stamps the mode, ground, and tree, validates the complete record, and writes it under
+`.invariant/audits/` before any adoption decision. Governance passes use the neutral label `audit`,
+producing `audit-<UTC timestamp>.yml`. Time is descriptive only; freshness remains Git-causal.
 
 A discovery is a tracked non-authoritative change in repository understanding:
 
@@ -817,7 +837,7 @@ Invariant has one mandatory managed-task lifecycle and two execution profiles.
 With automatic execution, the CLI:
 
 1. opens or refreshes the task receipt;
-2. creates or reuses the isolated work branch;
+2. creates or reuses an isolated linked worktree without moving the integration checkout;
 3. returns control to the host for implementation;
 4. resumes at `task finish` and advances through candidate construction, verification, and local
    landing without routine confirmations;
@@ -906,7 +926,8 @@ records are accepted while the generalized ontology is adopted incrementally.
 The first CLI release is complete when:
 
 - one installed `invariant` executable replaces direct package-relative script invocation;
-- `invariant task begin` creates the receipt and isolated generated work branch;
+- `invariant task begin` creates the receipt and isolated generated worktree without moving the
+  integration checkout;
 - `invariant task finish` recomputes reach, verifies the exact prospective tree, and atomically lands
   it;
 - automatic and assisted execution preserve the same lifecycle and differ only in routine pauses;

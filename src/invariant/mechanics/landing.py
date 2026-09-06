@@ -683,6 +683,7 @@ def _coordinate_verify(repo: Path, request: LandRequest, candidate: Candidate) -
 
 def verify_and_land(repo: Path, request: LandRequest, *, update_ref: bool = True) -> list[str]:
     _validate_request(request)
+    git.require_capabilities(repo)
     target = request.target or config.resolve(repo).integration_branch
     if git.run(["check-ref-format", "--branch", target], cwd=repo, check=False).returncode:
         raise InvariantError(f"Invariant: invalid integration branch '{target}'")

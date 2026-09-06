@@ -27,8 +27,10 @@ out=$(cd "$fixture" && "$cli" task begin cli-flow --goal "$goal" \
   --path src/a.txt)
 printf '%s\n' "$out" | grep -q '^STATUS: implementing$' || die "automatic begin did not enter implementation"
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
+worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
 case "$branch" in intent/work/cli-flow-*) ;; *) die "begin did not generate a task branch" ;; esac
-[ "$(git -C "$fixture" branch --show-current)" = "$branch" ] || die "begin did not switch to the task branch"
+[ "$(git -C "$fixture" branch --show-current)" = main ] || die "begin moved the integration checkout"
+[ "$(git -C "$worktree" branch --show-current)" = "$branch" ] || die "begin did not create the task worktree"
 receipt="$fixture/.git/invariant/briefs/cli-flow.yml"
 [ -f "$receipt" ] || die "begin did not create a Git-local receipt"
 grep -q '^mechanics_digest:' "$receipt" || die "receipt does not bind CLI mechanics"
@@ -43,73 +45,78 @@ out=$(cd "$fixture" && "$cli" task check cli-flow --goal-digest "$goal_digest")
 printf '%s\n' "$out" | grep -q '^BRIEF: fresh cli-flow$' || die "digest-based lifecycle check failed"
 ok "status and check resume lifecycle state without raw goal persistence"
 
-printf 'two\n' >"$fixture/src/a.txt"
-git -C "$fixture" add src/a.txt
-git -C "$fixture" commit -qm implementation
-cat >"$assessment" <<EOF
-version: 1
-goal_digest: $goal_digest
-paths: [src/a.txt]
-interfaces: []
-domains: []
-boundary:
-  disposition: no-record
-governance: []
-architecture_reviews: []
-checks: []
-EOF
+printf 'unrelated local note\n' > "$fixture/local-note.txt"
+peer=$(cd "$fixture" && "$cli" task begin cli-peer --goal "Run beside another task" \
+  --boundary no-record --path src/a.txt)
+peer_branch=$(printf '%s\n' "$peer" | sed -n 's/^BRANCH: //p')
+peer_worktree=$(printf '%s\n' "$peer" | sed -n 's/^WORKTREE: //p')
+[ "$peer_worktree" != "$worktree" ] || die "parallel tasks shared one worktree"
+[ "$(git -C "$worktree" branch --show-current)" = "$branch" ] || die "parallel begin displaced the first task"
+[ "$(git -C "$peer_worktree" branch --show-current)" = "$peer_branch" ] || die "parallel begin did not isolate the second task"
+git -C "$fixture" worktree remove "$peer_worktree"
+git -C "$fixture" branch -D "$peer_branch" >/dev/null
+(cd "$fixture" && "$cli" task invalidate cli-peer >/dev/null)
+rm "$fixture/local-note.txt"
+ok "active tasks receive independent linked worktrees"
 
-out=$(cd "$fixture" && "$cli" task finish cli-flow --assessment "$assessment" --subject "change source")
+printf 'two\n' >"$worktree/src/a.txt"
+git -C "$worktree" add src/a.txt
+git -C "$worktree" commit -qm implementation
+
+out=$(cd "$fixture" && "$cli" task finish cli-flow --subject "change source")
+printf '%s\n' "$out" | grep -q '^ASSESSMENT: inferred cli-flow$' || die "routine finish did not infer its assessment"
 printf '%s\n' "$out" | grep -q '^LANDED:' || die "finish did not use exact-tree landing"
 printf '%s\n' "$out" | grep -q '^STATUS: completed$' || die "finish did not complete lifecycle"
 [ "$(git -C "$fixture" branch --show-current)" = main ] || die "finish did not restore the integration branch"
 [ "$(cat "$fixture/src/a.txt")" = two ] || die "finish did not land implementation"
 [ ! -f "$receipt" ] || die "finish did not invalidate the receipt"
+[ ! -e "$worktree" ] || die "finish did not remove the managed task worktree"
 if git -C "$fixture" show-ref --verify -q "refs/heads/$branch"; then die "finish did not remove the landed task branch"; fi
 ok "finish verifies, lands, restores the target, and cleans lifecycle state"
 
 governance_goal='Establish initial repository governance'
 governance_digest=$(printf '%s' "$governance_goal" | git -C "$fixture" hash-object --stdin)
-out=$(cd "$fixture" && "$cli" task begin initial-governance --goal "$governance_goal")
+out=$(cd "$fixture" && "$cli" task begin governance-baseline --goal "$governance_goal")
 governance_branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
-mkdir -p "$fixture/.invariant" "$fixture/docs" "$fixture/checks"
-cat >"$fixture/docs/architecture.md" <<'EOF'
+governance_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
+mkdir -p "$governance_worktree/.invariant" "$governance_worktree/docs" "$governance_worktree/checks"
+cat >"$governance_worktree/docs/architecture.md" <<'EOF'
 # Architecture
 
 ## Source contract
 
 The source owner provides a stable value to its consumer.
 EOF
-cat >"$fixture/checks/source-contract.sh" <<'EOF'
+cat >"$governance_worktree/checks/source-contract.sh" <<'EOF'
 #!/bin/sh
 test -f src/a.txt
 EOF
-chmod +x "$fixture/checks/source-contract.sh"
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+chmod +x "$governance_worktree/checks/source-contract.sh"
+cat >"$governance_worktree/.invariant/DOMAINS.yml" <<'EOF'
 version: 1
 domains:
   - id: source
     responsibility: Owns the source value.
-    authority: user:task:initial-governance#goal
+    authority: user:task:governance-baseline#goal
     architecture: [architecture:docs/architecture.md#source-contract]
     contracts: [source.contract.v1]
   - id: consumer
     responsibility: Consumes the source value.
-    authority: user:task:initial-governance#goal
+    authority: user:task:governance-baseline#goal
 EOF
-cat >"$fixture/.invariant/CONTRACTS.yml" <<'EOF'
+cat >"$governance_worktree/.invariant/CONTRACTS.yml" <<'EOF'
 version: 1
 contracts:
   - id: source.contract.v1
     assertion: The source value remains available to its consumer.
-    authority: user:task:initial-governance#goal
+    authority: user:task:governance-baseline#goal
     between: [source, consumer]
     surfaces: [repo:src/a.txt]
     architecture: [architecture:docs/architecture.md#source-contract]
     verifies: [command:checks/source-contract.sh]
 EOF
-git -C "$fixture" add -A
-git -C "$fixture" commit -qm "establish initial governance"
+git -C "$governance_worktree" add -A
+git -C "$governance_worktree" commit -qm "establish governance baseline"
 cat >"$assessment" <<EOF
 version: 1
 goal_digest: $governance_digest
@@ -123,17 +130,17 @@ architecture_reviews: [architecture:docs/architecture.md#source-contract]
 checks: []
 allow_open: true
 EOF
-out=$(cd "$fixture" && "$cli" task finish initial-governance --assessment "$assessment")
+out=$(cd "$fixture" && "$cli" task finish governance-baseline --assessment "$assessment")
 printf '%s\n' "$out" | grep -q '^CHECK: running — command:checks/source-contract.sh$' ||
   die "new contract verifier did not run during governance adoption"
 printf '%s\n' "$out" | grep -q '^CHECKS: 1 unique$' ||
   die "governance adoption did not count the new contract verifier"
 [ "$(git -C "$fixture" branch --show-current)" = main ] ||
-  die "initial governance did not restore the integration branch"
+  die "governance baseline did not restore the integration branch"
 if git -C "$fixture" show-ref --verify -q "refs/heads/$governance_branch"; then
-  die "initial governance branch survived cleanup"
+  die "governance baseline branch survived cleanup"
 fi
-ok "initial governance can select candidate-defined domains and runs their contract verifiers"
+ok "a governance baseline can select candidate-defined domains and run their contract verifiers"
 
 mkdir -p "$fixture/checks"
 cat >"$fixture/checks/fail.sh" <<'EOF'
@@ -150,9 +157,10 @@ failed_digest=$(printf '%s' "$failed_goal" | git -C "$fixture" hash-object --std
 out=$(cd "$fixture" && "$cli" task begin failed-flow --goal "$failed_goal" \
   --boundary no-record --path src/a.txt)
 failed_branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
-printf 'not-landed\n' >"$fixture/src/a.txt"
-git -C "$fixture" add src/a.txt
-git -C "$fixture" commit -qm "candidate that fails verification"
+failed_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
+printf 'not-landed\n' >"$failed_worktree/src/a.txt"
+git -C "$failed_worktree" add src/a.txt
+git -C "$failed_worktree" commit -qm "candidate that fails verification"
 cat >"$assessment" <<EOF
 version: 1
 goal_digest: $failed_digest
@@ -175,8 +183,8 @@ printf '%s\n' "$out" | grep -q "^NEXT: inspect with 'invariant task status faile
   die "failed finish did not provide a recovery command"
 [ "$(git -C "$fixture" show main:src/a.txt)" = two ] || die "failed verifier advanced main"
 [ -f "$fixture/.git/invariant/briefs/failed-flow.yml" ] || die "failed verifier discarded the receipt"
-[ "$(git -C "$fixture" branch --show-current)" = "$failed_branch" ] || die "failed verifier discarded the work branch"
-git -C "$fixture" switch -q main
+[ "$(git -C "$failed_worktree" branch --show-current)" = "$failed_branch" ] || die "failed verifier discarded the work branch"
+git -C "$fixture" worktree remove --force "$failed_worktree"
 git -C "$fixture" branch -D "$failed_branch" >/dev/null
 (cd "$fixture" && "$cli" task invalidate failed-flow >/dev/null)
 ok "verification failure leaves the target unchanged and task work recoverable"
@@ -213,10 +221,12 @@ if (cd "$fixture" && "$cli" task continue assisted-flow >/dev/null 2>&1); then
 fi
 out=$(cd "$fixture" && "$cli" task continue assisted-flow --apply)
 printf '%s\n' "$out" | grep -q '^STATUS: implementing$' || die "approved continuation did not enter implementation"
-[ "$(git -C "$fixture" branch --show-current)" = "$assisted_branch" ] || die "approved continuation did not switch branches"
-printf 'three\n' >"$fixture/src/a.txt"
-git -C "$fixture" add src/a.txt
-git -C "$fixture" commit -qm "assisted implementation"
+assisted_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
+[ "$(git -C "$fixture" branch --show-current)" = main ] || die "approved continuation moved the integration checkout"
+[ "$(git -C "$assisted_worktree" branch --show-current)" = "$assisted_branch" ] || die "approved continuation did not create the task worktree"
+printf 'three\n' >"$assisted_worktree/src/a.txt"
+git -C "$assisted_worktree" add src/a.txt
+git -C "$assisted_worktree" commit -qm "assisted implementation"
 assisted_goal_digest=$(printf '%s' "Pause before branch creation" | git -C "$fixture" hash-object --stdin)
 cat >"$assessment" <<EOF
 version: 1
@@ -241,4 +251,4 @@ printf '%s\n' "$out" | grep -q '^STATUS: completed$' || die "approved landing co
 [ "$(git -C "$fixture" branch --show-current)" = main ] || die "assisted landing did not restore main"
 ok "assisted execution pauses before branch creation and atomic landing"
 
-echo "7 CLI lifecycle checks passed"
+echo "8 CLI lifecycle checks passed"

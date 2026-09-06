@@ -8,7 +8,7 @@ from typing import Iterable, Mapping
 
 from invariant import adapters
 from invariant.errors import Blocked, InvariantError, RemotePushFailed
-from invariant.mechanics import config, git, governance, landing, receipts
+from invariant.mechanics import config, coordinate, git, governance, landing, receipts
 from invariant.mechanics.documents import dump_yaml, load_yaml
 from invariant.semantics import guidance
 from invariant.semantics.models import Assessment
@@ -42,18 +42,34 @@ def _branch_name(repo: Path, task: str, head: str) -> str:
     return f"intent/work/{task}-{nonce}"
 
 
-def _create_branch(repo: Path, branch: str, target: str) -> None:
-    current = git.current_branch(repo)
-    if current != target:
-        raise Blocked(
-            f"Invariant: task branch creation must run from integration branch '{target}', not '{current or 'detached HEAD'}'",
-            code="wrong_branch",
-        )
-    if not git.worktree_clean(repo):
-        raise Blocked("Invariant: task branch creation requires a clean worktree", code="dirty_worktree")
+def _worktree_path(repo: Path, branch: str) -> Path:
+    name = branch.removeprefix("intent/work/")
+    return coordinate.ensure_runtime(repo) / "worktrees" / name
+
+
+def _create_branch(repo: Path, branch: str, target: str) -> Path:
     if git.branch_exists(repo, branch):
         raise InvariantError(f"Invariant: generated task branch '{branch}' already exists")
-    git.run(["switch", "-q", "-c", branch, f"refs/heads/{target}"], cwd=repo)
+    worktree = _worktree_path(repo, branch)
+    if worktree.exists():
+        raise InvariantError(
+            f"Invariant: generated task worktree '{worktree}' already exists",
+            code="task_worktree_exists",
+        )
+    worktree.parent.mkdir(parents=True, exist_ok=True)
+    git.run(
+        [
+            "worktree",
+            "add",
+            "--quiet",
+            "-b",
+            branch,
+            str(worktree),
+            f"refs/heads/{target}",
+        ],
+        cwd=repo,
+    )
+    return worktree.resolve()
 
 
 def _validate_adapter_receipt(receipt: dict[str, object]) -> None:
@@ -66,7 +82,8 @@ def _validate_adapter_receipt(receipt: dict[str, object]) -> None:
 def _raise_adapter_gate(repo: Path, task: str, receipt: dict[str, object], gate) -> None:
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     branch = str(lifecycle.get("branch") or "")
-    receipts.set_lifecycle(repo, task, gate.stage, branch, str(repo))
+    worktree = str(lifecycle.get("worktree") or repo)
+    receipts.set_lifecycle(repo, task, gate.stage, branch, worktree)
     raise Blocked(
         gate.message,
         code=gate.code,
@@ -91,23 +108,25 @@ def _activate(
     if head == "unborn":
         branch = target
         stage = "implementing-unborn"
+        worktree = repo
     else:
         branch = _branch_name(repo, task, head)
+        worktree = _worktree_path(repo, branch)
         if execution == "assisted":
             stage = "awaiting-branch"
         else:
             try:
-                _create_branch(repo, branch, target)
+                worktree = _create_branch(repo, branch, target)
             except Exception:
                 receipts.invalidate(repo, task)
                 raise
             stage = "implementing"
-    receipt = receipts.set_lifecycle(repo, task, stage, branch, str(repo))
+    receipt = receipts.set_lifecycle(repo, task, stage, branch, str(worktree))
     output = _status_lines(repo, receipt)
     output.append(
         f"NEXT: invariant task continue {task} --apply"
         if stage == "awaiting-branch"
-        else "NEXT: implement and commit the requested change"
+        else f"NEXT: implement and commit the requested change in {worktree}"
     )
     output.append(f"GUIDANCE: invariant task guidance {task}")
     return output
@@ -125,6 +144,8 @@ def begin(
     adapter_inputs: Mapping[str, str | None] | None = None,
     adapter_overrides: Mapping[str, bool] | None = None,
 ) -> list[str]:
+    repo = git.primary_worktree(repo)
+    git.require_capabilities(repo)
     if not git.valid_id(task):
         raise InvariantError(f"Invariant: invalid task id '{task}'")
     if not goal:
@@ -168,15 +189,6 @@ def begin(
     )
     adapter_ids = tuple(sorted(selected_adapters))
     adapters.validate(adapter_ids)
-    head = receipts.integration_head(repo, resolved.integration_branch)
-    current = git.current_branch(repo)
-    if current != resolved.integration_branch:
-        raise Blocked(
-            f"Invariant: task begin must run from integration branch '{resolved.integration_branch}', not '{current or 'detached HEAD'}'",
-            code="wrong_branch",
-        )
-    if resolved.execution == "auto" and head != "unborn" and not git.worktree_clean(repo):
-        raise Blocked("Invariant: automatic task begin requires a clean worktree", code="dirty_worktree")
     receipt, _ = receipts.open_receipt(
         repo,
         task,
@@ -224,6 +236,7 @@ def _status_lines(repo: Path, receipt: dict[str, object]) -> list[str]:
         f"BRANCH: {branch or 'none'}",
         f"BRANCH-HEAD: {branch_head or 'absent'}",
         f"WORKTREE: {lifecycle.get('worktree') or 'unknown'}",
+        f"LIFECYCLE-ROOT: {git.primary_worktree(repo)}",
         f"RECEIPT: {receipts.receipt_path(repo, str(receipt.get('task')))}",
         f"ADAPTERS: {', '.join(adapter_ids) or 'none'}",
     ]
@@ -292,22 +305,58 @@ def _actual_paths(repo: Path, stage: str, base: str, branch: str) -> tuple[str |
     return None, sorted(set(filter(None, values)))
 
 
+def _candidate_repo(repo: Path, active_stage: str, branch: str) -> Path:
+    if active_stage == "implementing-unborn":
+        return repo
+    worktree = git.worktree_for_branch(repo, branch)
+    if worktree is None:
+        raise Blocked(
+            f"Invariant: task branch '{branch}' has no checked-out worktree",
+            code="missing_task_worktree",
+        )
+    return worktree.resolve()
+
+
+def _require_lifecycle_checkout(repo: Path, branch: str) -> None:
+    worktree = git.worktree_for_branch(repo, branch)
+    primary = git.primary_worktree(repo).resolve()
+    if worktree is not None and worktree.resolve() == repo.resolve() and repo.resolve() != primary:
+        raise Blocked(
+            "Invariant: finish must run outside the managed task worktree so successful cleanup is safe",
+            code="wrong_worktree",
+            lines=[f"LIFECYCLE-ROOT: {primary}", f"NEXT: run invariant task finish from {primary}"],
+        )
+
+
 def _complete_task(repo: Path, task: str, active_stage: str, branch: str, target: str) -> None:
     if active_stage == "implementing":
-        current = git.current_branch(repo)
-        if current == branch:
-            git.run(["switch", "-q", target], cwd=repo)
-        if git.worktree_for_branch(repo, branch) is None:
-            deleted = git.run(["branch", "-d", branch], cwd=repo, check=False)
-            if deleted.returncode:
-                receipts.set_lifecycle(repo, task, "cleanup-required", branch, str(repo))
+        primary = git.primary_worktree(repo).resolve()
+        worktree = git.worktree_for_branch(repo, branch)
+        if worktree is not None and worktree.resolve() != primary:
+            removed = git.run(
+                ["worktree", "remove", str(worktree)], cwd=primary, check=False
+            )
+            if removed.returncode:
+                receipts.set_lifecycle(repo, task, "cleanup-required", branch, str(worktree))
+                detail = removed.stderr or removed.stdout or "Git refused worktree removal"
                 raise Blocked(
-                    f"Invariant: landed successfully but could not remove task branch '{branch}'"
+                    f"Invariant: landed successfully but could not remove task worktree '{worktree}'",
+                    lines=[f"GIT: {detail}"],
                 )
-        else:
-            receipts.set_lifecycle(repo, task, "cleanup-required", branch, str(repo))
+        elif worktree is not None and git.current_branch(primary) == branch:
+            git.run(["switch", "-q", target], cwd=primary)
+        deleted = git.run(["branch", "-d", branch], cwd=primary, check=False)
+        if deleted.returncode:
+            remaining = git.worktree_for_branch(primary, branch)
+            receipts.set_lifecycle(
+                repo,
+                task,
+                "cleanup-required",
+                branch,
+                str(remaining or primary),
+            )
             raise Blocked(
-                f"Invariant: landed successfully but task branch '{branch}' remains checked out"
+                f"Invariant: landed successfully but could not remove task branch '{branch}'"
             )
     receipts.invalidate(repo, task)
 
@@ -337,6 +386,8 @@ def finish(
     cached_goal = str(receipt.get("goal_digest") or "")
     intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
     cached_boundary = str(intent.get("boundary") or "")
+    if active_stage == "implementing":
+        _require_lifecycle_checkout(repo, branch)
     if assessment.goal_digest != cached_goal:
         raise Blocked("Invariant: assessment goal_digest does not match the active task", code="invalid_assessment")
     if cached_boundary != "unresolved" and assessment.boundary.disposition != cached_boundary:
@@ -393,8 +444,9 @@ def finish(
                 code="invalid_assessment",
             )
 
+    candidate_repo = _candidate_repo(repo, active_stage, branch)
     reach_lines = governance.reach(
-        repo,
+        candidate_repo,
         paths=actual_paths,
         base=None if active_stage == "implementing-unborn" else base,
         root_mode=active_stage == "implementing-unborn",
@@ -416,7 +468,13 @@ def finish(
         if gate:
             _raise_adapter_gate(repo, task, receipt, gate)
         if adapter_gate:
-            receipts.set_lifecycle(repo, task, active_stage, branch, str(repo))
+            receipts.set_lifecycle(
+                repo,
+                task,
+                active_stage,
+                branch,
+                str(lifecycle.get("worktree") or repo),
+            )
         expected_tree = candidate_tree
 
     combined_checks = tuple(sorted(set([*assessment.checks, *checks])))
@@ -442,7 +500,13 @@ def finish(
         local.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(assessment_path, local / "pending-assessment.yml")
         dump_yaml(local / "pending-finish.yml", {"subject": request.subject, "checks": list(checks)})
-        receipts.set_lifecycle(repo, task, "awaiting-landing", branch, str(repo))
+        receipts.set_lifecycle(
+            repo,
+            task,
+            "awaiting-landing",
+            branch,
+            str(lifecycle.get("worktree") or repo),
+        )
         raise Blocked(
             "Invariant: landing awaits explicit continuation",
             code="lifecycle_paused",
@@ -498,6 +562,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
     scope = receipt.get("scope") if isinstance(receipt.get("scope"), dict) else {}
     interfaces = sorted({str(item) for item in scope.get("interfaces", [])})
     selected_domains = {str(item) for item in scope.get("domains", [])}
+    candidate_repo = _candidate_repo(repo, active_stage, branch)
 
     def changed_records(
         relative: str, current: list[dict[str, object]], previous: list[dict[str, object]]
@@ -510,18 +575,18 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
     previous_ref = None if active_stage == "implementing-unborn" else base
     changed_domains = changed_records(
         ".invariant/DOMAINS.yml",
-        governance.domains(repo),
-        governance.domains(repo, previous_ref) if previous_ref else [],
+        governance.domains(candidate_repo),
+        governance.domains(candidate_repo, previous_ref) if previous_ref else [],
     )
     changed_contracts = changed_records(
         ".invariant/CONTRACTS.yml",
-        governance.contracts(repo),
-        governance.contracts(repo, previous_ref) if previous_ref else [],
+        governance.contracts(candidate_repo),
+        governance.contracts(candidate_repo, previous_ref) if previous_ref else [],
     )
     changed_constraints = changed_records(
         ".invariant/CONSTRAINTS.yml",
-        governance.constraints(repo),
-        governance.constraints(repo, previous_ref) if previous_ref else [],
+        governance.constraints(candidate_repo),
+        governance.constraints(candidate_repo, previous_ref) if previous_ref else [],
     )
     selected_domains.update(str(row["id"]) for row in changed_domains)
     for row in changed_contracts:
@@ -530,7 +595,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         selected_domains.update(governance.refs(row.get("applies_to")))
     domains = sorted(selected_domains)
     reach_lines = governance.reach(
-        repo,
+        candidate_repo,
         paths=paths,
         base=previous_ref,
         root_mode=active_stage == "implementing-unborn",
@@ -542,7 +607,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         "local",
     )
     verifier_lines = governance.verifiers(
-        repo,
+        candidate_repo,
         paths=paths,
         base=previous_ref,
         root_mode=active_stage == "implementing-unborn",
@@ -679,7 +744,7 @@ def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
         raise Blocked(f"Invariant: task '{task}' cannot continue from stage '{stage or 'unknown'}")
     if not apply:
         action = (
-            f"create and switch to {branch} from {target}"
+            f"create a linked worktree for {branch} from {target}"
             if stage == "awaiting-branch"
             else f"verify the exact candidate and atomically land it onto {target}"
         )
@@ -690,8 +755,8 @@ def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
         )
     if stage == "awaiting-branch":
         receipts.check_receipt(repo, task, goal_digest=str(receipt.get("goal_digest")))
-        _create_branch(repo, branch, target)
-        receipt = receipts.set_lifecycle(repo, task, "implementing", branch, str(repo))
+        worktree = _create_branch(repo, branch, target)
+        receipt = receipts.set_lifecycle(repo, task, "implementing", branch, str(worktree))
         return _status_lines(repo, receipt)
     local = receipts.task_root(repo, task)
     pending_assessment = local / "pending-assessment.yml"
@@ -703,7 +768,13 @@ def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
         if str(receipt.get("integration_head")) == "unborn"
         else "implementing"
     )
-    receipts.set_lifecycle(repo, task, active_stage, branch, str(repo))
+    receipts.set_lifecycle(
+        repo,
+        task,
+        active_stage,
+        branch,
+        str(lifecycle.get("worktree") or repo),
+    )
     return finish(
         repo,
         task,

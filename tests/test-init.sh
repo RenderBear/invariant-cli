@@ -41,16 +41,16 @@ grep -q '^## Invariant lifecycle$' "$defaults/AGENTS.md" || die "Codex workflow 
 grep -q '^# Existing Claude instructions$' "$defaults/CLAUDE.md" || die "Claude setup replaced existing instructions"
 grep -q '^@AGENTS.md$' "$defaults/CLAUDE.md" || die "Claude does not import the shared workflow"
 printf '%s\n' "$out" | grep -q '^Recommended next step$' || die "init omitted the governance recommendation"
-printf '%s\n' "$out" | grep -q '^  Run the initial governance for the repository with Invariant\.$' ||
+printf '%s\n' "$out" | grep -q '^  Run a governance pass for the repository with Invariant\.$' ||
   die "init omitted the concise governance request"
-if printf '%s\n' "$out" | grep -q "invariant initial-governance begin initial-governance"; then
+if printf '%s\n' "$out" | grep -q "invariant governance begin"; then
   die "init exposed the agent protocol in its recommendation"
 fi
 printf '%s\n' "$out" | grep -q "Task adapter.*Agent's own workflow" || die "default task adapter was not explained"
 [ ! -e "$defaults/.invariant/DOMAINS.yml" ] || die "init manufactured empty domains"
 [ ! -e "$defaults/.invariant/CONTRACTS.yml" ] || die "init manufactured empty contracts"
 [ ! -e "$defaults/.invariant/audits" ] || die "init ran an audit"
-ok "--defaults configures both coding agents and requests an initial governance run"
+ok "--defaults configures both coding agents and requests a governance pass"
 
 interactive="$fixtures/interactive"
 new_repo "$interactive" trunk
@@ -73,13 +73,16 @@ grep -q "^push_remote: 'on'$" "$interactive/.invariant/config.yml" || die "inter
 grep -q '^  task_acceptance: true$' "$interactive/.invariant/config.yml" || die "task acceptance adapter choice was lost"
 [ ! -e "$interactive/AGENTS.md" ] || die "Claude-only setup created AGENTS.md"
 grep -q '^## Invariant lifecycle$' "$interactive/CLAUDE.md" || die "Claude-only workflow was not installed"
-grep -q '^#### Human authority$' "$interactive/CLAUDE.md" || die "installed workflow was not structured"
+grep -q '^### Start and implement$' "$interactive/CLAUDE.md" || die "installed workflow was not structured"
+[ "$(wc -l < "$interactive/CLAUDE.md")" -lt 65 ] || die "installed workflow repeated stage-specific guidance"
 if grep -q '^# Human ergonomics$' "$interactive/CLAUDE.md"; then
   die "stage-specific human ergonomics were persisted in agent instructions"
 fi
 printf '%s\n' "$out" | grep -q '^◆ Integration branch$' || die "interactive init did not explain integration branch"
 printf '%s\n' "$out" | grep -q 'Resolve the target when each task begins' || die "automatic branch behavior was not explained"
 printf '%s\n' "$out" | grep -q '^◆ Task adapter$' || die "interactive init omitted the bundled adapter choice"
+printf '%s\n' "$out" | grep -q '^A few things to get us started$' || die "interactive init omitted its setup heading"
+[ "$(printf '%s\n' "$out" | grep -c 'enter select')" -eq 1 ] || die "interactive init repeated its input hint"
 if printf '%s\n' "$out" | grep -Eq '^  [●○] [0-9]+\.'; then
   die "interactive init rendered numbered radio options"
 fi

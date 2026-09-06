@@ -9,7 +9,7 @@ def read(name: str) -> str:
 
 
 def agent_workflow() -> str:
-    return "\n\n".join((read("workflow"), read("protocol-reference")))
+    return read("bootstrap")
 
 
 def for_stage(stage: str) -> str:

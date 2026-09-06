@@ -1,10 +1,3 @@
-# Invariant — managed agent workflow
-
-`invariant init` installs this compact block in the repository's selected agent instruction files.
-Detailed, stage-specific context remains available through `invariant task guidance` rather than
-being repeated in every agent session.
-
-````markdown
 ## Invariant lifecycle
 
 - Use the `invariant` CLI for repository mutations; do not reproduce its branch, receipt,
@@ -54,4 +47,3 @@ first pass establishes durable governance; later passes reconcile it with the cu
 integration state. The returned guidance keeps audit, adoption, verification, and landing as
 distinct internal phases. With agent authority, proceed without routine approval pauses; with human
 authority, present concise behavior-level choices before adoption.
-````

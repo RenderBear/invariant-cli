@@ -3,9 +3,10 @@
 Invariant is a repository-native control plane for coding agents and harnesses, delivered as a
 standalone Python CLI. It governs durable intent and verified lifecycle transitions without hosting
 or executing the model loop. Humans provide intent, resolve escalated conflicts or ambiguity, and
-may control lifecycle transitions; agents handle repository internals. Invariant advances the
-integration branch only after exact-candidate verification succeeds and keeps remote publication
-disabled by default.
+may control lifecycle transitions; agents handle repository internals. Within one local clone,
+Invariant advances the integration branch only after exact-candidate verification succeeds and
+keeps remote publication disabled by default. Its semantic records make review assertions
+inspectable and attributable; they cannot prove that a reviewer reasoned sincerely.
 
 It connects four critical axes for agentic work:
 
@@ -28,6 +29,10 @@ remain after the work ends; plans, claims, and leases do not.
 The complete design is in [SPEC.md](SPEC.md).
 
 ## Install
+
+Invariant requires Git support for linked worktrees and `merge-tree --write-tree`. `invariant init`
+and `task begin` probe these capabilities before writing lifecycle state and report every missing
+feature together.
 
 Install Invariant directly from its Git repository:
 
@@ -67,11 +72,11 @@ Use every safe default without prompts:
 invariant init --defaults
 ```
 
-This selects both Codex and Claude Code, agent semantic authority, automatic lifecycle
-execution, the current branch as the automatic integration target, local-only landing, and the
-optional lifecycle bookends disabled. Initialization does not run a model; after setup it prints a
-natural-language request for your coding agent to run the complete initial governance workflow
-from saved audit through adoption.
+This selects both Codex and Claude Code, agent semantic authority, automatic lifecycle execution,
+the primary lifecycle checkout's current branch as the automatic integration target, local-only
+landing, and the optional lifecycle bookends disabled. Initialization does not run a model; after
+setup it prints a natural-language request for your coding agent to run the complete initial
+governance workflow from saved audit through adoption.
 
 Interactive setup presents the two optional intent controls as one choice. The default is
 model-led: it relies on the coding agent's own understanding and normal candidate review. A
@@ -100,8 +105,10 @@ shared workflow from `AGENTS.md`. [AGENTS.example.md](AGENTS.example.md) remains
 for other coding agents and harnesses.
 
 The user can then ask for a change normally. The coding agent interprets the goal, invokes the
-`invariant` commands through its shell, implements and commits on the branch Invariant creates,
-prepares the semantic assessment, and asks Invariant to verify and land the result. When Invariant
+`invariant` commands through its shell, implements and commits in the linked worktree Invariant
+creates, and runs `task finish` from the returned lifecycle root. Routine assessments are inferred;
+when decisions remain, the same command saves complete drafts and returns every requirement before
+verification. When Invariant
 needs authority or encounters a real conflict, the agent returns to the human with the decision—not
 with a request to investigate the code manually. No Invariant-specific model plugin is required.
 
@@ -111,10 +118,10 @@ The detailed CLI is an integration surface for coding agents, harnesses, CI jobs
 normally need only initialization, status, and configuration commands.
 
 A **task ID** is a short, caller-chosen name for one managed repository change, such as
-`fix-job-recovery`. The coding agent uses that same ID to connect the goal, work branch,
+`fix-job-recovery`. The coding agent uses that same ID to connect the goal, linked worktree,
 verification, and landing; it is not something Invariant expects a human to discover.
 
-See [CLI basics](docs/cli-basics.md) for human commands, a complete task example, initial-governance
+See [CLI basics](docs/cli-basics.md) for human commands, a complete task example, governance-pass
 examples, and a map of the agent-facing command groups.
 
 ## Configure Invariant
@@ -142,7 +149,7 @@ Settings:
 | `coding_agents` | `[codex, claude]` | Any non-empty subset of `codex`, `claude` | Which root agent instruction files receive the managed Invariant workflow during initialization. |
 | `authority` | `agent` | `agent`, `human` | Who may define repository-wide semantics, resolve contradictions, and approve durable intent. |
 | `execution` | `auto` | `auto`, `assisted` | Whether state-changing lifecycle transitions run immediately or pause for explicit continuation. |
-| `integration_branch` | `auto` | `auto`, local branch name | The branch that receives verified landings. `auto` uses the current branch when a task begins; a name fixes one local convergence target. |
+| `integration_branch` | `auto` | `auto`, local branch name | The branch that receives verified landings. `auto` uses the primary lifecycle checkout's current branch when a task begins; a name fixes one local convergence target. |
 | `push_remote` | `off` | `off`, `on` | Whether a successful landing stays local or pushes the exact verified commit to the integration branch's existing upstream. |
 | `adapters.task_acceptance` | `false` | `false`, `true` | Bundled adapter that expands a request into a local acceptance contract and reviews the exact candidate with proportional evidence. Set with `off` or `on` through the CLI. |
 
@@ -188,17 +195,20 @@ cache to `exact-tree` only when that reuse is sound; named runners default to `n
 
 ## Establish architectural intent
 
-Invariant does not require a complete model up front: start with an initial governance run, then let
-normal work deepen it progressively.
+Invariant does not require a complete model up front: start with a governance pass, then let normal
+work deepen it progressively. Run another pass after committed repository changes when existing
+contracts or architecture may have become stale.
 
-### Run initial governance (recommended)
+### Run a governance pass (recommended)
 
-Ask your coding agent to run Invariant's initial governance workflow. The agent investigates
+Ask your coding agent to run an Invariant governance pass. The agent investigates
 responsibilities, boundaries, dependencies, and executable promises and saves the completed audit
 under `.invariant/audits/`. With `authority: agent`, it continues automatically through adoption and
 managed landing. With `authority: human`, it presents a concise findings summary and lets the human
 investigate further, adopt all ready findings, adopt selected findings, or defer. `execution`
-independently controls branch and landing pauses. The agent-facing audit handoff is explicit. Invariant stamps the exact Git  ground, tree, and UTC creation time, validates the findings, and persists a timestamped audit.
+independently controls branch and landing pauses. The agent-facing audit handoff is explicit.
+Invariant stamps the exact Git ground, tree, and UTC creation time, validates the findings, and
+persists it as `audit-<UTC timestamp>.yml`.
 
 ### Continue with progressive discovery
 

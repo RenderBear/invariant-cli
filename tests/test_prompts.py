@@ -1,4 +1,4 @@
-from invariant.cli.commands.initialize import _option_lines, _radio_select
+from invariant.cli.commands.initialize import _interaction_intro, _option_lines, _radio_select
 
 
 OPTIONS = (
@@ -29,6 +29,13 @@ def test_radio_selector_uses_arrows_and_enter(capsys) -> None:
     selected = _radio_select(OPTIONS, "first", key_reader=lambda: next(keys))
     assert selected == "second"
     output = capsys.readouterr().out
-    assert "↑/↓ navigate • enter select" in output
+    assert "↑/↓ navigate • enter select" not in output
     assert "\033[?25l" in output
     assert output.endswith("\033[?25h")
+
+
+def test_navigation_hint_is_a_single_initializer_intro(capsys) -> None:
+    _interaction_intro(terminal=True)
+    output = capsys.readouterr().out
+    assert "A few things to get us started" in output
+    assert output.count("↑/↓ navigate • enter select") == 1

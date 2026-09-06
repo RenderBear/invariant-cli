@@ -54,7 +54,6 @@ def _option_lines(
         recommendation = _color("32", suffix)
         output.append(f"  {marker} {option}{recommendation}")
     output.append(_color("2", f"    {options[selected][2]}"))
-    output.append(_color("2", "    ↑/↓ navigate • enter select"))
     return output
 
 
@@ -139,7 +138,7 @@ def _radio_select(
 def _line_select(options: Sequence[tuple[str, str, str]], default: str) -> str:
     by_value = {value: label for value, label, _ in options}
     selected = next(index for index, option in enumerate(options) if option[0] == default)
-    for line in _option_lines(options, selected, default)[:-1]:
+    for line in _option_lines(options, selected, default):
         print(line)
     while True:
         try:
@@ -167,9 +166,18 @@ def _logo() -> None:
     )
 
 
+def _interaction_intro(*, terminal: bool | None = None) -> None:
+    if terminal is None:
+        terminal = sys.stdin.isatty() and sys.stdout.isatty()
+    print(f"\n{_color('1;36', 'A few things to get us started')}")
+    hint = "↑/↓ navigate • enter select" if terminal else "type an option value • enter select"
+    print(_color("2", f"  {hint}"))
+
+
 def _interactive(repo) -> bootstrap.BootstrapSettings:
     current = git.current_branch(repo) or "detached HEAD"
     _logo()
+    _interaction_intro()
     agent_choice = _select(
         "Coding agents",
         "Which agents should receive the repository workflow?",

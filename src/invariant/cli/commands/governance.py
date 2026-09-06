@@ -9,55 +9,54 @@ from invariant.mechanics import audit, config, git, receipts
 from invariant.mechanics.documents import dump_yaml, load_yaml
 
 
-DEFAULT_GOAL = "Establish the repository's initial durable governance from a causal audit."
-TASK_ID_HELP = "caller-chosen ID for this initial-governance session"
+DEFAULT_GOAL = "Reconcile the repository's durable governance with a causal audit."
+TASK_ID_HELP = "caller-chosen ID for this governance pass"
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser(
-        "initial-governance",
-        help="Run the audit, adoption, and verification phases as one resumable session",
+        "governance",
+        help="Run an audit, adoption, and verification pass as one resumable session",
     )
-    commands = parser.add_subparsers(dest="initial_governance_command", required=True)
+    commands = parser.add_subparsers(dest="governance_command", required=True)
 
-    begin = commands.add_parser("begin", help="Open the managed branch before creating an audit")
+    begin = commands.add_parser("begin", help="Open the managed worktree before creating an audit")
     begin.add_argument("task_id", help=TASK_ID_HELP)
     begin.add_argument("--goal", default=DEFAULT_GOAL)
-    begin.set_defaults(_handler=_begin, _command="initial-governance.begin")
+    begin.set_defaults(_handler=_begin, _command="governance.begin")
 
     save = commands.add_parser("audit-save", help="Save the full audit inside the managed session")
     save.add_argument("task_id", help=TASK_ID_HELP)
-    save.add_argument("audit_label")
     save.add_argument("--input", type=Path, required=True)
-    save.set_defaults(_handler=_audit_save, _command="initial-governance.audit-save")
+    save.set_defaults(_handler=_audit_save, _command="governance.audit-save")
 
     adopt = commands.add_parser("adopt", help="Select ready audit findings for governance adoption")
     adopt.add_argument("task_id", help=TASK_ID_HELP)
     selection = adopt.add_mutually_exclusive_group(required=True)
     selection.add_argument("--all-ready", action="store_true")
     selection.add_argument("--finding", action="append")
-    adopt.set_defaults(_handler=_adopt, _command="initial-governance.adopt")
+    adopt.set_defaults(_handler=_adopt, _command="governance.adopt")
 
     defer = commands.add_parser(
         "defer", help="Land the saved audit without adopting durable governance"
     )
     defer.add_argument("task_id", help=TASK_ID_HELP)
-    defer.set_defaults(_handler=_defer, _command="initial-governance.defer")
+    defer.set_defaults(_handler=_defer, _command="governance.defer")
 
     status = commands.add_parser("status", help="Show the governance phase and managed task state")
     status.add_argument("task_id", help=TASK_ID_HELP)
-    status.set_defaults(_handler=_status, _command="initial-governance.status")
+    status.set_defaults(_handler=_status, _command="governance.status")
 
 
 def _session(repo: Path, task: str) -> tuple[dict[str, object], dict[str, object]]:
     receipt = receipts.load(repo, task)
     session = (
-        receipt.get("initial_governance")
-        if isinstance(receipt.get("initial_governance"), dict)
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
         else None
     )
     if session is None:
-        raise Blocked(f"Invariant: task '{task}' is not an initial-governance session")
+        raise Blocked(f"Invariant: task '{task}' is not a governance pass")
     return receipt, session
 
 
@@ -69,6 +68,21 @@ def _authority(repo: Path, receipt: dict[str, object]) -> str:
         return proposed.authority
     accepted = config.resolve_at(repo, ground, target)
     return "agent" if accepted.authority == "agent" else "human"
+
+
+def _candidate_repo(repo: Path, receipt: dict[str, object]) -> Path:
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    stage = str(lifecycle.get("stage") or "")
+    if stage == "implementing-unborn":
+        return repo
+    worktree = Path(str(lifecycle.get("worktree") or ""))
+    branch = str(lifecycle.get("branch") or "")
+    if not worktree.is_dir() or git.current_branch(worktree) != branch:
+        raise Blocked(
+            f"Invariant: governance task worktree for '{branch}' is unavailable",
+            code="missing_task_worktree",
+        )
+    return worktree
 
 
 def _begin(args: argparse.Namespace) -> list[str]:
@@ -84,13 +98,14 @@ def _begin(args: argparse.Namespace) -> list[str]:
         adapter_overrides={"task_acceptance": False},
     )
     receipt = receipts.load(repo, args.task_id)
-    receipt["initial_governance"] = {"phase": "audit"}
+    receipt["governance_run"] = {"phase": "audit"}
     receipts.save(repo, args.task_id, receipt)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     if lifecycle.get("stage") in {"implementing", "implementing-unborn"}:
-        lines.extend(["GOVERNANCE-PHASE: audit", *audit.full(repo, _authority(repo, receipt))])
+        candidate = _candidate_repo(repo, receipt)
+        lines.extend(["GOVERNANCE-PHASE: audit", *audit.full(candidate, _authority(repo, receipt))])
     else:
-        lines.append("NEXT: continue the lifecycle, then rerun initial-governance status")
+        lines.append("NEXT: continue the lifecycle, then rerun governance status")
     return lines
 
 
@@ -99,16 +114,13 @@ def _audit_save(args: argparse.Namespace) -> list[str]:
     receipt, session = _session(repo, args.task_id)
     if session.get("phase") != "audit":
         raise Blocked(
-            f"Invariant: initial-governance audit is already in phase '{session.get('phase')}'"
+            f"Invariant: governance audit is already in phase '{session.get('phase')}'"
         )
-    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
-    branch = str(lifecycle.get("branch") or "")
-    if branch and git.current_branch(repo) != branch:
-        raise Blocked(f"Invariant: initial-governance task branch '{branch}' is not checked out")
+    candidate = _candidate_repo(repo, receipt)
     authority = _authority(repo, receipt)
     lines = audit.save(
-        repo,
-        args.audit_label,
+        candidate,
+        "audit",
         mode="full",
         source=args.input,
         paths=[],
@@ -116,7 +128,7 @@ def _audit_save(args: argparse.Namespace) -> list[str]:
         authority=authority,
     )
     audit_id = next(line.removeprefix("AUDIT: ") for line in lines if line.startswith("AUDIT: "))
-    raw = load_yaml(repo / ".invariant" / "audits" / f"{audit_id}.yml")
+    raw = load_yaml(candidate / ".invariant" / "audits" / f"{audit_id}.yml")
     findings = raw.get("findings", []) if isinstance(raw, dict) else []
     ready = [
         str(finding.get("id"))
@@ -136,7 +148,7 @@ def _audit_save(args: argparse.Namespace) -> list[str]:
     else:
         session["phase"] = "decision"
         lines.append("GOVERNANCE-PHASE: decision")
-    receipt["initial_governance"] = session
+    receipt["governance_run"] = session
     receipts.save(repo, args.task_id, receipt)
     return lines
 
@@ -147,7 +159,8 @@ def _adopt(args: argparse.Namespace) -> list[str]:
     if session.get("phase") not in {"decision", "adopt"}:
         raise Blocked(f"Invariant: adoption is unavailable in phase '{session.get('phase')}'")
     audit_id = str(session.get("audit") or "")
-    raw = load_yaml(repo / ".invariant" / "audits" / f"{audit_id}.yml")
+    candidate = _candidate_repo(repo, receipt)
+    raw = load_yaml(candidate / ".invariant" / "audits" / f"{audit_id}.yml")
     findings = raw.get("findings", []) if isinstance(raw, dict) else []
     available = {
         str(finding.get("id")): str(finding.get("disposition"))
@@ -164,13 +177,13 @@ def _adopt(args: argparse.Namespace) -> list[str]:
         raise InvariantError(f"Invariant: audit has no finding '{missing[0]}'")
     session["phase"] = "adopt"
     session["selected_findings"] = selected
-    receipt["initial_governance"] = session
+    receipt["governance_run"] = session
     receipts.save(repo, args.task_id, receipt)
     return [
         f"GOVERNANCE-PHASE: adopt",
         f"AUDIT: {audit_id}",
         f"SELECTED-FINDINGS: {', '.join(selected) or 'none'}",
-        "NEXT: record the selected durable meaning, commit the candidate, then run task assessment prepare",
+        "NEXT: record and commit the selected durable meaning in the task worktree, then run task finish",
     ]
 
 
@@ -190,7 +203,7 @@ def _status(args: argparse.Namespace) -> list[str]:
         "implementing",
         "implementing-unborn",
     }:
-        lines.extend(audit.full(repo, _authority(repo, receipt)))
+        lines.extend(audit.full(_candidate_repo(repo, receipt), _authority(repo, receipt)))
     return lines
 
 
@@ -203,24 +216,23 @@ def _defer(args: argparse.Namespace) -> list[str]:
         raise Blocked(f"Invariant: deferral is unavailable in phase '{session.get('phase')}'")
     audit_id = str(session.get("audit") or "")
     audit_path = f".invariant/audits/{audit_id}.yml"
-    if not (repo / audit_path).is_file():
+    candidate = _candidate_repo(repo, receipt)
+    if not (candidate / audit_path).is_file():
         raise Blocked(f"Invariant: saved audit '{audit_id}' is absent")
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     branch = str(lifecycle.get("branch") or "")
-    if branch and git.current_branch(repo) != branch:
-        raise Blocked(f"Invariant: initial-governance task branch '{branch}' is not checked out")
-    working = git.changed_paths(repo)
+    working = git.changed_paths(candidate)
     if working:
         if set(working) != {audit_path}:
             raise Blocked(
                 "Invariant: deferral can commit only the saved audit; preserve or commit other work first",
                 lines=[f"CHANGED: {path}" for path in working],
             )
-        git.run(["add", "--", audit_path], cwd=repo)
-        git.run(["commit", "-q", "-m", f"Record deferred governance audit {audit_id}"], cwd=repo)
+        git.run(["add", "--", audit_path], cwd=candidate)
+        git.run(["commit", "-q", "-m", f"Record deferred governance audit {audit_id}"], cwd=candidate)
     base = str(receipt.get("integration_head") or "")
-    branch_ref = git.resolve(repo, f"refs/heads/{branch}") if branch else None
-    candidate_paths = git.changed_paths(repo, base, branch_ref) if branch_ref and base != "unborn" else [audit_path]
+    branch_ref = git.resolve(candidate, f"refs/heads/{branch}") if branch else None
+    candidate_paths = git.changed_paths(candidate, base, branch_ref) if branch_ref and base != "unborn" else [audit_path]
     if set(candidate_paths) != {audit_path}:
         raise Blocked(
             "Invariant: deferral candidate contains changes beyond the saved audit",
@@ -242,7 +254,7 @@ def _defer(args: argparse.Namespace) -> list[str]:
     assessment_path = local / "deferred-audit-assessment.yml"
     dump_yaml(assessment_path, assessment)
     session["phase"] = "deferred"
-    receipt["initial_governance"] = session
+    receipt["governance_run"] = session
     receipts.save(repo, args.task_id, receipt)
     return [
         "GOVERNANCE-PHASE: deferred",

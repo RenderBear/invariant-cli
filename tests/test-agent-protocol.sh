@@ -56,10 +56,12 @@ printf '%s\n' "$acceptance_schema" | grep -q '"candidate_tree"' ||
 if printf '%s\n' "$assessment_schema" | grep -q '"output"'; then die "schema JSON duplicated its text form"; fi
 ok "audit, assessment, and adapter schemas are machine-readable and compact"
 
-out=$(cd "$governance" && "$cli" initial-governance begin initial)
-printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: audit$' || die "initial governance did not enter its audit phase"
+out=$(cd "$governance" && "$cli" governance begin baseline-governance)
+printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: audit$' || die "governance pass did not enter its audit phase"
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
-[ "$(git -C "$governance" branch --show-current)" = "$branch" ] || die "initial governance did not open the managed branch first"
+governance_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
+[ "$(git -C "$governance" branch --show-current)" = main ] || die "governance pass moved the integration checkout"
+[ "$(git -C "$governance_worktree" branch --show-current)" = "$branch" ] || die "governance pass did not create its managed worktree"
 cat >"$findings" <<'EOF'
 version: 1
 findings:
@@ -69,23 +71,23 @@ findings:
     proposed: architecture
     disposition: adoptable
 EOF
-out=$(cd "$governance" && "$cli" initial-governance audit-save initial initial --input "$findings")
+out=$(cd "$governance" && "$cli" governance audit-save baseline-governance --input "$findings")
 audit_id=$(printf '%s\n' "$out" | sed -n 's/^AUDIT: //p')
-printf '%s\n' "$audit_id" | grep -Eq '^initial--[0-9]{8}T[0-9]{6}Z$' || die "audit id did not contain its timestamp"
+printf '%s\n' "$audit_id" | grep -Eq '^audit-[0-9]{8}T[0-9]{6}Z$' || die "governance audit did not use its timestamped neutral name"
 printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: adopt$' || die "agent authority did not advance audit to adoption"
-grep -q '^  phase: adopt$' "$governance/.git/invariant/briefs/initial.yml" || die "governance phase was not resumable"
-grep -q '^  - record-app-boundary$' "$governance/.git/invariant/briefs/initial.yml" || die "ready finding was not selected automatically"
-printf 'candidate\n' >>"$governance/app.txt"
-git -C "$governance" add app.txt ".invariant/audits/$audit_id.yml"
-git -C "$governance" commit -qm "record audited candidate"
-prepared=$(cd "$governance" && "$cli" --format json task assessment prepare initial)
+grep -q '^  phase: adopt$' "$governance/.git/invariant/briefs/baseline-governance.yml" || die "governance phase was not resumable"
+grep -q '^  - record-app-boundary$' "$governance/.git/invariant/briefs/baseline-governance.yml" || die "ready finding was not selected automatically"
+printf 'candidate\n' >>"$governance_worktree/app.txt"
+git -C "$governance_worktree" add app.txt ".invariant/audits/$audit_id.yml"
+git -C "$governance_worktree" commit -qm "record audited candidate"
+prepared=$(cd "$governance" && "$cli" --format json task assessment prepare baseline-governance)
 printf '%s\n' "$prepared" | grep -q '"candidate_tree"' || die "assessment preparation omitted the candidate tree"
 printf '%s\n' "$prepared" | grep -q '"paths":\[".invariant/audits/' || die "assessment preparation did not use exact candidate paths"
-[ -f "$governance/.git/invariant/tasks/initial/prepared-assessment.yml" ] ||
+[ -f "$governance/.git/invariant/tasks/baseline-governance/prepared-assessment.yml" ] ||
   die "assessment preparation did not save its Git-local draft"
 status=$(cd "$governance" && "$cli" status)
-printf '%s\n' "$status" | grep -q '^TASK: initial (implementing)$' || die "top-level status omitted the active task"
-ok "initial governance keeps audit and adoption inside one resumable managed session"
+printf '%s\n' "$status" | grep -q '^TASK: baseline-governance (implementing)$' || die "top-level status omitted the active task"
+ok "a governance pass keeps audit and adoption inside one resumable managed session"
 
 deferred="$fixtures/deferred"
 new_repo "$deferred"
@@ -100,16 +102,26 @@ push_remote: off
 EOF
 git -C "$deferred" add -A
 git -C "$deferred" commit -qm seed
-(cd "$deferred" && "$cli" initial-governance begin deferred >/dev/null)
-out=$(cd "$deferred" && "$cli" initial-governance audit-save deferred review --input "$findings")
+(cd "$deferred" && "$cli" governance begin deferred >/dev/null)
+out=$(cd "$deferred" && "$cli" governance audit-save deferred --input "$findings")
 deferred_audit=$(printf '%s\n' "$out" | sed -n 's/^AUDIT: //p')
 printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: decision$' || die "human authority did not retain the adoption decision"
-out=$(cd "$deferred" && "$cli" initial-governance defer deferred)
+out=$(cd "$deferred" && "$cli" governance defer deferred)
 printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: deferred$' || die "audit deferral was not reported"
 [ "$(git -C "$deferred" branch --show-current)" = main ] || die "audit-only deferral did not restore main"
 git -C "$deferred" cat-file -e "main:.invariant/audits/$deferred_audit.yml" || die "deferred audit was not landed"
 [ ! -f "$deferred/.git/invariant/briefs/deferred.yml" ] || die "deferred governance receipt was not cleaned"
 ok "human authority can land a saved audit while deferring adoption"
+
+out=$(cd "$deferred" && "$cli" governance begin governance-refresh)
+printf '%s\n' "$out" | grep -q '^GOVERNANCE-PHASE: audit$' || die "a later governance pass could not begin"
+out=$(cd "$deferred" && "$cli" governance audit-save governance-refresh --input "$findings")
+refresh_audit=$(printf '%s\n' "$out" | sed -n 's/^AUDIT: //p')
+[ "$refresh_audit" != "$deferred_audit" ] || die "a later governance pass reused an existing audit id"
+(cd "$deferred" && "$cli" governance defer governance-refresh >/dev/null)
+git -C "$deferred" cat-file -e "main:.invariant/audits/$deferred_audit.yml" || die "a later pass replaced its predecessor"
+git -C "$deferred" cat-file -e "main:.invariant/audits/$refresh_audit.yml" || die "a later pass did not land its audit"
+ok "governance passes can be rerun against the current integration state"
 
 architecture="$fixtures/architecture"
 new_repo "$architecture"
@@ -140,8 +152,17 @@ git -C "$architecture" add -A
 git -C "$architecture" commit -qm seed
 out=$(cd "$architecture" && "$cli" task begin architecture --goal "Refine the application boundary" \
   --boundary unresolved --path docs/architecture.md --domain app)
-printf '\nThe application also owns recovery behavior.\n' >>"$architecture/docs/architecture.md"
-git -C "$architecture" commit -qam candidate
+architecture_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
+printf '\nThe application also owns recovery behavior.\n' >>"$architecture_worktree/docs/architecture.md"
+git -C "$architecture_worktree" commit -qam candidate
+if blocked=$(cd "$architecture" && "$cli" --format json task finish architecture 2>&1); then
+  die "task finish silently acknowledged an architecture review"
+fi
+printf '%s\n' "$blocked" | grep -q '"status":"blocked"' || die "finish did not return a blocked protocol result"
+printf '%s\n' "$blocked" | grep -q '"code":"assessment_completion_required"' ||
+  die "finish did not identify semantic assessment completion"
+printf '%s\n' "$blocked" | grep -q '"recommended_architecture_reviews":\["architecture:docs/architecture.md#application-boundary"\]' ||
+  die "finish did not return all missing semantic requirements together"
 prepared=$(cd "$architecture" && "$cli" --format json task assessment prepare architecture)
 printf '%s\n' "$prepared" | grep -q '"boundary":{"disposition":"recorded"}' ||
   die "architecture prose was not inferred as a durable boundary change"
@@ -185,14 +206,10 @@ git -C "$runner" commit -qm seed
 
 out=$(cd "$runner" && "$cli" task begin cache --goal "Exercise runner caching" --boundary no-record --path app.txt)
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
+runner_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
 goal_digest=$(printf '%s\n' "$out" | sed -n 's/^GOAL-DIGEST: //p')
-printf 'two\n' >"$runner/app.txt"
-git -C "$runner" commit -qam candidate
-if out=$(cd "$runner" && "$cli" task finish cache 2>&1); then
-  die "task finish accepted a missing prepared assessment"
-fi
-printf '%s\n' "$out" | grep -q "task assessment prepare cache" ||
-  die "missing assessment did not name the preparation command"
+printf 'two\n' >"$runner_worktree/app.txt"
+git -C "$runner_worktree" commit -qam candidate
 cat >"$assessment" <<EOF
 version: 1
 goal_digest: $goal_digest
@@ -215,4 +232,4 @@ printf '%s\n' "$out" | grep -q '^CHECK-CACHE: 1 reused$' || die "verification ca
 [ "$(cat "$runner/.git/runner-count")" = 1 ] || die "cached verifier executed more than once"
 ok "project-aware runners retain logs and reuse exact-candidate verification receipts"
 
-echo "5 agent protocol checks passed"
+echo "6 agent protocol checks passed"

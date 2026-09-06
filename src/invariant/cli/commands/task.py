@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
 import yaml
 
 from invariant import adapters
 from invariant.cli.output import CommandResult
-from invariant.errors import UsageError
+from invariant.errors import Blocked
 from invariant.lifecycle import tasks
 from invariant.mechanics import git, receipts
 from invariant.mechanics.documents import dump_yaml
@@ -65,7 +66,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     finish.add_argument("task_id", help=TASK_ID_HELP)
     finish.add_argument(
         "--assessment",
-        help="assessment file (defaults to the Git-local draft from task assessment prepare)",
+        help="assessment file (defaults to a Git-local draft, prepared automatically when absent)",
     )
     finish.add_argument("--subject")
     finish.add_argument("--check", action="append", default=[])
@@ -167,20 +168,38 @@ def _check(args: argparse.Namespace) -> list[str]:
 def _finish(args: argparse.Namespace) -> list[str]:
     repo = _repo()
     prepared = receipts.task_root(repo, args.task_id) / "prepared-assessment.yml"
+    prefix: list[str] = []
     if not args.assessment and not prepared.is_file():
-        raise UsageError(
-            "Invariant: no prepared assessment exists; run "
-            f"'invariant task assessment prepare {args.task_id}' first"
-        )
+        assessment_value, analysis = tasks.prepare_assessment(repo, args.task_id)
+        dump_yaml(prepared, assessment_value)
+        lines, required = _preparation_lines(repo, args.task_id, prepared, analysis)
+        if required:
+            raise Blocked(
+                "Invariant: the generated assessment needs semantic completion before landing",
+                code="assessment_completion_required",
+                lines=[
+                    *lines,
+                    f"NEXT: complete {prepared} and rerun invariant task finish {args.task_id}",
+                ],
+                data={
+                    "assessment": assessment_value,
+                    "analysis": analysis,
+                    "path": str(prepared),
+                },
+            )
+        prefix = [f"ASSESSMENT: inferred {args.task_id}"]
     assessment = args.assessment or str(prepared)
-    return tasks.finish(
-        repo,
-        args.task_id,
-        assessment_path=assessment,
-        subject=args.subject,
-        checks=args.check,
-        adapter_inputs={"task_acceptance": args.acceptance_review},
-    )
+    return [
+        *prefix,
+        *tasks.finish(
+            repo,
+            args.task_id,
+            assessment_path=assessment,
+            subject=args.subject,
+            checks=args.check,
+            adapter_inputs={"task_acceptance": args.acceptance_review},
+        ),
+    ]
 
 
 def _continue(args: argparse.Namespace) -> list[str]:
@@ -228,27 +247,49 @@ def _assessment_prepare(args: argparse.Namespace) -> CommandResult:
         else receipts.task_root(repo, args.task_id) / "prepared-assessment.yml"
     )
     dump_yaml(destination, assessment)
+    lines, _ = _preparation_lines(repo, args.task_id, destination, analysis)
+    return CommandResult(
+        lines,
+        {"assessment": assessment, "analysis": analysis, "path": str(destination)},
+    )
+
+
+def _preparation_lines(
+    repo: Path, task_id: str, destination: Path, analysis: dict[str, object]
+) -> tuple[list[str], int]:
     try:
         display_path: object = destination.relative_to(repo)
     except ValueError:
         display_path = destination
-    lines = [f"ASSESSMENT: prepared {args.task_id}", f"SAVED: {display_path}"]
+    lines = [f"ASSESSMENT: prepared {task_id}", f"SAVED: {display_path}"]
     adapter_required = sum(
         len(item.get("required", []))
         for item in analysis.get("adapters", [])
         if isinstance(item, dict) and isinstance(item.get("required"), list)
     )
-    if analysis["required"] or adapter_required:
+    semantic_required = analysis.get("required", [])
+    if not isinstance(semantic_required, list):
+        semantic_required = []
+    if semantic_required or adapter_required:
         lines.append(
-            f"REQUIRED: {len(analysis['required'])} semantic completion(s), "
+            f"REQUIRED: {len(semantic_required)} semantic completion(s), "
             f"{adapter_required} adapter result(s)"
         )
     else:
         lines.append("READY: assessment has no unresolved generated requirements")
+    for item in semantic_required:
+        if isinstance(item, dict):
+            detail = (
+                item.get("values")
+                or item.get("allowed")
+                or item.get("value_after_approval")
+            )
+            suffix = f" — {detail}" if detail else ""
+            lines.append(
+                f"REQUIRED-FIELD: {item.get('field', 'unknown')} — "
+                f"{item.get('reason', 'completion required')}{suffix}"
+            )
     for adapter in analysis.get("adapters", []):
         if isinstance(adapter, dict) and adapter.get("review"):
             lines.append(f"ADAPTER-REVIEW: {adapter['review']}")
-    return CommandResult(
-        lines,
-        {"assessment": assessment, "analysis": analysis, "path": str(destination)},
-    )
+    return lines, len(semantic_required) + adapter_required

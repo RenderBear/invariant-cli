@@ -11,7 +11,7 @@ from invariant.cli.commands import (
     context,
     coordinate,
     evidence,
-    initial_governance,
+    governance,
     initialize,
     overview,
     state,
@@ -40,7 +40,7 @@ def build_parser() -> argparse.ArgumentParser:
     overview.register(subparsers)
     configuration.register(subparsers)
     task.register(subparsers)
-    initial_governance.register(subparsers)
+    governance.register(subparsers)
     state.register(subparsers)
     context.register(subparsers)
     evidence.register(subparsers)

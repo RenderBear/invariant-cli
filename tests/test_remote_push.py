@@ -62,6 +62,7 @@ def test_unborn_integration_never_pushes(monkeypatch: pytest.MonkeyPatch) -> Non
 def test_landing_rejects_a_tree_changed_after_adapter_review(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(landing.git, "require_capabilities", lambda _repo: None)
     monkeypatch.setattr(
         landing.git,
         "run",

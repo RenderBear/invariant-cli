@@ -27,16 +27,18 @@ tracked `uv.lock` and `pyproject.toml` when present.
 Reach is derived from candidate paths, selected domains and interfaces, and accepted governance; it
 is not an authority claim. A discovery or audit is evidence, not a governance reference.
 
-During initial governance, begin without nonexistent domains and select newly created domains in
-the final recorded assessment. Invariant accepts them when the candidate establishes those domain
-records.
+During a governance pass, begin without nonexistent domains and select newly created domains in the
+final recorded assessment. Invariant accepts them when the candidate establishes those domain
+records. A later pass may instead reconcile existing records with changed repository evidence.
 
 ### Prepare structured inputs
 
-Before writing an audit, load `invariant evidence audit schema`. Before finishing a task, run
-`invariant task assessment prepare <task-id>` and consult `invariant task assessment schema` when
-needed. When the task acceptance adapter is enabled, load `invariant task acceptance schema`; keep
-its contract and candidate-bound review separate from the repository semantic assessment.
+Before writing an audit, load `invariant evidence audit schema`. Run `invariant task finish
+<task-id>` after committing; it prepares routine assessments automatically and returns one complete
+missing-requirements object when semantic input remains. Use `invariant task assessment prepare
+<task-id>` for explicit inspection and consult `invariant task assessment schema` when needed. When
+the task acceptance adapter is enabled, load `invariant task acceptance schema`; keep its contract
+and candidate-bound review separate from the repository semantic assessment.
 
 Prefer compact JSON for automation. Consume the complete `required`, `inferred`, and `will_run`
 payload in one pass rather than probing the protocol one validation error at a time.

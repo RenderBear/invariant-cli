@@ -6,7 +6,7 @@ inspect its status, and change configuration without learning the full agent pro
 ## What is a task ID?
 
 A task ID is a caller-chosen, repository-local name for one managed change. It connects the task's
-goal, disposable receipt, generated work branch, verification, and final landing.
+goal, disposable receipt, generated worktree, verification, and final landing.
 
 Use a short descriptive value such as `fix-job-recovery` or `PROJ-142`. It must begin with a letter
 or number and may contain letters, numbers, `.`, `_`, and `-`. The same ID is passed to each command
@@ -60,46 +60,50 @@ The following is an illustrative sequence. A coding agent or harness usually sup
 scope and runs these commands.
 
 ```bash
-# Open the managed task and work branch.
+# Open the managed task and linked worktree.
 invariant --format json task begin fix-job-recovery \
   --goal "Restore active jobs after restart" \
   --path src/jobs.py
 
-# After implementation is committed, generate the candidate-bound assessment.
-invariant --format json task assessment prepare fix-job-recovery
-
-# After completing any reported semantic decisions, verify and land the task.
+# Commit in the returned WORKTREE, then finish from LIFECYCLE-ROOT.
 invariant --format json task finish fix-job-recovery
 ```
 
-`task assessment prepare` stores its editable draft in Git-local runtime rather than the repository
-worktree. `task finish` uses that draft by default. A failed finish preserves the task receipt and
-work branch so the same task ID can be inspected and resumed.
+For a routine local candidate, `task finish` infers the assessment and continues through exact-tree
+verification and landing. If semantic decisions remain, it saves an editable draft in Git-local
+runtime and returns all missing requirements together. Complete the draft and rerun the same
+command. `task assessment prepare` remains available for explicit inspection. A failed finish
+preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
 
 When `adapters.task_acceptance` is enabled, `task begin` first asks the agent for a local acceptance
 contract. The adapter preserves the original goal digest, expands the request, and records an
-`inspection`, `targeted`, or `broad` verification level. After implementation, `task assessment
-prepare` also writes a candidate-bound review beside that contract. The agent resolves its results
+`inspection`, `targeted`, or `broad` verification level. After implementation, `task finish` also
+writes a candidate-bound review beside that contract. The agent resolves its results
 with proportional evidence before finishing; a local button-label change may use source or visual
 inspection rather than a new persisted test.
 
-## Initial governance
+## Governance passes
 
-Initial governance is one resumable session with distinct audit, adoption, and verification phases:
+A governance pass is one resumable session with distinct audit, adoption, and verification phases.
+The first pass establishes durable governance. Run it again with a fresh task ID after committed
+repository changes to reconcile stale or incomplete governance:
 
 ```bash
-invariant initial-governance begin initial-governance
-invariant initial-governance audit-save initial-governance baseline --input findings.yml
+invariant governance begin governance-baseline
+invariant governance audit-save governance-baseline --input findings.yml
 ```
+
+The saved file is named `audit-<UTC timestamp>.yml`; its YAML also carries the RFC 3339
+`created_at` value and exact Git ground and tree.
 
 With agent authority, the agent continues through ready findings without a routine approval stop.
 With human authority, it summarizes the saved audit and offers deeper investigation, adoption of
 all ready findings, adoption of selected findings, or deferral.
 
 ```bash
-invariant initial-governance adopt initial-governance --all-ready
-invariant initial-governance adopt initial-governance --finding recovery-ownership
-invariant initial-governance defer initial-governance
+invariant governance adopt governance-baseline --all-ready
+invariant governance adopt governance-baseline --finding recovery-ownership
+invariant governance defer governance-baseline
 ```
 
 ## Agent and harness interfaces
@@ -109,7 +113,7 @@ The remaining command groups are primarily integration surfaces:
 | Group | Purpose |
 |---|---|
 | `task` | Manage the fixed brief, branch, assessment, verification, and landing lifecycle. |
-| `initial-governance` | Coordinate the first audit and adoption through that lifecycle. |
+| `governance` | Coordinate a repeatable repository-wide audit and adoption pass. |
 | `context` | Retrieve affected domains, architecture, contracts, reach, and digests. |
 | `evidence` | Frame and save audits or capture progressive discoveries. |
 | `coordinate` | Manage temporary plans and causal leases for concurrent work. |

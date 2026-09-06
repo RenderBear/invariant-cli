@@ -91,9 +91,10 @@ out=$(cd "$fixture" && "$cli" task begin semantic-flow --goal "$goal" \
 printf '%s\n' "$out" | grep -q '^STATUS: implementing$' ||
   die "expanded task did not enter implementation"
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
+worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
 [ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_acceptance/contract.yml" ] ||
   die "task acceptance contract was not stored under adapter runtime"
-cat >"$fixture/docs/architecture.md" <<'EOF'
+cat >"$worktree/docs/architecture.md" <<'EOF'
 # Architecture
 
 ## Source ownership
@@ -126,12 +127,12 @@ printf '%s\n' "$guidance" | grep -q '^# Progressive discovery$' ||
   die "stage guidance omitted progressive discovery prose"
 printf '%s\n' "$guidance" | grep -q '^# Task acceptance adapter$' ||
   die "stage guidance omitted the enabled adapter"
-git -C "$fixture" restore docs/architecture.md
+git -C "$worktree" restore docs/architecture.md
 ok "free-form brief, discovery, coordinate, and landing prose is compiled for the active stage"
 
-printf 'two\n' >"$fixture/src/a.txt"
-git -C "$fixture" add src/a.txt
-git -C "$fixture" commit -qm implementation
+printf 'two\n' >"$worktree/src/a.txt"
+git -C "$worktree" add src/a.txt
+git -C "$worktree" commit -qm implementation
 cat >"$assessment" <<EOF
 version: 1
 goal_digest: $goal_digest

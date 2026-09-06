@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="description" content="A plain-language visual explanation of how Invariant preserves accepted meaning across agentic change.">
+  <meta name="description" content="A plain-language visual explanation of how Invariant records accepted meaning and binds review assertions to agentic change.">
   <title>How Invariant works</title>
   <style>
     :root {
@@ -634,8 +634,8 @@ candidate  A──B──C──M
             Landing moves <code>main</code> from C to verified snapshot M.
           </div>
           <div class="mini">
-            <strong>Compare-and-swap prevents races.</strong>
-            If <code>main</code> moved after M was built, landing stops and rebuilds from the new head.
+            <strong>Compare-and-swap prevents local ref races.</strong>
+            If <code>main</code> moved inside this clone after M was built, landing stops and rebuilds from the new head.
           </div>
         </div>
       </div>
@@ -842,7 +842,7 @@ candidate  A──B──C──M
                 </div>
                 <div class="skill-panel mechanics-panel">
                   <h3>Git mechanics</h3>
-                  <p>Generated branches and optional linked worktrees start at the plan’s captured integration ground. Ignored runtime state lives in the primary worktree so all linked worktrees see the same leases. A lease binds owner, branch, worktree, target, ground, causal tip, digest, and claims. An intersecting landing makes it stale; expiry merely schedules a liveness check.</p>
+                  <p>Generated task branches use linked worktrees starting at the captured integration ground. Ignored runtime state lives in the primary worktree so all linked worktrees see the same leases. A lease binds owner, branch, worktree, target, ground, causal tip, digest, and claims. An intersecting landing makes it stale; expiry merely schedules a liveness check.</p>
                   <p class="mechanic-note">ignored: .invariant/runtime/{plans,leases}/ · landed state: first-parent Intent-Unit trailers · freshness: ancestry + claims</p>
                 </div>
               </div>

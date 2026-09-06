@@ -164,4 +164,5 @@ def test_installed_agent_workflow_matches_portable_reference() -> None:
     fenced = example.split("````markdown\n", 1)[1].rsplit("\n````", 1)[0].strip()
     assert fenced == guidance.agent_workflow()
     assert "# Human ergonomics" not in guidance.agent_workflow()
-    assert "### Start or resume a task" in guidance.agent_workflow()
+    assert "### Start and implement" in guidance.agent_workflow()
+    assert len(guidance.agent_workflow().splitlines()) < 60

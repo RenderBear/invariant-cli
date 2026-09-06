@@ -42,7 +42,8 @@ applicable to the current stage.
 
 ### Implement the candidate
 
-Implement and commit the requested change on the generated branch returned by `task begin`. Keep
+Implement and commit the requested change in the generated `WORKTREE` returned by `task begin`.
+Leave `LIFECYCLE-ROOT` on the integration branch and run lifecycle commands there. Keep
 repository evidence separate from accepted architectural authority. Preserve unresolved
 contradictions as evidence rather than silently choosing an interpretation.
 
@@ -54,50 +55,51 @@ architecture, governance, implementation, documentation, tests, follow-up work, 
 
 ### Prepare, verify, and finish
 
-After committing the candidate, generate its assessment:
-
-```bash
-invariant --format json task assessment prepare <task-id>
-```
-
-The command saves a candidate-bound draft in Git-local task runtime and reports all required
-semantic completions, recommended architecture reviews, and checks that will actually run. Review
-the exact candidate against every applicable architecture decision. The draft contains the returned
-goal digest, candidate paths, selected interfaces and domains, one boundary disposition, governance
-references, architecture review acknowledgements, and checks. Complete it and inspect each
-recommended decision before acknowledging it.
-
-Then finish the task:
+After committing the candidate, finish from `LIFECYCLE-ROOT`:
 
 ```bash
 invariant --format json task finish <task-id>
 ```
 
-`task finish` uses the prepared draft by default. Finishing recomputes reach, constructs and verifies
-the exact prospective tree, runs affected verifiers, compare-and-swaps the local integration ref,
-restores the integration branch, and cleans the task receipt and generated branch. A failure leaves
-the work branch recoverable.
+For a routine local candidate, `task finish` infers the complete assessment and continues directly
+through verification and landing. When semantic decisions or adapter evidence remain, it saves the
+candidate-bound drafts and returns the complete `required`, `inferred`, and `will_run` analysis in
+one response. Review the exact candidate against every recommended architecture decision, complete
+the saved files, and rerun the same finish command.
+
+Use the explicit preparation command only to inspect or export the draft before finishing:
+
+```bash
+invariant --format json task assessment prepare <task-id>
+```
+
+`task finish` uses an existing prepared draft by default. Finishing recomputes reach, constructs and
+verifies the exact prospective tree, runs affected verifiers, compare-and-swaps the local integration
+ref, and cleans the task receipt, generated branch, and managed worktree. A failure leaves the
+worktree recoverable and the integration checkout unchanged.
 
 Use the published `evidence audit schema` and `task assessment schema` commands instead of
 inspecting Invariant's implementation.
 
-### Run initial governance
+### Run a governance pass
 
-Start an initial-governance session before creating its audit artifact:
+Start a governance pass before creating its audit artifact. The first pass establishes durable
+governance; a later pass reconciles existing records with the current committed integration state:
 
 ```bash
-invariant initial-governance begin <task-id>
+invariant governance begin <task-id>
 ```
 
 Investigate without interrupting the human for code-level details, then save the completed
 version-1 findings:
 
 ```bash
-invariant initial-governance audit-save <task-id> <label> --input <findings-file>
+invariant governance audit-save <task-id> --input <findings-file>
 ```
 
-Invariant stamps a unique timestamped ID, UTC `created_at`, ground, and exact tree before writing
-under `.invariant/audits/`. The audit remains evidence rather than authority.
+Invariant saves the artifact as `audit-<UTC timestamp>.yml` and stamps the same event as
+`created_at`, along with its ground and exact tree. The audit remains evidence rather than
+authority.
 
 #### Agent authority
 

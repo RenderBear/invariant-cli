@@ -159,11 +159,11 @@ def save(
     now = datetime.now(timezone.utc).replace(microsecond=0)
     created_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     timestamp = now.strftime("%Y%m%dT%H%M%SZ")
-    stamped_identifier = f"{identifier}--{timestamp}"
+    stamped_identifier = f"{identifier}-{timestamp}"
     suffix = 2
     destination = repo / ".invariant" / "audits" / f"{stamped_identifier}.yml"
     while destination.exists():
-        stamped_identifier = f"{identifier}--{timestamp}-{suffix}"
+        stamped_identifier = f"{identifier}-{timestamp}-{suffix}"
         destination = repo / ".invariant" / "audits" / f"{stamped_identifier}.yml"
         suffix += 1
     value: dict[str, Any] = {
