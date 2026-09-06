@@ -392,6 +392,9 @@ class ResolvedVerifier:
     identity: tuple[str, ...]
 
 
+BUILTIN_VERIFIER_TIMEOUT = 300
+
+
 def _repository_path(repo: Path, value: str, label: str) -> Path:
     relative = Path(value)
     if not value or relative.is_absolute() or ".." in relative.parts:
@@ -410,18 +413,24 @@ def _repository_path(repo: Path, value: str, label: str) -> Path:
     return candidate
 
 
+def _nearest_project(repo: Path, candidate: Path, marker: str) -> Path | None:
+    workspace = candidate.parent
+    while True:
+        if (workspace / marker).is_file():
+            return workspace
+        if workspace == repo:
+            return None
+        workspace = workspace.parent
+
+
 def _python_test_command(repo: Path, spec: str) -> ResolvedVerifier:
     path, separator, selector = spec.partition("::")
     candidate = _repository_path(repo, path, "test verifier")
-    workspace = candidate.parent
-    while workspace != repo and not (workspace / "pyproject.toml").is_file():
-        workspace = workspace.parent
-    if not (workspace / "pyproject.toml").is_file():
-        workspace = repo
+    workspace = _nearest_project(repo, candidate, "pyproject.toml") or repo
     relative = candidate.relative_to(workspace).as_posix()
     selected = f"{relative}::{selector}" if separator else relative
     if (workspace / "uv.lock").is_file():
-        command = ("uv", "run", "pytest", selected)
+        command = ("uv", "run", "--frozen", "pytest", selected)
         runner = "uv-pytest"
         cache = "exact-tree"
     else:
@@ -433,8 +442,37 @@ def _python_test_command(repo: Path, spec: str) -> ResolvedVerifier:
         workspace,
         workspace.relative_to(repo).as_posix() or ".",
         cache,
-        0,
+        BUILTIN_VERIFIER_TIMEOUT,
         (runner, spec),
+    )
+
+
+def _shell_test_command(repo: Path, spec: str) -> ResolvedVerifier:
+    path, separator, _ = spec.partition("::")
+    if separator:
+        raise Blocked(
+            f"Invariant: shell test verifier 'test:{spec}' cannot use a test selector",
+            code="verification_failed",
+        )
+    candidate = _repository_path(repo, path, "test verifier")
+    workspace = _nearest_project(repo, candidate, "pyproject.toml")
+    if workspace is not None and (workspace / "uv.lock").is_file():
+        relative = candidate.relative_to(workspace).as_posix()
+        return ResolvedVerifier(
+            ("uv", "run", "--frozen", "sh", relative),
+            workspace,
+            workspace.relative_to(repo).as_posix() or ".",
+            "exact-tree",
+            BUILTIN_VERIFIER_TIMEOUT,
+            ("uv-shell-test", spec),
+        )
+    return ResolvedVerifier(
+        ("sh", path),
+        repo,
+        ".",
+        "never",
+        BUILTIN_VERIFIER_TIMEOUT,
+        ("shell-test", spec),
     )
 
 
@@ -485,9 +523,7 @@ def _resolve_verifier(repo: Path, locator: str, candidate_tree: Candidate) -> Re
         path = spec.split("::", 1)[0]
         candidate = _repository_path(repo, path, "test verifier")
         if path.endswith(".sh"):
-            return ResolvedVerifier(
-                ("sh", path), repo, ".", "never", 0, ("shell-test", spec)
-            )
+            return _shell_test_command(repo, spec)
         if path.endswith(".py"):
             return _python_test_command(repo, spec)
         if candidate.is_file() and candidate.stat().st_mode & 0o111:
@@ -566,7 +602,7 @@ def _run_locator(
         "locator": locator,
         "identity": list(resolved.identity),
         "cwd": resolved.cwd_identity,
-        "command": list(resolved.command[1:]),
+        "command": list(resolved.command),
         "executable": _executable_fingerprint(repo, resolved.command),
         "platform": platform.platform(),
         "python": sys.version,

@@ -199,6 +199,37 @@ def _hook_lines(receipt: Mapping[str, object]) -> list[str]:
     return lines
 
 
+def _assurance_lines(assurance: object) -> list[str]:
+    if not isinstance(assurance, Mapping):
+        return []
+    return [
+        f"ASSURANCE-{name.upper()}: {value.get('status') or 'unknown'}"
+        for name in ("structural", "behavioral", "semantic")
+        if isinstance((value := assurance.get(name)), Mapping)
+    ]
+
+
+def _completion_delta_lines(
+    repo: Path,
+    task: str,
+    *,
+    candidate_tree: str,
+    evidence_count: int,
+) -> list[str]:
+    completed = receipts.load_completed(repo, task)
+    if completed is None:
+        raise InvariantError(f"Invariant: completed task '{task}' has no archived receipt")
+    return [
+        f"TASK: {task}",
+        "STATUS: completed",
+        f"LANDING-COMMIT: {completed.get('completed_commit') or 'unknown'}",
+        f"BOUNDARY: {completed.get('resolved_boundary') or 'unresolved'}",
+        f"CANDIDATE-TREE: {candidate_tree}",
+        *_assurance_lines(completed.get("assurance")),
+        f"EVIDENCE: {evidence_count} retained — invariant task evidence {task}",
+    ]
+
+
 def _transition(
     receipt: dict[str, object], stage: str, branch: str, worktree: str
 ) -> dict[str, object]:
@@ -464,6 +495,12 @@ def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
             code="unknown_action",
         )
     request = matches[0]
+    candidate_tree = str(receipt.get("review_candidate_tree") or "")
+    evidence_ids = [
+        str(item)
+        for item in receipt.get("candidate_evidence_ids", [])
+        if isinstance(item, str)
+    ]
     adapter = str(request.get("adapter") or "")
     phase = str(request.get("phase") or "")
     existing_core = [
@@ -529,7 +566,12 @@ def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
         )
         receipts.save(repo, task, receipt)
         return FlowResult(
-            [f"RESOLVED: {request_id}", *_status_lines(repo, receipt)],
+            [
+                f"RESOLVED: {request_id}",
+                f"TASK: {task}",
+                f"STATUS: {active_stage}",
+                f"WORKTREE: {lifecycle.get('worktree') or repo}",
+            ],
             {"task": task, "stage": active_stage, "actions": []},
             "ready",
         )
@@ -547,21 +589,50 @@ def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
         )
         _accept_semantic_assurance(receipt)
         receipts.save(repo, task, receipt)
-        output = finish(
+        assurance = receipt.get("assurance", {})
+        finish(
             repo,
             task,
             assessment_path=str(_assessment_for_completion(repo, task)),
             subject=str(receipt.get("finish_subject") or f"Invariant task {task}"),
         )
         return FlowResult(
-            [f"RESOLVED: {request_id}", *output],
-            {"task": task, "stage": "completed", "actions": []},
+            [
+                f"RESOLVED: {request_id}",
+                *_completion_delta_lines(
+                    repo,
+                    task,
+                    candidate_tree=candidate_tree or "unknown",
+                    evidence_count=len(evidence_ids),
+                ),
+            ],
+            {
+                "task": task,
+                "stage": "completed",
+                "actions": [],
+                "candidate_tree": candidate_tree,
+                "evidence_ids": evidence_ids,
+                "assurance": assurance,
+            },
         )
     receipts.save(repo, task, receipt)
     actions = adapters.pending(receipt)
     return FlowResult(
-        [f"RESOLVED: {request_id}", *_status_lines(repo, receipt), *_hook_lines(receipt)],
-        {"task": task, "stage": stage, "actions": actions},
+        [
+            f"RESOLVED: {request_id}",
+            f"TASK: {task}",
+            f"STATUS: {stage}",
+            *_assurance_lines(receipt.get("assurance")),
+            *_hook_lines(receipt),
+        ],
+        {
+            "task": task,
+            "stage": stage,
+            "actions": adapters.action_descriptors(receipt),
+            "candidate_tree": candidate_tree,
+            "evidence_ids": evidence_ids,
+            "assurance": receipt.get("assurance", {}),
+        },
         "needs_input" if actions else "ready",
     )
 
@@ -1164,7 +1235,7 @@ def prepare_finish(
         evidence_request = landing.LandRequest(
             **{**evidence_request.__dict__, "subject": subject}
         )
-    candidate, evidence_lines, evidence = landing.collect_evidence(repo, evidence_request)
+    candidate, _, evidence = landing.collect_evidence(repo, evidence_request)
     analysis["candidate_tree"] = candidate.tree
     evidence_root = local / "evidence"
     evidence_root.mkdir(parents=True, exist_ok=True)
@@ -1172,9 +1243,14 @@ def prepare_finish(
         identifier = str(item.get("evidence_id") or git.hash_text(repo, repr(item)))
         dump_yaml(evidence_root / f"{identifier.replace(':', '-')}.yml", item)
 
+    evidence_ids = [
+        str(item.get("evidence_id")) for item in evidence if item.get("evidence_id")
+    ]
+
     receipt = receipts.load(repo, task)
     receipt["finish_subject"] = subject or f"Invariant task {task}"
     receipt["review_candidate_tree"] = candidate.tree
+    receipt["candidate_evidence_ids"] = evidence_ids
     retained_discoveries = _retained_discoveries(receipt)
     adapters.run_hook(
         local,
@@ -1210,11 +1286,12 @@ def prepare_finish(
         receipts.save(repo, task, receipt)
         lines = [
             f"ASSESSMENT: inferred {task}",
-            *evidence_lines,
             f"TASK: {task}",
             "STATUS: awaiting-review",
             f"CANDIDATE-TREE: {candidate.tree}",
+            *_assurance_lines(receipt.get("assurance")),
             *_hook_lines(receipt),
+            f"EVIDENCE: {len(evidence_ids)} retained — invariant task evidence {task}",
         ]
         return FlowResult(
             lines,
@@ -1223,25 +1300,37 @@ def prepare_finish(
                 "stage": "awaiting-review",
                 "candidate_tree": candidate.tree,
                 "actions": adapters.action_descriptors(receipt),
-                "evidence_ids": [
-                    str(item.get("evidence_id"))
-                    for item in evidence
-                    if item.get("evidence_id")
-                ],
+                "evidence_ids": evidence_ids,
                 "assurance": receipt["assurance"],
             },
             "needs_input",
         )
     receipts.save(repo, task, receipt)
-    output = finish(
+    assurance = receipt.get("assurance", {})
+    finish(
         repo,
         task,
         assessment_path=str(prepared),
         subject=subject,
     )
     return FlowResult(
-        [f"ASSESSMENT: inferred {task}", *output],
-        {"task": task, "stage": "completed"},
+        [
+            f"ASSESSMENT: inferred {task}",
+            *_completion_delta_lines(
+                repo,
+                task,
+                candidate_tree=candidate.tree,
+                evidence_count=len(evidence_ids),
+            ),
+        ],
+        {
+            "task": task,
+            "stage": "completed",
+            "actions": [],
+            "candidate_tree": candidate.tree,
+            "evidence_ids": evidence_ids,
+            "assurance": assurance,
+        },
     )
 
 

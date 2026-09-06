@@ -194,16 +194,20 @@ printf '%s\n' "$review_request" | grep -q '"outcome":"needs_input"' ||
   die "finish did not identify the pending semantic decision"
 printf '%s\n' "$review_request" | grep -q '"id":"core:candidate-review"' ||
   die "finish did not expose one candidate-bound semantic review action"
-printf '%s\n' "$review_request" | grep -q '"affected_semantics":\["architecture:docs/architecture.md#application-boundary"\]' ||
-  die "finish did not include every affected semantic in the review packet"
+if printf '%s\n' "$review_request" | grep -q '"affected_semantics"\|"changed_paths"\|"prompt"'; then
+  die "default finish payload expanded action details before they were requested"
+fi
 if printf '%s\n' "$review_request" | grep -q '"input_schema"'; then
   die "default finish payload repeated the action schema"
 fi
 printf '%s\n' "$review_request" | grep -q '"evidence_ids":\[' ||
   die "default finish payload did not use evidence references"
+[ "${#review_request}" -lt 2500 ] || die "default finish payload exceeded its compact protocol budget"
 action=$(cd "$architecture" && "$cli" --format json task action architecture core:candidate-review)
 printf '%s\n' "$action" | grep -q '"input_schema":{' ||
   die "action expansion did not retrieve the response schema"
+printf '%s\n' "$action" | grep -q '"affected_semantics":\["architecture:docs/architecture.md#application-boundary"\]' ||
+  die "action expansion omitted affected semantic context"
 if printf '%s\n' "$action" | grep -q '"evidence":\['; then
   die "expanded action repeated full candidate evidence"
 fi
@@ -218,6 +222,58 @@ printf '%s\n' "$prepared" | grep -q '"governance":\["architecture:docs/architect
 printf '%s\n' "$prepared" | grep -q '"recommended_architecture_reviews":\["architecture:docs/architecture.md#application-boundary"\]' ||
   die "affected architecture review was not exposed separately"
 ok "finish compiles inferred semantics into one candidate review action"
+
+automatic="$fixtures/automatic"
+new_repo "$automatic"
+mkdir -p "$automatic/.invariant" "$automatic/checks"
+cp "$root/pyproject.toml" "$root/uv.lock" "$root/README.md" "$root/LICENSE" "$automatic/"
+cp -R "$root/src" "$root/bin" "$automatic/"
+printf 'one\n' >"$automatic/app.txt"
+cat >"$automatic/.invariant/config.yml" <<'EOF'
+version: 1
+authority: agent
+execution: auto
+integration_branch: main
+push_remote: off
+EOF
+cat >"$automatic/checks/verify.sh" <<'EOF'
+#!/bin/sh
+set -eu
+test -n "${VIRTUAL_ENV:-}"
+test -x .venv/bin/python
+./bin/invariant --help >/dev/null
+EOF
+chmod +x "$automatic/checks/verify.sh"
+git -C "$automatic" add -A
+git -C "$automatic" commit -qm seed
+out=$(cd "$automatic" && "$cli" task begin automatic --goal "Exercise automatic test execution" \
+  --boundary no-record --path app.txt)
+branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
+automatic_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
+goal_digest=$(printf '%s\n' "$out" | sed -n 's/^GOAL-DIGEST: //p')
+printf 'two\n' >"$automatic_worktree/app.txt"
+git -C "$automatic_worktree" commit -qam candidate
+cat >"$assessment" <<EOF
+version: 1
+goal_digest: $goal_digest
+paths: [app.txt]
+interfaces: []
+domains: []
+boundary: {disposition: no-record}
+governance: []
+architecture_reviews: []
+checks: [test:checks/verify.sh]
+EOF
+out=$(cd "$automatic" && "$cli" candidate verify "$branch" --assessment "$assessment")
+printf '%s\n' "$out" | grep -q '^CHECK: passed — test:checks/verify.sh$' ||
+  die "built-in shell verifier did not execute"
+receipt=$(grep -l '^locator: test:checks/verify.sh$' "$automatic"/.invariant/runtime/verifications/*.yml)
+grep -q '^- uv$' "$receipt" || die "verification receipt omitted the resolved uv command"
+grep -q '^- --frozen$' "$receipt" || die "built-in uv verifier was not frozen"
+out=$(cd "$automatic" && "$cli" task finish automatic --assessment "$assessment")
+printf '%s\n' "$out" | grep -q '^CHECK: reused — test:checks/verify.sh$' ||
+  die "automatic locked-project verifier did not reuse exact-tree evidence"
+ok "locked projects execute shell test witnesses without runner configuration"
 
 runner="$fixtures/runner"
 new_repo "$runner"
@@ -275,9 +331,15 @@ out=$(cd "$runner" && "$cli" candidate verify "$branch" --assessment "$assessmen
 printf '%s\n' "$out" | grep -q '^CHECK: passed — runner:backend#tests/smoke$' || die "named runner did not execute"
 if printf '%s\n' "$out" | grep -q 'NOISY-SUCCESS-OUTPUT'; then die "successful verifier logs leaked into normal output"; fi
 out=$(cd "$runner" && "$cli" task finish cache --check runner:backend#tests/smoke)
-printf '%s\n' "$out" | grep -q '^CHECK: reused — runner:backend#tests/smoke$' || die "finish did not reuse exact-candidate verification"
-printf '%s\n' "$out" | grep -q '^CHECK-CACHE: 1 reused$' || die "verification cache summary was missing"
+printf '%s\n' "$out" | grep -q '^STATUS: completed$' || die "cached verifier task did not complete"
+if printf '%s\n' "$out" | grep -q '^CHECK:'; then
+  die "successful lifecycle output repeated internal verifier trace"
+fi
+[ "${#out}" -lt 1000 ] || die "successful text lifecycle output exceeded its compact protocol budget"
+evidence=$(cd "$runner" && "$cli" --format json task evidence cache)
+printf '%s\n' "$evidence" | grep -q '"locator":"runner:backend#tests/smoke"' ||
+  die "completed task did not retain the cached verifier evidence"
 [ "$(cat "$runner/.invariant/runtime/runner-count")" = 1 ] || die "cached verifier executed more than once"
 ok "project-aware runners retain logs and reuse exact-candidate verification receipts"
 
-echo "6 agent protocol checks passed"
+echo "7 agent protocol checks passed"

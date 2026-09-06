@@ -78,7 +78,8 @@ invariant --format json task respond fix-job-recovery core:candidate-review \
   --input semantic-review.yml
 ```
 
-The default action contains stable schema and evidence IDs. Fetch deeper material only when needed:
+The default lifecycle result contains stable action references and candidate evidence IDs. Fetch
+the prompt, response schema, candidate context, or individual observations only when needed:
 
 ```bash
 invariant --format json task action fix-job-recovery core:candidate-review
