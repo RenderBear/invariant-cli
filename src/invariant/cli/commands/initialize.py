@@ -157,13 +157,16 @@ def _line_select(options: Sequence[tuple[str, str, str]], default: str) -> str:
 
 
 def _logo() -> None:
-    print()
-    print(f"{_color('1;35', '╭───╮')}  {_color('1', 'INVARIANT')}")
-    print(f"{_color('1;35', '│ ≡ │')}")
-    print(
-        f"{_color('1;35', '╰───╯')}  "
-        f"{_color('2', 'Durable repository governance for agentic work')}"
+    wordmark = (
+        "▀█▀ █▄█ █ █ ▄▀▄ █▀▄ ▀█▀ ▄▀▄ █▄█ ▀█▀",
+        " █  ███ █ █ █▀█ █▀▄  █  █▀█ ███  █ ",
+        "▀▀▀ ▀ ▀  ▀  ▀ ▀ ▀ ▀ ▀▀▀ ▀ ▀ ▀ ▀  ▀ ",
     )
+    print()
+    for mark, line in zip(("●", "│", "≡"), wordmark):
+        print(f"{_color('1;35', mark)}  {_color('1', line)}")
+    print(_color("1;35", "│"))
+    print(f"{_color('1;35', '●')}  {_color('2', 'Durable repository context')}")
 
 
 def _interaction_intro(*, terminal: bool | None = None) -> None:
