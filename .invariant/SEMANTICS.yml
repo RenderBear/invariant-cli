@@ -10,7 +10,7 @@ records:
   - repo:src/invariant/adapters
   - repo:src/invariant/mechanics/landing.py
   verifies:
-  - runner:shell#tests/test-agent-protocol.sh
+  - test:tests/test-agent-protocol.sh
   - test:tests/test_remote_push.py
   facets:
     caller_owns:
@@ -32,7 +32,7 @@ records:
   - repo:src/invariant/semantics/adoption.py
   - repo:src/invariant/semantics/discovery.py
   verifies:
-  - runner:shell#tests/test-validate-state.sh
+  - test:tests/test-validate-state.sh
   relations:
     constrained_by:
     - contract:semantic-authority-boundary
@@ -49,8 +49,8 @@ records:
   - repo:src/invariant/lifecycle/tasks.py
   - repo:src/invariant/mechanics/landing.py
   verifies:
-  - runner:shell#tests/test-cli.sh
-  - runner:shell#tests/test-land-support.sh
+  - test:tests/test-cli.sh
+  - test:tests/test-land-support.sh
   relations:
     enforced_by:
     - contract:exact-candidate-landing
@@ -87,8 +87,8 @@ records:
   - repo:.invariant/runtime
   - repo:src/invariant/lifecycle/tasks.py
   verifies:
-  - runner:shell#tests/test-runtime-support.sh
-  - runner:shell#tests/test-session-brief.sh
+  - test:tests/test-runtime-support.sh
+  - test:tests/test-session-brief.sh
   facets:
     namespace: .invariant/runtime
     standing: ignored non-authoritative local state
@@ -104,7 +104,7 @@ records:
   - repo:src/invariant/lifecycle/tasks.py
   verifies:
   - test:tests/test_architecture.py
-  - runner:shell#tests/test-semantic-options.sh
+  - test:tests/test-semantic-options.sh
   relations:
     transported_by:
     - contract:semantic-hook-transport

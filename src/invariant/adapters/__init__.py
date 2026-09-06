@@ -61,7 +61,7 @@ def action_descriptor(request: Mapping[str, object]) -> dict[str, Any]:
 
     raw_context = request.get("context")
     context = dict(raw_context) if isinstance(raw_context, dict) else {}
-    evidence = context.pop("evidence", [])
+    evidence = context.pop("evidence", None)
     if isinstance(evidence, list):
         context["evidence_ids"] = [
             str(item.get("evidence_id"))

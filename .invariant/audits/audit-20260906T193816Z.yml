@@ -107,8 +107,8 @@ findings:
       - architecture:docs/SPEC.md#32-mechanics
       - architecture:docs/SPEC.md#11-audits-and-discoveries
       verifies:
-      - runner:shell#tests/test-brief-support.sh
-      - runner:shell#tests/test-validate-state.sh
+      - test:tests/test-brief-support.sh
+      - test:tests/test-validate-state.sh
   - kind: semantic
     value:
       id: evidence-before-authority
@@ -122,7 +122,7 @@ findings:
       - repo:src/invariant/semantics/adoption.py
       - repo:src/invariant/semantics/discovery.py
       verifies:
-      - runner:shell#tests/test-validate-state.sh
+      - test:tests/test-validate-state.sh
       relations:
         constrained_by:
         - contract:semantic-authority-boundary
@@ -160,8 +160,8 @@ findings:
       - architecture:docs/SPEC.md#41-fixed-task-lifecycle
       - architecture:docs/SPEC.md#10-candidate-verification-and-landing
       verifies:
-      - runner:shell#tests/test-cli.sh
-      - runner:shell#tests/test-land-support.sh
+      - test:tests/test-cli.sh
+      - test:tests/test-land-support.sh
       - test:tests/test_remote_push.py
   - kind: semantic
     value:
@@ -175,8 +175,8 @@ findings:
       - repo:src/invariant/lifecycle/tasks.py
       - repo:src/invariant/mechanics/landing.py
       verifies:
-      - runner:shell#tests/test-cli.sh
-      - runner:shell#tests/test-land-support.sh
+      - test:tests/test-cli.sh
+      - test:tests/test-land-support.sh
       relations:
         enforced_by:
         - contract:exact-candidate-landing
@@ -214,7 +214,7 @@ findings:
       - architecture:docs/SPEC.md#83-lifecycle-hook-protocol
       verifies:
       - test:tests/test_architecture.py
-      - runner:shell#tests/test-semantic-options.sh
+      - test:tests/test-semantic-options.sh
   - kind: semantic
     value:
       id: two-semantic-suspension-points
@@ -229,7 +229,7 @@ findings:
       - repo:src/invariant/lifecycle/tasks.py
       verifies:
       - test:tests/test_architecture.py
-      - runner:shell#tests/test-semantic-options.sh
+      - test:tests/test-semantic-options.sh
       relations:
         transported_by:
         - contract:semantic-hook-transport
@@ -264,8 +264,8 @@ findings:
       - repo:.invariant/runtime
       - repo:src/invariant/lifecycle/tasks.py
       verifies:
-      - runner:shell#tests/test-runtime-support.sh
-      - runner:shell#tests/test-session-brief.sh
+      - test:tests/test-runtime-support.sh
+      - test:tests/test-session-brief.sh
       facets:
         namespace: .invariant/runtime
         standing: ignored non-authoritative local state
@@ -296,7 +296,7 @@ findings:
       - repo:src/invariant/adapters
       - repo:src/invariant/mechanics/landing.py
       verifies:
-      - runner:shell#tests/test-agent-protocol.sh
+      - test:tests/test-agent-protocol.sh
       - test:tests/test_remote_push.py
       facets:
         caller_owns:

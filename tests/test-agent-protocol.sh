@@ -208,6 +208,8 @@ printf '%s\n' "$action" | grep -q '"input_schema":{' ||
   die "action expansion did not retrieve the response schema"
 printf '%s\n' "$action" | grep -q '"affected_semantics":\["architecture:docs/architecture.md#application-boundary"\]' ||
   die "action expansion omitted affected semantic context"
+printf '%s\n' "$action" | grep -q '"evidence_ids":\["candidate:' ||
+  die "action expansion discarded candidate evidence references"
 if printf '%s\n' "$action" | grep -q '"evidence":\['; then
   die "expanded action repeated full candidate evidence"
 fi
