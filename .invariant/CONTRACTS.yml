@@ -15,8 +15,8 @@ contracts:
   - architecture:docs/SPEC.md#41-fixed-task-lifecycle
   - architecture:docs/SPEC.md#10-candidate-verification-and-landing
   verifies:
-  - runner:shell#tests/test-cli.sh
-  - runner:shell#tests/test-land-support.sh
+  - test:tests/test-cli.sh
+  - test:tests/test-land-support.sh
   - test:tests/test_remote_push.py
 - id: semantic-authority-boundary
   assertion: Mechanics may calculate reach and validate semantic input, but it must not infer semantic
@@ -35,8 +35,8 @@ contracts:
   - architecture:docs/SPEC.md#32-mechanics
   - architecture:docs/SPEC.md#11-audits-and-discoveries
   verifies:
-  - runner:shell#tests/test-brief-support.sh
-  - runner:shell#tests/test-validate-state.sh
+  - test:tests/test-brief-support.sh
+  - test:tests/test-validate-state.sh
 - id: semantic-hook-transport
   assertion: Semantic integrations may suspend work only through task.created and candidate.evidenced
     actions; they cannot own lifecycle stages, mechanical evidence, repository transitions, or durable
@@ -53,4 +53,4 @@ contracts:
   - architecture:docs/SPEC.md#83-lifecycle-hook-protocol
   verifies:
   - test:tests/test_architecture.py
-  - runner:shell#tests/test-semantic-options.sh
+  - test:tests/test-semantic-options.sh

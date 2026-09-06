@@ -8,15 +8,3 @@ integration_branch: main
 push_remote: off
 adapters:
   intent_brief: off
-verification:
-  runners:
-    shell:
-      command:
-        - uv
-        - run
-        - --frozen
-        - sh
-        - "{target}"
-      cwd: .
-      cache: exact-tree
-      timeout: 300
