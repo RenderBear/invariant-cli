@@ -1,0 +1,330 @@
+version: 1
+id: audit-20260906T193816Z
+created_at: '2026-09-06T19:38:16Z'
+ground: 9df73f8b223866a4e3dbcf3b3b34291761e5b2e5
+tree: 4ebf1d58ad6998f05d8e4fc15fbbf42c745f45b7
+mode: full
+findings:
+- id: stable-layer-responsibilities
+  summary: The design assigns stable, non-directory responsibilities to semantics, mechanics, and lifecycle,
+    with a one-way dependency rule enforced in the architecture tests.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:src/invariant/semantics
+  - repo:src/invariant/mechanics
+  - repo:src/invariant/lifecycle
+  - repo:tests/test_architecture.py
+  proposed: domain
+  disposition: adoptable
+  authority: design:repo:docs/SPEC.md#3-layer-ownership
+  records:
+  - kind: domain
+    value:
+      id: semantics
+      responsibility: Owns interpretation, durable meaning, evidence classification, and semantic review
+        inputs without controlling repository mutation.
+      authority: design:repo:docs/SPEC.md#31-semantics
+      architecture:
+      - architecture:docs/SPEC.md#31-semantics
+      contracts:
+      - semantic-authority-boundary
+      - semantic-hook-transport
+  - kind: domain
+    value:
+      id: mechanics
+      responsibility: Owns deterministic repository facts, validation, exact candidate construction, verifier
+        execution, and guarded local ref updates.
+      authority: design:repo:docs/SPEC.md#32-mechanics
+      architecture:
+      - architecture:docs/SPEC.md#32-mechanics
+      contracts:
+      - exact-candidate-landing
+      - semantic-authority-boundary
+  - kind: domain
+    value:
+      id: lifecycle
+      responsibility: Owns task state transitions, isolated work, semantic suspension points, resumption,
+        verification sequencing, landing orchestration, and completion cleanup.
+      authority: design:repo:docs/SPEC.md#33-lifecycle
+      architecture:
+      - architecture:docs/SPEC.md#33-lifecycle
+      contracts:
+      - exact-candidate-landing
+      - semantic-hook-transport
+  - kind: semantic
+    value:
+      id: layer-ownership
+      document: architecture:docs/SPEC.md#3-layer-ownership
+      authority: design:repo:docs/SPEC.md#3-layer-ownership
+      applies_to:
+      - domain:lifecycle
+      - domain:mechanics
+      - domain:semantics
+      revisit_on:
+      - repo:src/invariant/lifecycle
+      - repo:src/invariant/mechanics
+      - repo:src/invariant/semantics
+      verifies:
+      - test:tests/test_architecture.py
+      relations:
+        implemented_by:
+        - contract:exact-candidate-landing
+        - contract:semantic-authority-boundary
+        - contract:semantic-hook-transport
+      facets:
+        interpretation: Responsibilities are semantic boundaries, not directory ownership.
+- id: evidence-does-not-create-authority
+  summary: Repository reach, audits, discoveries, and model output remain evidence until an authorized
+    semantic decision adopts durable meaning; deterministic mechanics may validate but not invent that
+    authority.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:src/invariant/mechanics/audit.py
+  - repo:src/invariant/mechanics/governance.py
+  - repo:src/invariant/mechanics/state.py
+  - repo:src/invariant/semantics/adoption.py
+  - repo:tests/test-validate-state.sh
+  proposed: contract
+  disposition: adoptable
+  authority: design:repo:docs/SPEC.md#11-audits-and-discoveries
+  records:
+  - kind: contract
+    value:
+      id: semantic-authority-boundary
+      assertion: Mechanics may calculate reach and validate semantic input, but it must not infer semantic
+        domains or promote audit, discovery, or model output into authority.
+      authority: design:repo:docs/SPEC.md#31-semantics
+      between:
+      - semantics
+      - mechanics
+      surfaces:
+      - repo:src/invariant/mechanics/audit.py
+      - repo:src/invariant/mechanics/governance.py
+      - repo:src/invariant/mechanics/state.py
+      - repo:src/invariant/semantics
+      architecture:
+      - architecture:docs/SPEC.md#31-semantics
+      - architecture:docs/SPEC.md#32-mechanics
+      - architecture:docs/SPEC.md#11-audits-and-discoveries
+      verifies:
+      - runner:shell#tests/test-brief-support.sh
+      - runner:shell#tests/test-validate-state.sh
+  - kind: semantic
+    value:
+      id: evidence-before-authority
+      document: architecture:docs/SPEC.md#11-audits-and-discoveries
+      authority: design:repo:docs/SPEC.md#11-audits-and-discoveries
+      applies_to:
+      - domain:mechanics
+      - domain:semantics
+      revisit_on:
+      - repo:src/invariant/mechanics/audit.py
+      - repo:src/invariant/semantics/adoption.py
+      - repo:src/invariant/semantics/discovery.py
+      verifies:
+      - runner:shell#tests/test-validate-state.sh
+      relations:
+        constrained_by:
+        - contract:semantic-authority-boundary
+      facets:
+        audit_standing: evidence-only
+        discovery_standing: evidence-only
+- id: exact-candidate-landing
+  summary: The managed lifecycle binds evidence and review to one prospective Git tree and advances the
+    integration ref only after exact-tree verification and a final compare-and-swap check.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:src/invariant/lifecycle/tasks.py
+  - repo:src/invariant/mechanics/landing.py
+  - repo:tests/test-land-support.sh
+  - repo:tests/test-cli.sh
+  - repo:tests/test_remote_push.py
+  proposed: contract
+  disposition: adoptable
+  authority: design:repo:docs/SPEC.md#10-candidate-verification-and-landing
+  records:
+  - kind: contract
+    value:
+      id: exact-candidate-landing
+      assertion: Lifecycle landing may advance the local integration ref only when mechanical evidence
+        and semantic disposition bind to the same exact candidate tree and the target still equals its
+        captured head; failure preserves the target and recoverable work.
+      authority: design:repo:docs/SPEC.md#10-candidate-verification-and-landing
+      between:
+      - lifecycle
+      - mechanics
+      surfaces:
+      - repo:src/invariant/lifecycle/tasks.py
+      - repo:src/invariant/mechanics/landing.py
+      architecture:
+      - architecture:docs/SPEC.md#41-fixed-task-lifecycle
+      - architecture:docs/SPEC.md#10-candidate-verification-and-landing
+      verifies:
+      - runner:shell#tests/test-cli.sh
+      - runner:shell#tests/test-land-support.sh
+      - test:tests/test_remote_push.py
+  - kind: semantic
+    value:
+      id: exact-candidate-before-ref-update
+      document: architecture:docs/SPEC.md#10-candidate-verification-and-landing
+      authority: design:repo:docs/SPEC.md#10-candidate-verification-and-landing
+      applies_to:
+      - domain:lifecycle
+      - domain:mechanics
+      revisit_on:
+      - repo:src/invariant/lifecycle/tasks.py
+      - repo:src/invariant/mechanics/landing.py
+      verifies:
+      - runner:shell#tests/test-cli.sh
+      - runner:shell#tests/test-land-support.sh
+      relations:
+        enforced_by:
+        - contract:exact-candidate-landing
+      facets:
+        failure_result: Integration target remains unchanged and task work remains recoverable.
+- id: bounded-semantic-hooks
+  summary: The lifecycle has exactly two blocking semantic hook phases; adapters return candidate-bound
+    actions but cannot replace task stages, verification, Git transitions, or semantic authority.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:src/invariant/adapters/base.py
+  - repo:src/invariant/adapters/intent_brief
+  - repo:src/invariant/lifecycle/tasks.py
+  - repo:tests/test-semantic-options.sh
+  - repo:tests/test_architecture.py
+  proposed: contract
+  disposition: adoptable
+  authority: design:repo:docs/SPEC.md#83-lifecycle-hook-protocol
+  records:
+  - kind: contract
+    value:
+      id: semantic-hook-transport
+      assertion: Semantic integrations may suspend work only through task.created and candidate.evidenced
+        actions; they cannot own lifecycle stages, mechanical evidence, repository transitions, or durable
+        authority.
+      authority: design:repo:docs/SPEC.md#83-lifecycle-hook-protocol
+      between:
+      - semantics
+      - lifecycle
+      surfaces:
+      - interface:lifecycle-hooks
+      - repo:src/invariant/adapters
+      - repo:src/invariant/lifecycle/tasks.py
+      architecture:
+      - architecture:docs/SPEC.md#83-lifecycle-hook-protocol
+      verifies:
+      - test:tests/test_architecture.py
+      - runner:shell#tests/test-semantic-options.sh
+  - kind: semantic
+    value:
+      id: two-semantic-suspension-points
+      document: architecture:docs/SPEC.md#83-lifecycle-hook-protocol
+      authority: design:repo:docs/SPEC.md#83-lifecycle-hook-protocol
+      applies_to:
+      - domain:lifecycle
+      - domain:semantics
+      - interface:lifecycle-hooks
+      revisit_on:
+      - repo:src/invariant/adapters
+      - repo:src/invariant/lifecycle/tasks.py
+      verifies:
+      - test:tests/test_architecture.py
+      - runner:shell#tests/test-semantic-options.sh
+      relations:
+        transported_by:
+        - contract:semantic-hook-transport
+      facets:
+        phases:
+        - task.created
+        - candidate.evidenced
+- id: runtime-is-local-state
+  summary: Invariant-owned transient artifacts share one self-ignored .invariant/runtime namespace; receipts
+    and cached evidence are integrity or retrospective state, never repository authority.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:src/invariant/mechanics/coordinate.py
+  - repo:src/invariant/mechanics/receipts.py
+  - repo:src/invariant/mechanics/landing.py
+  - repo:tests/test-runtime-support.sh
+  - repo:tests/test-session-brief.sh
+  proposed: architecture
+  disposition: adoptable
+  authority: design:repo:docs/SPEC.md#5-state-and-authority
+  records:
+  - kind: semantic
+    value:
+      id: local-runtime-is-not-authority
+      document: architecture:docs/SPEC.md#5-state-and-authority
+      authority: design:repo:docs/SPEC.md#5-state-and-authority
+      applies_to:
+      - repo:src/invariant/mechanics/coordinate.py
+      - repo:src/invariant/mechanics/landing.py
+      - repo:src/invariant/mechanics/receipts.py
+      revisit_on:
+      - repo:.invariant/runtime
+      - repo:src/invariant/lifecycle/tasks.py
+      verifies:
+      - runner:shell#tests/test-runtime-support.sh
+      - runner:shell#tests/test-session-brief.sh
+      facets:
+        namespace: .invariant/runtime
+        standing: ignored non-authoritative local state
+- id: cli-is-not-the-agent-harness
+  summary: The CLI owns deterministic lifecycle and protocol mechanics while its caller owns conversation,
+    repository investigation, implementation, and external effects beyond the explicitly configured upstream
+    publication step.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:README.md
+  - repo:src/invariant/cli
+  - repo:src/invariant/lifecycle
+  - repo:tests/test-agent-protocol.sh
+  - repo:tests/test_remote_push.py
+  proposed: architecture
+  disposition: adoptable
+  authority: design:repo:docs/SPEC.md#4-application-boundary
+  records:
+  - kind: semantic
+    value:
+      id: cli-harness-boundary
+      document: architecture:docs/SPEC.md#4-application-boundary
+      authority: design:repo:docs/SPEC.md#4-application-boundary
+      applies_to:
+      - repo:src/invariant/cli
+      - repo:src/invariant/lifecycle
+      revisit_on:
+      - repo:src/invariant/adapters
+      - repo:src/invariant/mechanics/landing.py
+      verifies:
+      - runner:shell#tests/test-agent-protocol.sh
+      - test:tests/test_remote_push.py
+      facets:
+        caller_owns:
+        - conversation
+        - implementation
+        - unbounded external effects
+        cli_owns:
+        - deterministic mechanics
+        - fixed lifecycle
+        - structured protocol
+- id: package-layout-is-not-domain-ontology
+  summary: Source packages make the three principal layers easy to inspect, but CLI commands, compatibility
+    entry points, adapters, and validation helpers cross directory boundaries in service of those responsibilities;
+    path topology should not become additional domains.
+  evidence:
+  - repo:src/invariant/cli
+  - repo:src/invariant/compat.py
+  - repo:src/invariant/adapters
+  - repo:src/invariant/mechanics
+  - repo:tests/test_architecture.py
+  proposed: none
+  disposition: no-action
+- id: tests-are-verifier-witnesses
+  summary: Shell and Python suites provide executable witnesses for durable promises, but their file grouping
+    is test organization rather than a responsibility boundary or independent authority.
+  evidence:
+  - repo:.github/workflows/verify.yml
+  - repo:tests
+  - repo:pyproject.toml
+  proposed: none
+  disposition: no-action
