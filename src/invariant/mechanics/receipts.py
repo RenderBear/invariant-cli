@@ -86,15 +86,17 @@ def open_receipt(
     target = resolved.integration_branch
     head = integration_head(repo, target)
     selected = sorted(set(domains))
-    governance_state = {
-        "governance_digest": governance.digest(repo, selected),
-        "integration_governance_digest": (
+    governance_snapshot = {
+        "selected_digest": governance.digest(repo, selected),
+        "integration_digest": (
             governance.digest(repo, selected, head) if head != "unborn" else git.hash_text(repo, "")
         ),
+    }
+    change_classification = {
         "boundary": boundary,
     }
     if posture:
-        governance_state["posture"] = posture
+        change_classification["posture"] = posture
     receipt = {
         "version": 1,
         "repository": repository_identity(repo, target),
@@ -108,7 +110,8 @@ def open_receipt(
             "interfaces": sorted(set(interfaces)),
             "domains": selected,
         },
-        "governance": governance_state,
+        "governance_snapshot": governance_snapshot,
+        "change_classification": change_classification,
         "adapters": sorted(set(adapters)),
     }
     save(repo, task, receipt)
@@ -154,8 +157,17 @@ def check_receipt(
     if mechanics_digest() != receipt.get("mechanics_digest"):
         raise Blocked("STALE: CLI mechanics changed", code="stale_receipt")
     selected = _scope(receipt, "domains")
-    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
-    if governance.digest(repo, selected) != governance_state.get("governance_digest"):
+    governance_snapshot = (
+        receipt.get("governance_snapshot")
+        if isinstance(receipt.get("governance_snapshot"), dict)
+        else {}
+    )
+    change_classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    if governance.digest(repo, selected) != governance_snapshot.get("selected_digest"):
         raise Blocked("STALE: selected governance changed", code="stale_receipt")
 
     if (goal is None) == (goal_digest is None):
@@ -180,7 +192,7 @@ def check_receipt(
     cached_head = str(receipt.get("integration_head"))
     current_head = integration_head(repo, target)
     head_advanced = current_head != cached_head
-    integration_digest = governance_state.get("integration_governance_digest")
+    integration_digest = governance_snapshot.get("integration_digest")
     if head_advanced:
         if "unborn" in {cached_head, current_head}:
             raise Blocked("STALE: integration branch birth state changed", code="stale_receipt")
@@ -189,7 +201,7 @@ def check_receipt(
                 "STALE: integration history no longer descends from the cached head", code="stale_receipt"
             )
         integration_digest = governance.digest(repo, selected, current_head)
-        if integration_digest != governance_state.get("integration_governance_digest"):
+        if integration_digest != governance_snapshot.get("integration_digest"):
             raise Blocked(
                 "STALE: selected governance changed on the integration branch", code="stale_receipt"
             )
@@ -215,8 +227,8 @@ def check_receipt(
     if head_advanced or goal_changed:
         receipt["integration_head"] = current_head
         receipt["goal_digest"] = current_goal
-        governance_state["integration_governance_digest"] = integration_digest
-        receipt["governance"] = governance_state
+        governance_snapshot["integration_digest"] = integration_digest
+        receipt["governance_snapshot"] = governance_snapshot
         save(repo, task, receipt)
     output: list[str] = []
     if head_advanced:
@@ -224,9 +236,9 @@ def check_receipt(
     if goal_changed:
         output.append("GOAL: changed text accepted for cached semantic envelope")
     output.extend([f"BRIEF: fresh {task}", "REUSE: cached semantic envelope"])
-    if governance_state.get("posture"):
-        output.append(f"POSTURE: {governance_state['posture']}")
-    output.append(f"BOUNDARY: {governance_state.get('boundary', '')}")
+    if change_classification.get("posture"):
+        output.append(f"POSTURE: {change_classification['posture']}")
+    output.append(f"BOUNDARY: {change_classification.get('boundary', '')}")
     return receipt, output
 
 

@@ -34,7 +34,12 @@ case "$branch" in invariant/work/cli-flow-*) ;; *) die "begin did not generate a
 receipt="$fixture/.git/invariant/briefs/cli-flow.yml"
 [ -f "$receipt" ] || die "begin did not create a Git-local receipt"
 grep -q '^mechanics_digest:' "$receipt" || die "receipt does not bind CLI mechanics"
+grep -q '^governance_snapshot:$' "$receipt" || die "receipt omitted its governance snapshot"
+grep -q '^  selected_digest: ' "$receipt" || die "receipt omitted its selected governance digest"
+grep -q '^  integration_digest: ' "$receipt" || die "receipt omitted its integration governance digest"
+grep -q '^change_classification:$' "$receipt" || die "receipt omitted its change classification"
 grep -q '^  boundary: unresolved$' "$receipt" || die "omitted boundary was not kept unresolved"
+if grep -q '^governance:$' "$receipt"; then die "receipt retained the combined governance section"; fi
 if grep -q '^skills:' "$receipt"; then die "receipt still binds skill packages"; fi
 ok "automatic begin opens a receipt and isolated generated branch"
 

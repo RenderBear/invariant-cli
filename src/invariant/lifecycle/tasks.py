@@ -384,8 +384,12 @@ def finish(
     target = str(receipt.get("integration_target") or "")
     base = str(receipt.get("integration_head") or "")
     cached_goal = str(receipt.get("goal_digest") or "")
-    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
-    cached_boundary = str(governance_state.get("boundary") or "")
+    change_classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    cached_boundary = str(change_classification.get("boundary") or "")
     if active_stage == "implementing":
         _require_lifecycle_checkout(repo, branch)
     if assessment.goal_digest != cached_goal:
@@ -644,8 +648,12 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         {".invariant/DOMAINS.yml", ".invariant/CONTRACTS.yml", ".invariant/CONSTRAINTS.yml"}
         .intersection(paths)
     )
-    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
-    boundary = str(governance_state.get("boundary") or "unresolved")
+    change_classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    boundary = str(change_classification.get("boundary") or "unresolved")
     if boundary == "unresolved":
         if governance_refs or durable_registry_changed:
             boundary = "recorded"
@@ -789,7 +797,11 @@ def task_guidance(repo: Path, task: str) -> list[str]:
     receipt = receipts.load(repo, task)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     scope = receipt.get("scope") if isinstance(receipt.get("scope"), dict) else {}
-    governance_state = receipt.get("governance") if isinstance(receipt.get("governance"), dict) else {}
+    change_classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
     domains = [str(item) for item in scope.get("domains", [])]
     initial_paths = [str(item) for item in scope.get("paths", [])]
     interfaces = [str(item) for item in scope.get("interfaces", [])]
@@ -815,7 +827,7 @@ def task_guidance(repo: Path, task: str) -> list[str]:
         "",
         f"Task: {task}",
         f"Stage: {stage}",
-        f"Boundary: {governance_state.get('boundary') or 'unknown'}",
+        f"Boundary: {change_classification.get('boundary') or 'unknown'}",
         f"Accepted ground: {captured_head or 'unknown'}",
         f"Paths ({path_basis}): {', '.join(paths) or 'none selected'}",
         f"Interfaces: {', '.join(interfaces) or 'none selected'}",

@@ -813,6 +813,10 @@ A receipt may bind:
 - selected governance and defining-material digests;
 - the current boundary disposition.
 
+The receipt keeps these concerns separate. `governance_snapshot` contains `selected_digest` and
+`integration_digest`, which are freshness baselines only. `change_classification` contains the
+task's `boundary` and optional `posture`; it describes the change without granting authority.
+
 The CLI reports changed dependencies. The semantic caller decides whether changed goal text remains
 compatible with the cached envelope. Successful confirmation may refresh the exact goal digest only
 after every mechanical freshness check succeeds.
