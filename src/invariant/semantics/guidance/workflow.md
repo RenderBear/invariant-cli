@@ -140,8 +140,8 @@ upstream. Never choose or configure an upstream automatically, and never run `gi
 Invariant's landing flow. If the remote rejects the update, preserve and report the completed local
 landing.
 
-Repositories may enable the bundled `adapters.task_acceptance` unit. It expands the request into a
-Git-local acceptance contract before implementation and reviews that contract against the exact
+Repositories may enable the bundled `adapters.task_contract` unit. It expands the request into a
+Git-local task contract before implementation and reviews that contract against the exact
 prospective tree before landing. Use proportional evidence: inspection can satisfy a local
 presentation change, while affected behavior, cross-domain, persistence, security, or compatibility
 work needs focused or broad executable verification. Do not manufacture a persisted test merely

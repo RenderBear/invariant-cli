@@ -26,7 +26,7 @@ printf '%s\n' "$defaults" | grep -q '^execution: auto$' || die "execution defaul
 printf '%s\n' "$defaults" | grep -q '^integration_branch: auto$' || die "branch setting default is wrong"
 printf '%s\n' "$defaults" | grep -q '^integration_branch_resolved: main$' || die "automatic branch resolution is wrong"
 printf '%s\n' "$defaults" | grep -q '^push_remote: off$' || die "remote push default is not off"
-printf '%s\n' "$defaults" | grep -q '^adapter_task_acceptance: false$' || die "task acceptance adapter default is wrong"
+printf '%s\n' "$defaults" | grep -q '^adapter_task_contract: off$' || die "task contract adapter default is wrong"
 [ ! -e "$fixture/.invariant" ] || die "show persisted implicit defaults"
 
 created=$(cd "$fixture" && "$cli" config init)
@@ -34,7 +34,8 @@ printf '%s\n' "$created" | grep -q '^CONFIG: created .invariant/config.yml$' || 
 grep -q '^version: 1$' "$fixture/.invariant/config.yml" || die "init omitted the schema version"
 grep -q '^coding_agents:$' "$fixture/.invariant/config.yml" || die "init omitted coding agents"
 grep -q '^integration_branch: auto$' "$fixture/.invariant/config.yml" || die "init did not persist automatic branch selection"
-grep -q "^push_remote: 'off'$" "$fixture/.invariant/config.yml" || die "init did not persist safe push default"
+grep -q '^push_remote: off$' "$fixture/.invariant/config.yml" || die "init did not persist safe push default"
+grep -q '^  task_contract: off$' "$fixture/.invariant/config.yml" || die "init did not persist the adapter default"
 if (cd "$fixture" && "$cli" config init >/dev/null 2>&1); then
   die "init overwrote an existing configuration"
 fi
@@ -43,13 +44,15 @@ fi
 (cd "$fixture" && "$cli" config set authority human >/dev/null)
 (cd "$fixture" && "$cli" config set coding_agents codex >/dev/null)
 (cd "$fixture" && "$cli" config set push_remote on >/dev/null)
-(cd "$fixture" && "$cli" config set adapters.task_acceptance on >/dev/null)
+(cd "$fixture" && "$cli" config set adapters.task_contract on >/dev/null)
 updated=$(cd "$fixture" && "$cli" config show)
 printf '%s\n' "$updated" | grep -q '^execution: assisted$' || die "execution update was not resolved"
 printf '%s\n' "$updated" | grep -q '^authority: human$' || die "authority update was not resolved"
 printf '%s\n' "$updated" | grep -q '^coding_agents: codex$' || die "coding-agent update was not resolved"
 printf '%s\n' "$updated" | grep -q '^push_remote: on$' || die "push update was not resolved"
-printf '%s\n' "$updated" | grep -q '^adapter_task_acceptance: true$' || die "adapter update was not resolved"
+printf '%s\n' "$updated" | grep -q '^adapter_task_contract: on$' || die "adapter update was not resolved"
+grep -q '^push_remote: on$' "$fixture/.invariant/config.yml" || die "push setting was quoted"
+grep -q '^  task_contract: on$' "$fixture/.invariant/config.yml" || die "adapter setting was not plain on"
 
 cp "$fixture/.invariant/config.yml" "$before"
 if (cd "$fixture" && "$cli" config set push_remote maybe >/dev/null 2>&1); then

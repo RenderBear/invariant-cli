@@ -1,6 +1,6 @@
-# Task acceptance adapter
+# Task contract adapter
 
-Preserve the user's original request and derive a local task acceptance contract from it. Make the
+Preserve the user's original request and derive a local task contract from it. Make the
 expanded goal, outcomes, acceptance conditions, and constraints explicit without turning them into
 repository governance.
 

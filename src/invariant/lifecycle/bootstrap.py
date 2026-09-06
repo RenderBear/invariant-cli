@@ -22,7 +22,7 @@ class BootstrapSettings:
     execution: str = "auto"
     integration_branch: str = "auto"
     push_remote: str = "off"
-    task_acceptance: bool = False
+    task_contract: bool = False
 
 
 def _managed(text: str, body: str, path: Path) -> str:
@@ -114,7 +114,7 @@ def initialize(repo: Path, settings: BootstrapSettings) -> list[str]:
         execution=settings.execution,
         integration_branch=settings.integration_branch,
         push_remote=settings.push_remote,
-        task_acceptance=settings.task_acceptance,
+        task_contract=settings.task_contract,
     )
     for path, text in updates.items():
         _write(path, text)
@@ -136,7 +136,7 @@ def initialize(repo: Path, settings: BootstrapSettings) -> list[str]:
         f"INTEGRATION-BRANCH: {resolved.integration_branch}",
         f"INTEGRATION-BRANCH-SETTING: {settings.integration_branch}",
         f"PUSH-REMOTE: {settings.push_remote}",
-        f"TASK-ACCEPTANCE-ADAPTER: {'on' if settings.task_acceptance else 'off'}",
+        f"TASK-CONTRACT-ADAPTER: {'on' if settings.task_contract else 'off'}",
         *instruction_lines,
         f"PROMPT: {GOVERNANCE_PROMPT}",
     ]

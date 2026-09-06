@@ -263,7 +263,7 @@ The standing of each object is:
 |---|---|---|
 | Domain, architecture, contract | accepted authority | repository history |
 | Audit, discovery | evidence only | repository history |
-| Task acceptance contract and review | optional adapter state | active task |
+| Task contract and review | optional adapter state | active task |
 | Plan, lease | coordination only | active work |
 | Receipt | cache integrity only | disposable |
 | Git tree and commit | causal implementation fact | repository history |
@@ -284,7 +284,7 @@ execution: auto
 integration_branch: auto
 push_remote: off
 adapters:
-  task_acceptance: false
+  task_contract: off
 ```
 
 `coding_agents` records the non-empty set of supported coding agents configured during repository
@@ -365,12 +365,12 @@ initialization before project state is created.
 `invariant config init` remains the lower-level configuration-only initializer.
 `invariant config set <key> <value>` updates one validated setting atomically. The settable keys are
 `coding_agents`, `authority`, `execution`, `integration_branch`, `push_remote`,
-and `adapters.task_acceptance`. Version `1` is the configuration schema marker, not an operational
+and `adapters.task_contract`. Version `1` is the configuration schema marker, not an operational
 setting.
 
 Optional additions to the fixed core are configured under `adapters`. The bundled
-`task_acceptance` adapter is one indivisible unit: its pre-hook expands the request into a local
-acceptance contract with stable IDs, and its post-hook assesses those IDs against the exact
+`task_contract` adapter is one indivisible unit: its pre-hook expands the request into a local
+task contract with stable IDs, and its post-hook assesses those IDs against the exact
 prospective tree. It is either enabled in full or disabled; requirements expansion and outcome review are
 not independent lifecycle modes. The model-led default leaves the adapter disabled and relies on
 the coding agent's normal understanding plus normal candidate review.
@@ -458,13 +458,13 @@ The result supplied to verification is one of:
 These are semantic assertions with mechanical validation. A reach classification never manufactures
 the assertion.
 
-### 7.5 Task acceptance adapter
+### 7.5 Task contract adapter
 
-When `adapters.task_acceptance` is enabled, the host supplies a task-local acceptance contract:
+When `adapters.task_contract` is enabled, the host supplies a task-local contract:
 
 ```yaml
 version: 1
-adapter: task_acceptance
+adapter: task_contract
 source_goal_digest: <goal-digest-from-task-begin>
 requirements:
   goal: Restore active jobs when the browser is reopened.
@@ -485,7 +485,7 @@ verification:
 Stable IDs provide task dependency points while prose remains first-class. The original request and
 its goal digest stay authoritative; the adapter records a derived expansion rather than silently
 replacing them. The contract is stored under
-`<git-common-dir>/invariant/tasks/<task-id>/adapters/task_acceptance/`, not accepted as repository
+`<git-common-dir>/invariant/tasks/<task-id>/adapters/task_contract/`, not accepted as repository
 governance.
 
 The verification level is proportional to semantic reach and risk, not raw diff size:
@@ -526,18 +526,18 @@ invariant config show
 invariant config init
 invariant config set <key> <value>
 invariant task begin <task-id> --goal <text> [semantic scope...]
-                     [--task-acceptance|--no-task-acceptance]
-                     [--acceptance-contract <file>]
+                     [--task-contract|--no-task-contract]
+                     [--task-contract-file <file>]
 invariant task status <task-id>
 invariant task check <task-id> [semantic scope...]
 invariant task finish <task-id> [--assessment <file>] [--check <locator>]...
-                      [--acceptance-review <file>]
+                      [--task-contract-review <file>]
 invariant task continue <task-id> [--apply]
 invariant task invalidate <task-id>
 invariant task guidance <task-id>
 invariant task assessment <schema|example>
 invariant task assessment prepare <task-id> [--output <file>]
-invariant task acceptance <schema|example>
+invariant task contract <schema|example>
 invariant state validate
 invariant context map
 invariant context rows <domain>...
@@ -588,13 +588,13 @@ reviews, and exact verifiers that will run. `task assessment prepare` exposes th
 explicit inspection or export. Schema and example commands expose the source-of-truth shapes used by
 validation.
 
-Adapter inputs do not extend this core assessment schema. When task acceptance is enabled, the
-preparation step—invoked automatically by `task finish` or explicitly through `task assessment
-prepare`—also writes a separate Git-local review:
+Adapter inputs do not extend this core assessment schema. When the task contract adapter is
+enabled, the preparation step—invoked automatically by `task finish` or explicitly through
+`task assessment prepare`—also writes a separate Git-local review:
 
 ```yaml
 version: 1
-adapter: task_acceptance
+adapter: task_contract
 source_goal_digest: <goal-digest>
 candidate_tree: <exact-tree-id>
 results:
@@ -604,7 +604,7 @@ results:
     evidence: [test:tests/test_job_restore.py]
 ```
 
-`invariant task acceptance schema` exposes both the adapter contract and review shapes.
+`invariant task contract schema` exposes both the adapter contract and review shapes.
 
 ### 8.2 Structured output
 
@@ -857,11 +857,11 @@ local ref update.
 Both profiles preserve the same receipts, branches, candidate construction, checks, and landing
 guarantees. The distinction is only where the CLI pauses.
 
-### 14.3 Task acceptance adapter
+### 14.3 Task contract adapter
 
-With the bundled adapter enabled, `task begin` pauses at `awaiting-task-acceptance` until the host
+With the bundled adapter enabled, `task begin` pauses at `awaiting-task-contract` until the host
 supplies a valid local contract. `task finish` publishes the exact candidate tree and pauses at
-`awaiting-task-acceptance-review` until every required acceptance ID is conclusively satisfied with
+`awaiting-task-contract-review` until every required acceptance ID is conclusively satisfied with
 evidence for that tree. A changed tree regenerates and invalidates the review.
 
 When disabled, both adapter hooks disappear together. Briefing, receipts, generated branches,

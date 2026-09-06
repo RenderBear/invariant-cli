@@ -6,7 +6,7 @@ from pathlib import Path
 import yaml
 
 from invariant import adapters
-from invariant.adapters.task_acceptance import TaskAcceptanceContract, TaskAcceptanceReview
+from invariant.adapters.task_contract import TaskContract, TaskContractReview
 from invariant.semantics import guidance
 from invariant.semantics.discovery import Discovery, validate_shape
 from invariant.semantics.models import Assessment
@@ -53,13 +53,13 @@ def test_product_copy_and_protocol_use_the_new_namespaces() -> None:
         assert "GIT_INTENT_" not in text, path
 
 
-def test_task_acceptance_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> None:
+def test_task_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> None:
     path = tmp_path / "contract.yml"
     path.write_text(
         yaml.safe_dump(
             {
                 "version": 1,
-                "adapter": "task_acceptance",
+                "adapter": "task_contract",
                 "source_goal_digest": "goal-id",
                 "requirements": {
                     "goal": "Restore active jobs after reopening.",
@@ -75,7 +75,7 @@ def test_task_acceptance_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> 
         ),
         encoding="utf-8",
     )
-    contract = TaskAcceptanceContract.load(path)
+    contract = TaskContract.load(path)
     assert contract.goal == "Restore active jobs after reopening."
     assert contract.nodes["outcomes"] == ["O1"]
     assert contract.required == ["A1", "C1"]
@@ -84,13 +84,13 @@ def test_task_acceptance_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> 
     assert "Active jobs remain visible." in path.read_text(encoding="utf-8")
 
 
-def test_task_acceptance_review_is_separate_exact_tree_adapter_input(tmp_path: Path) -> None:
+def test_task_contract_review_is_separate_exact_tree_adapter_input(tmp_path: Path) -> None:
     path = tmp_path / "review.yml"
     path.write_text(
         yaml.safe_dump(
             {
                 "version": 1,
-                "adapter": "task_acceptance",
+                "adapter": "task_contract",
                 "source_goal_digest": "abc",
                 "candidate_tree": "tree-id",
                 "results": [
@@ -105,7 +105,7 @@ def test_task_acceptance_review_is_separate_exact_tree_adapter_input(tmp_path: P
         ),
         encoding="utf-8",
     )
-    review = TaskAcceptanceReview.load(path)
+    review = TaskContractReview.load(path)
     assert review.candidate_tree == "tree-id"
     assert review.results[0].reference == "A1"
     assert review.results[0].disposition == "satisfied"
@@ -148,10 +148,10 @@ def test_stage_guidance_remains_free_form_and_composable() -> None:
     assert "Trace behavior end to end" in text
 
 
-def test_task_acceptance_is_a_bundled_adapter_not_semantics() -> None:
-    adapter = adapters.task_acceptance_examples()
-    assert adapter["contract"]["adapter"] == "task_acceptance"
-    assert adapter["review"]["adapter"] == "task_acceptance"
+def test_task_contract_is_a_bundled_adapter_not_semantics() -> None:
+    adapter = adapters.task_contract_examples()
+    assert adapter["contract"]["adapter"] == "task_contract"
+    assert adapter["review"]["adapter"] == "task_contract"
     assert not (PACKAGE / "semantics" / "guidance" / "task-acceptance.md").exists()
     assert not (PACKAGE / "semantics" / "guidance" / "outcome-review.md").exists()
     for path in (PACKAGE / "adapters").rglob("*.py"):
@@ -159,14 +159,14 @@ def test_task_acceptance_is_a_bundled_adapter_not_semantics() -> None:
         assert not any(name.startswith("invariant.lifecycle") for name in imports), path
 
 
-def test_task_acceptance_example_allows_inspection_without_a_persisted_test(tmp_path: Path) -> None:
-    examples = adapters.task_acceptance_examples()
+def test_task_contract_example_allows_inspection_without_a_persisted_test(tmp_path: Path) -> None:
+    examples = adapters.task_contract_examples()
     contract_path = tmp_path / "contract.yml"
     review_path = tmp_path / "review.yml"
     contract_path.write_text(yaml.safe_dump(examples["contract"]), encoding="utf-8")
     review_path.write_text(yaml.safe_dump(examples["review"]), encoding="utf-8")
-    contract = TaskAcceptanceContract.load(contract_path)
-    review = TaskAcceptanceReview.load(review_path)
+    contract = TaskContract.load(contract_path)
+    review = TaskContractReview.load(review_path)
     assert contract.verification_level == "inspection"
     assert review.results[0].evidence == ["inspection:src/components/SaveButton.tsx"]
 

@@ -9,7 +9,7 @@ import yaml
 
 from invariant.errors import InvariantError
 from invariant.mechanics import git
-from invariant.mechanics.documents import dump_yaml, load_yaml
+from invariant.mechanics.documents import dump_config_yaml, load_config_yaml, parse_config_yaml
 
 
 CONFIG_PATH = Path(".invariant/config.yml")
@@ -19,14 +19,14 @@ SETTABLE_KEYS = {
     "execution",
     "integration_branch",
     "push_remote",
-    "adapters.task_acceptance",
+    "adapters.task_contract",
 }
 CODING_AGENT_CHOICES = {"claude", "codex"}
 
 
 @dataclass(frozen=True)
 class AdapterOptions:
-    values: tuple[tuple[str, bool], ...] = (("task_acceptance", False),)
+    values: tuple[tuple[str, bool], ...] = (("task_contract", False),)
 
     @property
     def enabled(self) -> tuple[str, ...]:
@@ -35,8 +35,8 @@ class AdapterOptions:
     def is_enabled(self, name: str) -> bool:
         return any(candidate == name and active for candidate, active in self.values)
 
-    def as_dict(self) -> dict[str, bool]:
-        return dict(self.values)
+    def as_dict(self) -> dict[str, str]:
+        return {name: "on" if active else "off" for name, active in self.values}
 
 
 @dataclass(frozen=True)
@@ -128,24 +128,23 @@ def _from_raw(
         raise InvariantError(
             f"Invariant: .invariant/config.yml has invalid execution '{execution}' (use auto or assisted)"
         )
-    push_value = raw.get("push_remote", "off")
-    push_remote = ("on" if push_value else "off") if isinstance(push_value, bool) else push_value
+    push_remote = raw.get("push_remote", "off")
     if push_remote not in {"on", "off"}:
         raise InvariantError(
             f"Invariant: .invariant/config.yml has invalid push_remote '{push_remote}' (use on or off)"
         )
-    adapters_raw = raw.get("adapters", {"task_acceptance": False})
+    adapters_raw = raw.get("adapters", {"task_contract": "off"})
     if not isinstance(adapters_raw, dict):
         raise InvariantError("Invariant: .invariant/config.yml adapters must be a mapping")
     adapter_values: list[tuple[str, bool]] = []
     for name, enabled in sorted(adapters_raw.items()):
         if not isinstance(name, str) or not git.valid_id(name):
             raise InvariantError(f"Invariant: invalid adapter id '{name}'")
-        if not isinstance(enabled, bool):
-            raise InvariantError(f"Invariant: adapters.{name} must be true or false")
-        adapter_values.append((name, enabled))
-    if "task_acceptance" not in adapters_raw:
-        adapter_values.append(("task_acceptance", False))
+        if not isinstance(enabled, str) or enabled not in {"on", "off"}:
+            raise InvariantError(f"Invariant: adapters.{name} must be on or off")
+        adapter_values.append((name, enabled == "on"))
+    if "task_contract" not in adapters_raw:
+        adapter_values.append(("task_contract", False))
         adapter_values.sort()
     adapters = AdapterOptions(tuple(adapter_values))
     verification_raw = raw.get("verification", {})
@@ -246,7 +245,7 @@ def resolve(repo: Path) -> Config:
         )
     if not config_path.is_file():
         raise InvariantError("Invariant: .invariant/config.yml is not a regular file")
-    raw = load_yaml(config_path)
+    raw = load_config_yaml(config_path)
     branch, branch_source = _current(repo)
     return _from_raw(
         repo,
@@ -276,7 +275,7 @@ def resolve_at(repo: Path, ref: str, integration_branch: str) -> Config:
             VerificationOptions(),
         )
     try:
-        raw = yaml.safe_load(result.stdout)
+        raw = parse_config_yaml(result.stdout)
     except yaml.YAMLError as exc:
         raise InvariantError(
             f"Invariant: invalid YAML in {CONFIG_PATH.as_posix()} at {ref}: {exc}",
@@ -324,7 +323,7 @@ def initialize(
     execution: str | None = None,
     integration_branch: str | None = None,
     push_remote: str | None = None,
-    task_acceptance: bool | None = None,
+    task_contract: bool | None = None,
 ) -> list[str]:
     path = repo / CONFIG_PATH
     if path.exists():
@@ -341,7 +340,7 @@ def initialize(
         "execution": execution if execution is not None else "auto",
         "integration_branch": branch_setting,
         "push_remote": push_remote if push_remote is not None else "off",
-        "adapters": {"task_acceptance": task_acceptance is True},
+        "adapters": {"task_contract": "on" if task_contract is True else "off"},
     }
     _from_raw(
         repo,
@@ -350,7 +349,7 @@ def initialize(
         fallback_branch=fallback_branch,
         fallback_source=fallback_source,
     )
-    dump_yaml(path, document)
+    dump_config_yaml(path, document)
     return [f"CONFIG: created {CONFIG_PATH.as_posix()}", *lines(resolve(repo))]
 
 
@@ -360,7 +359,7 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
     path = repo / CONFIG_PATH
     if path.exists():
         current = resolve(repo)
-        raw = load_yaml(path)
+        raw = load_config_yaml(path)
         if not isinstance(raw, dict):
             raise InvariantError("Invariant: .invariant/config.yml must contain a mapping")
         document = dict(raw)
@@ -398,7 +397,7 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
         if not isinstance(adapter_values, dict):
             raise InvariantError("Invariant: .invariant/config.yml adapters must be a mapping")
         adapter_values = dict(adapter_values)
-        adapter_values[key.removeprefix("adapters.")] = value == "on"
+        adapter_values[key.removeprefix("adapters.")] = value
         document["adapters"] = adapter_values
 
     _from_raw(
@@ -408,7 +407,7 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
         fallback_branch=current.integration_branch,
         fallback_source=current.branch_source,
     )
-    dump_yaml(path, document)
+    dump_config_yaml(path, document)
     return [f"CONFIG: set {key}={value}", *lines(resolve(repo))]
 
 
@@ -463,7 +462,7 @@ def lines(config: Config) -> list[str]:
         f"integration_branch_resolved: {config.integration_branch}",
         f"branch_source: {config.branch_source}",
         *[
-            f"adapter_{name}: {'true' if enabled else 'false'}"
+            f"adapter_{name}: {'on' if enabled else 'off'}"
             for name, enabled in config.adapters.values
         ],
     ]

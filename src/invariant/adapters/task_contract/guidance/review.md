@@ -1,6 +1,6 @@
-# Task acceptance review
+# Task contract review
 
-Review the exact candidate tree against every required item in the local task acceptance contract.
+Review the exact candidate tree against every required item in the local task contract.
 Record an inspectable evidence locator for every satisfied result. Evidence may be a focused test,
 command, schema, source inspection, screenshot, or human review; it need not be a new persisted test.
 

@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Mapping
 
 from invariant.adapters.base import AdapterGate, TaskAdapter
-from invariant.adapters.task_acceptance.adapter import (
-    TaskAcceptanceAdapter,
+from invariant.adapters.task_contract.adapter import (
+    TaskContractAdapter,
     contract_schema,
     examples,
     review_schema,
@@ -14,7 +14,7 @@ from invariant.adapters.task_acceptance.adapter import (
 from invariant.errors import InvariantError
 
 
-_REGISTRY: dict[str, TaskAdapter] = {"task_acceptance": TaskAcceptanceAdapter()}
+_REGISTRY: dict[str, TaskAdapter] = {"task_contract": TaskContractAdapter()}
 
 
 def validate(ids: tuple[str, ...]) -> None:
@@ -200,5 +200,5 @@ def schemas() -> dict[str, object]:
     return {"contract": contract_schema(), "review": review_schema()}
 
 
-def task_acceptance_examples() -> dict[str, object]:
+def task_contract_examples() -> dict[str, object]:
     return examples()

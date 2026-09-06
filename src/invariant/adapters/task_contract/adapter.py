@@ -6,21 +6,21 @@ from importlib.resources import files
 from pathlib import Path
 
 from invariant.adapters.base import AdapterGate
-from invariant.adapters.task_acceptance.models import (
-    TaskAcceptanceContract,
-    TaskAcceptanceReview,
+from invariant.adapters.task_contract.models import (
+    TaskContract,
+    TaskContractReview,
 )
 from invariant.mechanics.documents import dump_yaml
 
 
-class TaskAcceptanceAdapter:
-    id = "task_acceptance"
-    begin_stage = "awaiting-task-acceptance"
-    review_stage = "awaiting-task-acceptance-review"
+class TaskContractAdapter:
+    id = "task_contract"
+    begin_stage = "awaiting-task-contract"
+    review_stage = "awaiting-task-contract-review"
 
     @staticmethod
     def _root(task_root: Path) -> Path:
-        return task_root / "adapters" / "task_acceptance"
+        return task_root / "adapters" / "task_contract"
 
     @staticmethod
     def _digest(path: Path) -> str:
@@ -38,41 +38,41 @@ class TaskAcceptanceAdapter:
             if not stored.is_file():
                 return None, AdapterGate(
                     self.begin_stage,
-                    "Invariant: the task acceptance contract is missing from local runtime",
-                    "task_acceptance_required",
+                    "Invariant: the task contract is missing from local runtime",
+                    "task_contract_required",
                 )
-            contract = TaskAcceptanceContract.load(stored)
+            contract = TaskContract.load(stored)
             if contract.source_goal_digest != goal_digest:
                 return None, AdapterGate(
                     self.begin_stage,
-                    "Invariant: the stored task acceptance contract no longer matches the task goal",
-                    "task_acceptance_goal_mismatch",
+                    "Invariant: the stored task contract no longer matches the task goal",
+                    "task_contract_goal_mismatch",
                 )
             if state.get("contract_digest") != self._digest(stored):
                 return None, AdapterGate(
                     self.begin_stage,
-                    "Invariant: the task acceptance contract changed after task creation",
-                    "task_acceptance_contract_changed",
+                    "Invariant: the task contract changed after task creation",
+                    "task_contract_changed",
                     ("NEXT: restore the captured contract or invalidate and restart the task",),
                 )
             return state, None
         if source is None:
             return None, AdapterGate(
                 self.begin_stage,
-                "Invariant: the task acceptance adapter requires a local contract",
-                "task_acceptance_required",
+                "Invariant: the task contract adapter requires a local contract",
+                "task_contract_required",
                 (
                     f"GOAL-DIGEST: {goal_digest}",
-                    "NEXT: create the contract from 'invariant task acceptance schema' and rerun "
-                    "task begin with --acceptance-contract <file>",
+                    "NEXT: create the contract from 'invariant task contract schema' and rerun "
+                    "task begin with --task-contract-file <file>",
                 ),
             )
-        contract = TaskAcceptanceContract.load(source)
+        contract = TaskContract.load(source)
         if contract.source_goal_digest != goal_digest:
             return None, AdapterGate(
                 self.begin_stage,
-                "Invariant: task acceptance contract does not match the task goal",
-                "task_acceptance_goal_mismatch",
+                "Invariant: task contract does not match the task goal",
+                "task_contract_goal_mismatch",
                 (f"GOAL-DIGEST: {goal_digest}",),
             )
         destination = self._root(task_root) / "contract.yml"
@@ -131,8 +131,8 @@ class TaskAcceptanceAdapter:
         if not contract.is_file() or state.get("contract_digest") != self._digest(contract):
             return AdapterGate(
                 self.review_stage,
-                "Invariant: the task acceptance contract changed after task creation",
-                "task_acceptance_contract_changed",
+                "Invariant: the task contract changed after task creation",
+                "task_contract_changed",
                 ("NEXT: restore the captured contract or invalidate and restart the task",),
             )
         prepared = self._root(task_root) / "prepared-review.yml"
@@ -141,21 +141,21 @@ class TaskAcceptanceAdapter:
             prepared = self.prepare_candidate(task_root, goal_digest, candidate_tree, state)
             return AdapterGate(
                 self.review_stage,
-                "Invariant: task acceptance review is required for the exact prospective tree",
-                "task_acceptance_review_required",
+                "Invariant: task contract review is required for the exact prospective tree",
+                "task_contract_review_required",
                 (
                     f"CANDIDATE-TREE: {candidate_tree}",
                     f"REVIEW: {prepared['review']}",
                     "NEXT: resolve every result with proportional evidence, then rerun task finish",
                 ),
             )
-        review = TaskAcceptanceReview.load(selected)
+        review = TaskContractReview.load(selected)
         if review.source_goal_digest != goal_digest or review.candidate_tree != candidate_tree:
             prepared = self.prepare_candidate(task_root, goal_digest, candidate_tree, state)
             return AdapterGate(
                 self.review_stage,
-                "Invariant: task acceptance review is stale for the current candidate",
-                "task_acceptance_review_required",
+                "Invariant: task contract review is stale for the current candidate",
+                "task_contract_review_required",
                 (
                     f"CANDIDATE-TREE: {candidate_tree}",
                     f"REVIEW: {prepared['review']}",
@@ -168,8 +168,8 @@ class TaskAcceptanceAdapter:
         if missing:
             return AdapterGate(
                 self.review_stage,
-                f"Invariant: task acceptance review is missing {missing[0]}",
-                "task_acceptance_review_required",
+                f"Invariant: task contract review is missing {missing[0]}",
+                "task_contract_review_required",
             )
         unresolved = [
             by_reference[reference]
@@ -179,8 +179,9 @@ class TaskAcceptanceAdapter:
         if unresolved:
             return AdapterGate(
                 self.review_stage,
-                f"Invariant: task acceptance {unresolved[0].reference} is {unresolved[0].disposition}",
-                "task_acceptance_not_satisfied",
+                f"Invariant: task contract requirement {unresolved[0].reference} "
+                f"is {unresolved[0].disposition}",
+                "task_contract_not_satisfied",
             )
         unsupported = [
             by_reference[reference]
@@ -190,8 +191,9 @@ class TaskAcceptanceAdapter:
         if unsupported:
             return AdapterGate(
                 self.review_stage,
-                f"Invariant: satisfied task acceptance {unsupported[0].reference} requires evidence",
-                "task_acceptance_evidence_required",
+                f"Invariant: satisfied task contract requirement {unsupported[0].reference} "
+                "requires evidence",
+                "task_contract_evidence_required",
                 (
                     "EVIDENCE: use inspection:, test:, command:, schema:, review:, or another "
                     "inspectable locator",
@@ -209,11 +211,11 @@ class TaskAcceptanceAdapter:
         contract = self._root(task_root) / "contract.yml"
         if not contract.is_file():
             return []
-        return ["# Task acceptance contract", "", *contract.read_text(encoding="utf-8").splitlines()]
+        return ["# Task contract", "", *contract.read_text(encoding="utf-8").splitlines()]
 
     def guidance(self, stage: str) -> str:
         name = "review" if stage == self.review_stage else "contract"
-        resource = files("invariant.adapters.task_acceptance").joinpath("guidance", f"{name}.md")
+        resource = files("invariant.adapters.task_contract").joinpath("guidance", f"{name}.md")
         return resource.read_text(encoding="utf-8").strip()
 
 
@@ -229,13 +231,13 @@ def contract_schema() -> dict[str, object]:
     }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Invariant task acceptance contract",
+        "title": "Invariant task contract",
         "type": "object",
         "additionalProperties": False,
         "required": ["version", "adapter", "source_goal_digest", "requirements", "verification"],
         "properties": {
             "version": {"const": 1},
-            "adapter": {"const": "task_acceptance"},
+            "adapter": {"const": "task_contract"},
             "source_goal_digest": {"type": "string", "minLength": 1},
             "requirements": {
                 "type": "object",
@@ -264,13 +266,13 @@ def contract_schema() -> dict[str, object]:
 def review_schema() -> dict[str, object]:
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "title": "Invariant task acceptance review",
+        "title": "Invariant task contract review",
         "type": "object",
         "additionalProperties": False,
         "required": ["version", "adapter", "source_goal_digest", "candidate_tree", "results"],
         "properties": {
             "version": {"const": 1},
-            "adapter": {"const": "task_acceptance"},
+            "adapter": {"const": "task_contract"},
             "source_goal_digest": {"type": "string", "minLength": 1},
             "candidate_tree": {"type": "string", "minLength": 1},
             "results": {
@@ -300,7 +302,7 @@ def examples() -> dict[str, object]:
     return {
         "contract": {
             "version": 1,
-            "adapter": "task_acceptance",
+            "adapter": "task_contract",
             "source_goal_digest": digest,
             "requirements": {
                 "goal": "Change the button label to Save changes.",
@@ -315,7 +317,7 @@ def examples() -> dict[str, object]:
         },
         "review": {
             "version": 1,
-            "adapter": "task_acceptance",
+            "adapter": "task_contract",
             "source_goal_digest": digest,
             "candidate_tree": "<from task assessment prepare>",
             "results": [

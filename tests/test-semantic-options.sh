@@ -1,5 +1,5 @@
 #!/bin/sh
-# Verify the task acceptance adapter and generalized discovery ontology.
+# Verify the task contract adapter and generalized discovery ontology.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
@@ -32,7 +32,7 @@ cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
 execution: auto
 adapters:
-  task_acceptance: true
+  task_contract: on
 EOF
 cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
 version: 1
@@ -59,17 +59,17 @@ goal='Change the source with explicit acceptance'
 goal_digest=$(printf '%s' "$goal" | git -C "$fixture" hash-object --stdin)
 if out=$(cd "$fixture" && "$cli" task begin semantic-flow --goal "$goal" \
     --path src/a.txt --domain source 2>&1); then
-  die "task acceptance adapter was silently skipped"
+  die "task contract adapter was silently skipped"
 fi
-printf '%s\n' "$out" | grep -q '^STATUS: awaiting-task-acceptance$' ||
-  die "task acceptance did not expose its lifecycle gate"
+printf '%s\n' "$out" | grep -q '^STATUS: awaiting-task-contract$' ||
+  die "task contract did not expose its lifecycle gate"
 [ "$(git -C "$fixture" branch --show-current)" = main ] ||
-  die "task acceptance gate created the work branch early"
-ok "task acceptance is an optional pre-implementation adapter gate"
+  die "task contract gate created the work branch early"
+ok "task contract is an optional pre-implementation adapter gate"
 
 cat >"$contract_file" <<EOF
 version: 1
-adapter: task_acceptance
+adapter: task_contract
 source_goal_digest: $goal_digest
 requirements:
   goal: $goal
@@ -87,13 +87,13 @@ verification:
   rationale: This bounded source change has focused repository evidence.
 EOF
 out=$(cd "$fixture" && "$cli" task begin semantic-flow --goal "$goal" \
-  --path src/a.txt --domain source --acceptance-contract "$contract_file")
+  --path src/a.txt --domain source --task-contract-file "$contract_file")
 printf '%s\n' "$out" | grep -q '^STATUS: implementing$' ||
   die "expanded task did not enter implementation"
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
 worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
-[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_acceptance/contract.yml" ] ||
-  die "task acceptance contract was not stored under adapter runtime"
+[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_contract/contract.yml" ] ||
+  die "task contract was not stored under adapter runtime"
 cat >"$worktree/docs/architecture.md" <<'EOF'
 # Architecture
 
@@ -106,7 +106,7 @@ printf '%s\n' "$guidance" | grep -q '^# Active task context$' ||
   die "compiled guidance omitted the active semantic envelope"
 printf '%s\n' "$guidance" | grep -q '^Paths (current candidate): docs/architecture.md$' ||
   die "compiled guidance preserved stale initial paths instead of current candidate paths"
-printf '%s\n' "$guidance" | grep -q '^# Task acceptance contract$' ||
+printf '%s\n' "$guidance" | grep -q '^# Task contract$' ||
   die "compiled guidance omitted the adapter contract"
 printf '%s\n' "$guidance" | grep -q '^# Durable semantic reasoning$' ||
   die "stage guidance omitted durable semantic reasoning"
@@ -125,7 +125,7 @@ printf '%s\n' "$guidance" | grep -q 'Source recovery ownership is still implicit
   die "compiled guidance reduced discovery reasoning to an identifier"
 printf '%s\n' "$guidance" | grep -q '^# Progressive discovery$' ||
   die "stage guidance omitted progressive discovery prose"
-printf '%s\n' "$guidance" | grep -q '^# Task acceptance adapter$' ||
+printf '%s\n' "$guidance" | grep -q '^# Task contract adapter$' ||
   die "stage guidance omitted the enabled adapter"
 git -C "$worktree" restore docs/architecture.md
 ok "free-form brief, discovery, coordinate, and landing prose is compiled for the active stage"
@@ -146,18 +146,18 @@ architecture_reviews: [architecture:docs/architecture.md#source-ownership]
 checks: []
 EOF
 if out=$(cd "$fixture" && "$cli" task finish semantic-flow --assessment "$assessment" 2>&1); then
-  die "task acceptance review was silently skipped"
+  die "task contract review was silently skipped"
 fi
 candidate_tree=$(printf '%s\n' "$out" | sed -n 's/^CANDIDATE-TREE: //p')
-[ -n "$candidate_tree" ] || die "task acceptance review did not identify the exact candidate tree"
-[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_acceptance/prepared-review.yml" ] ||
+[ -n "$candidate_tree" ] || die "task contract review did not identify the exact candidate tree"
+[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_contract/prepared-review.yml" ] ||
   die "candidate-bound adapter review was not prepared under adapter runtime"
 [ "$(git -C "$fixture" show main:src/a.txt)" = one ] ||
   die "outcome gate advanced the target before review"
 
 cat >"$review_file" <<EOF
 version: 1
-adapter: task_acceptance
+adapter: task_contract
 source_goal_digest: $goal_digest
 candidate_tree: $candidate_tree
 results:
@@ -170,7 +170,7 @@ results:
     prose: The candidate leaves durable repository governance unchanged.
     evidence: [inspection:.invariant]
 EOF
-out=$(cd "$fixture" && "$cli" task finish semantic-flow --assessment "$assessment" --acceptance-review "$review_file")
+out=$(cd "$fixture" && "$cli" task finish semantic-flow --assessment "$assessment" --task-contract-review "$review_file")
 printf '%s\n' "$out" | grep -q '^STATUS: completed$' ||
   die "satisfied exact-tree outcome review did not complete"
 [ "$(git -C "$fixture" branch --show-current)" = main ] ||

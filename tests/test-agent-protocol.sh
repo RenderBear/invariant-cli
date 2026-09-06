@@ -48,11 +48,11 @@ printf '%s\n' "$assessment_schema" | grep -q '"allow_open"' || die "assessment s
 if printf '%s\n' "$assessment_schema" | grep -q '"outcome_assessment"'; then
   die "core assessment schema still owns adapter review fields"
 fi
-acceptance_schema=$(cd "$governance" && "$cli" --format json task acceptance schema)
-printf '%s\n' "$acceptance_schema" | grep -q '"inspection","targeted","broad"' ||
-  die "task acceptance schema omitted proportional verification levels"
-printf '%s\n' "$acceptance_schema" | grep -q '"candidate_tree"' ||
-  die "task acceptance schema omitted exact-tree review binding"
+contract_schema=$(cd "$governance" && "$cli" --format json task contract schema)
+printf '%s\n' "$contract_schema" | grep -q '"inspection","targeted","broad"' ||
+  die "task contract schema omitted proportional verification levels"
+printf '%s\n' "$contract_schema" | grep -q '"candidate_tree"' ||
+  die "task contract schema omitted exact-tree review binding"
 if printf '%s\n' "$assessment_schema" | grep -q '"output"'; then die "schema JSON duplicated its text form"; fi
 ok "audit, assessment, and adapter schemas are machine-readable and compact"
 

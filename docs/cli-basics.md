@@ -75,7 +75,7 @@ runtime and returns all missing requirements together. Complete the draft and re
 command. `task assessment prepare` remains available for explicit inspection. A failed finish
 preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
 
-When `adapters.task_acceptance` is enabled, `task begin` first asks the agent for a local acceptance
+When `adapters.task_contract` is enabled, `task begin` first asks the agent for a local task
 contract. The adapter preserves the original goal digest, expands the request, and records an
 `inspection`, `targeted`, or `broad` verification level. After implementation, `task finish` also
 writes a candidate-bound review beside that contract. The agent resolves its results
@@ -127,8 +127,8 @@ invariant evidence audit schema
 invariant evidence audit example
 invariant task assessment schema
 invariant task assessment example
-invariant task acceptance schema
-invariant task acceptance example
+invariant task contract schema
+invariant task contract example
 ```
 
 For automation, `--format json` emits the compact protocol envelope. Add `--verbose` only when the

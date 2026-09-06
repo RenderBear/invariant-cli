@@ -78,9 +78,9 @@ landing, and the optional lifecycle bookends disabled. Initialization does not r
 setup it prints a natural-language request for your coding agent to run a governance pass from saved
 audit through adoption.
 
-Interactive setup presents the optional task acceptance adapter as one bundled choice. The default
+Interactive setup presents the optional task contract adapter as one bundled choice. The default
 is model-led: it relies on the coding agent's own understanding and normal candidate review. A
-repository can instead enable request expansion and exact-candidate acceptance review together.
+repository can instead enable request expansion and exact-candidate contract review together.
 
 ## Use Invariant
 
@@ -138,7 +138,7 @@ execution: auto
 integration_branch: auto
 push_remote: off
 adapters:
-  task_acceptance: false
+  task_contract: off
 ```
 
 Settings:
@@ -151,7 +151,7 @@ Settings:
 | `execution` | `auto` | `auto`, `assisted` | Whether state-changing lifecycle transitions run immediately or pause for explicit continuation. |
 | `integration_branch` | `auto` | `auto`, local branch name | The branch that receives verified landings. `auto` uses the primary lifecycle checkout's current branch when a task begins; a name fixes one local convergence target. |
 | `push_remote` | `off` | `off`, `on` | Whether a successful landing stays local or pushes the exact verified commit to the integration branch's existing upstream. |
-| `adapters.task_acceptance` | `false` | `false`, `true` | Bundled adapter that expands a request into a local acceptance contract and reviews the exact candidate with proportional evidence. Set with `off` or `on` through the CLI. |
+| `adapters.task_contract` | `off` | `off`, `on` | Bundled adapter that expands a request into a local task contract and reviews the exact candidate with proportional evidence. |
 
 All selections live in `.invariant/config.yml`. Edit that tracked file directly or inspect and update
 validated settings through the CLI:
@@ -164,10 +164,10 @@ invariant config set execution assisted
 invariant config set integration_branch auto
 invariant config set integration_branch main
 invariant config set push_remote on
-invariant config set adapters.task_acceptance on
+invariant config set adapters.task_contract on
 ```
 
-The task acceptance adapter is optional and lives outside the core semantic and lifecycle packages.
+The task contract adapter is optional and lives outside the core semantic and lifecycle packages.
 It stores each contract and review under Git-local task runtime, never as repository governance. Its
 verification level is `inspection`, `targeted`, or `broad`, chosen from semantic reach and risk; a
 small presentation change can be satisfied by inspectable evidence without adding a unit test.
@@ -242,7 +242,7 @@ your-repository/
 - **Discovery:** non-authoritative evidence about something missing, contradictory, or not yet
   understood.
 - **Audit:** a causally grounded record of what was inspected and found.
-- **Task acceptance:** an optional, disposable adapter contract for one local change.
+- **Task contract:** an optional, disposable adapter contract for one local change.
 - **Coordination:** temporary dependencies and ownership while parallel work is active.
 
 The short form is:

@@ -37,7 +37,7 @@ Before writing an audit, load `invariant evidence audit schema`. Run `invariant 
 <task-id>` after committing; it prepares routine assessments automatically and returns one complete
 missing-requirements object when semantic input remains. Use `invariant task assessment prepare
 <task-id>` for explicit inspection and consult `invariant task assessment schema` when needed. When
-the task acceptance adapter is enabled, load `invariant task acceptance schema`; keep its contract
+the task contract adapter is enabled, load `invariant task contract schema`; keep its contract
 and candidate-bound review separate from the repository semantic assessment.
 
 Prefer compact JSON for automation. Consume the complete `required`, `inferred`, and `will_run`

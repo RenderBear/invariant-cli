@@ -37,7 +37,7 @@ keeps the integration ref unchanged and retains the task worktree for recovery.
 
 Use `invariant task status <task-id>` for lifecycle state and `invariant task guidance <task-id>` for
 the complete stage-specific protocol, locator forms, architecture context, and human escalation
-rules. Use the published `evidence audit schema`, `task assessment schema`, and `task acceptance
+rules. Use the published `evidence audit schema`, `task assessment schema`, and `task contract
 schema` commands instead of inspecting Invariant's implementation.
 
 ### Governance passes

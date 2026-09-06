@@ -44,23 +44,23 @@ class AcceptanceNode:
     @classmethod
     def from_value(cls, value: Any, section: str, index: int) -> "AcceptanceNode":
         if not isinstance(value, dict):
-            raise UsageError(f"task acceptance {section}[{index}] must be a mapping")
+            raise UsageError(f"task contract {section}[{index}] must be a mapping")
         unknown = sorted(set(value) - {"id", "prose"})
         if unknown:
             raise UsageError(
-                f"task acceptance {section}[{index}] has unknown field '{unknown[0]}'"
+                f"task contract {section}[{index}] has unknown field '{unknown[0]}'"
             )
         identifier = value.get("id")
         if not isinstance(identifier, str) or not _valid_id(identifier):
-            raise UsageError(f"task acceptance {section}[{index}] requires a valid id")
+            raise UsageError(f"task contract {section}[{index}] requires a valid id")
         return cls(
             identifier,
-            _text(value.get("prose"), f"task acceptance {section}[{index}] prose"),
+            _text(value.get("prose"), f"task contract {section}[{index}] prose"),
         )
 
 
 @dataclass(frozen=True)
-class TaskAcceptanceContract:
+class TaskContract:
     source_goal_digest: str
     goal: str
     verification_level: str
@@ -83,60 +83,63 @@ class TaskAcceptanceContract:
         }
 
     @classmethod
-    def load(cls, path: str | Path) -> "TaskAcceptanceContract":
-        raw = _load(path, "task acceptance contract")
+    def load(cls, path: str | Path) -> "TaskContract":
+        raw = _load(path, "task contract")
         allowed = {"version", "adapter", "source_goal_digest", "requirements", "verification"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
-            raise UsageError(f"task acceptance contract has unknown field '{unknown[0]}'")
-        if raw.get("adapter") != "task_acceptance":
-            raise UsageError("task acceptance contract requires adapter: task_acceptance")
+            raise UsageError(f"task contract has unknown field '{unknown[0]}'")
+        if raw.get("adapter") != "task_contract":
+            raise UsageError("task contract requires adapter: task_contract")
         source_goal_digest = _text(
-            raw.get("source_goal_digest"), "task acceptance source_goal_digest"
+            raw.get("source_goal_digest"), "task contract source_goal_digest"
         )
         requirements = raw.get("requirements")
         if not isinstance(requirements, dict):
-            raise UsageError("task acceptance contract requires a requirements mapping")
+            raise UsageError("task contract requires a requirements mapping")
         requirement_unknown = sorted(
             set(requirements) - {"goal", "outcomes", "acceptance", "constraints"}
         )
         if requirement_unknown:
             raise UsageError(
-                f"task acceptance requirements have unknown field '{requirement_unknown[0]}'"
+                f"task contract requirements have unknown field '{requirement_unknown[0]}'"
             )
 
         def nodes(section: str) -> list[AcceptanceNode]:
             values = requirements.get(section, [])
             if not isinstance(values, list):
-                raise UsageError(f"task acceptance {section} must be a list")
-            return [AcceptanceNode.from_value(item, section, index) for index, item in enumerate(values)]
+                raise UsageError(f"task contract {section} must be a list")
+            return [
+                AcceptanceNode.from_value(item, section, index)
+                for index, item in enumerate(values)
+            ]
 
         outcomes = nodes("outcomes")
         acceptance = nodes("acceptance")
         constraints = nodes("constraints")
         identifiers = [node.id for node in (*outcomes, *acceptance, *constraints)]
         if len(identifiers) != len(set(identifiers)):
-            raise UsageError("task acceptance node ids must be unique")
+            raise UsageError("task contract node ids must be unique")
 
         verification = raw.get("verification")
         if not isinstance(verification, dict):
-            raise UsageError("task acceptance contract requires a verification mapping")
+            raise UsageError("task contract requires a verification mapping")
         verification_unknown = sorted(set(verification) - {"level", "rationale"})
         if verification_unknown:
             raise UsageError(
-                f"task acceptance verification has unknown field '{verification_unknown[0]}'"
+                f"task contract verification has unknown field '{verification_unknown[0]}'"
             )
         level = verification.get("level")
         if level not in LEVELS:
             raise UsageError(
-                "task acceptance verification.level must be inspection, targeted, or broad"
+                "task contract verification.level must be inspection, targeted, or broad"
             )
         return cls(
             source_goal_digest=source_goal_digest,
-            goal=_text(requirements.get("goal"), "task acceptance goal"),
+            goal=_text(requirements.get("goal"), "task contract goal"),
             verification_level=str(level),
             verification_rationale=_text(
-                verification.get("rationale"), "task acceptance verification rationale"
+                verification.get("rationale"), "task contract verification rationale"
             ),
             outcomes=outcomes,
             acceptance=acceptance,
@@ -154,58 +157,58 @@ class AcceptanceResult:
     @classmethod
     def from_value(cls, value: Any, index: int) -> "AcceptanceResult":
         if not isinstance(value, dict):
-            raise UsageError(f"task acceptance results[{index}] must be a mapping")
+            raise UsageError(f"task contract results[{index}] must be a mapping")
         unknown = sorted(set(value) - {"satisfies", "disposition", "prose", "evidence"})
         if unknown:
             raise UsageError(
-                f"task acceptance results[{index}] has unknown field '{unknown[0]}'"
+                f"task contract results[{index}] has unknown field '{unknown[0]}'"
             )
         reference = _text(
-            value.get("satisfies"), f"task acceptance results[{index}].satisfies"
+            value.get("satisfies"), f"task contract results[{index}].satisfies"
         )
         disposition = value.get("disposition")
         if disposition not in {"satisfied", "not-satisfied", "unresolved"}:
             raise UsageError(
-                f"task acceptance results[{index}].disposition must be satisfied, "
+                f"task contract results[{index}].disposition must be satisfied, "
                 "not-satisfied, or unresolved"
             )
         evidence = value.get("evidence", [])
         if not isinstance(evidence, list) or any(
             not isinstance(item, str) or not item.strip() for item in evidence
         ):
-            raise UsageError(f"task acceptance results[{index}].evidence must be a string list")
+            raise UsageError(f"task contract results[{index}].evidence must be a string list")
         return cls(
             reference,
             str(disposition),
-            _text(value.get("prose"), f"task acceptance results[{index}].prose"),
+            _text(value.get("prose"), f"task contract results[{index}].prose"),
             sorted(set(evidence)),
         )
 
 
 @dataclass(frozen=True)
-class TaskAcceptanceReview:
+class TaskContractReview:
     source_goal_digest: str
     candidate_tree: str
     results: list[AcceptanceResult]
 
     @classmethod
-    def load(cls, path: str | Path) -> "TaskAcceptanceReview":
-        raw = _load(path, "task acceptance review")
+    def load(cls, path: str | Path) -> "TaskContractReview":
+        raw = _load(path, "task contract review")
         allowed = {"version", "adapter", "source_goal_digest", "candidate_tree", "results"}
         unknown = sorted(set(raw) - allowed)
         if unknown:
-            raise UsageError(f"task acceptance review has unknown field '{unknown[0]}'")
-        if raw.get("adapter") != "task_acceptance":
-            raise UsageError("task acceptance review requires adapter: task_acceptance")
+            raise UsageError(f"task contract review has unknown field '{unknown[0]}'")
+        if raw.get("adapter") != "task_contract":
+            raise UsageError("task contract review requires adapter: task_contract")
         results = raw.get("results")
         if not isinstance(results, list):
-            raise UsageError("task acceptance review requires a results list")
+            raise UsageError("task contract review requires a results list")
         parsed = [AcceptanceResult.from_value(item, index) for index, item in enumerate(results)]
         references = [item.reference for item in parsed]
         if len(references) != len(set(references)):
-            raise UsageError("task acceptance review cannot repeat a satisfies reference")
+            raise UsageError("task contract review cannot repeat a satisfies reference")
         return cls(
-            _text(raw.get("source_goal_digest"), "task acceptance source_goal_digest"),
-            _text(raw.get("candidate_tree"), "task acceptance candidate_tree"),
+            _text(raw.get("source_goal_digest"), "task contract source_goal_digest"),
+            _text(raw.get("candidate_tree"), "task contract candidate_tree"),
             parsed,
         )

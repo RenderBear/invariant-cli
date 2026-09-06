@@ -36,14 +36,14 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     begin.add_argument("--interface", action="append", default=[])
     begin.add_argument("--domain", action="append", default=[])
     begin.add_argument(
-        "--acceptance-contract",
-        help="task acceptance adapter contract; supplying it enables the adapter for this task",
+        "--task-contract-file",
+        help="task contract adapter input; supplying it enables the adapter for this task",
     )
     begin.add_argument(
-        "--task-acceptance",
+        "--task-contract",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="override the configured task acceptance adapter for this task",
+        help="override the configured task contract adapter for this task",
     )
     begin.set_defaults(_handler=_begin, _command="task.begin")
 
@@ -71,8 +71,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     finish.add_argument("--subject")
     finish.add_argument("--check", action="append", default=[])
     finish.add_argument(
-        "--acceptance-review",
-        help="candidate-bound task acceptance review (defaults to the Git-local prepared review)",
+        "--task-contract-review",
+        help="candidate-bound task contract review (defaults to the Git-local prepared review)",
     )
     finish.set_defaults(_handler=_finish, _command="task.finish")
 
@@ -108,21 +108,21 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         _handler=_assessment_prepare, _command="task.assessment.prepare"
     )
 
-    acceptance = commands.add_parser(
-        "acceptance", help="Inspect the bundled task acceptance adapter protocol"
+    contract = commands.add_parser(
+        "contract", help="Inspect the bundled task contract adapter protocol"
     )
-    acceptances = acceptance.add_subparsers(dest="acceptance_command", required=True)
-    acceptance_schema = acceptances.add_parser(
+    contracts = contract.add_subparsers(dest="contract_command", required=True)
+    contract_schema = contracts.add_parser(
         "schema", help="Print the contract and review schemas"
     )
-    acceptance_schema.set_defaults(
-        _handler=_acceptance_schema, _command="task.acceptance.schema"
+    contract_schema.set_defaults(
+        _handler=_contract_schema, _command="task.contract.schema"
     )
-    acceptance_example = acceptances.add_parser(
+    contract_example = contracts.add_parser(
         "example", help="Print proportional contract and review examples"
     )
-    acceptance_example.set_defaults(
-        _handler=_acceptance_example, _command="task.acceptance.example"
+    contract_example.set_defaults(
+        _handler=_contract_example, _command="task.contract.example"
     )
 
 
@@ -139,10 +139,10 @@ def _begin(args: argparse.Namespace) -> list[str]:
         paths=args.path,
         interfaces=args.interface,
         domains=args.domain,
-        adapter_inputs={"task_acceptance": args.acceptance_contract},
+        adapter_inputs={"task_contract": args.task_contract_file},
         adapter_overrides=(
-            {"task_acceptance": args.task_acceptance}
-            if args.task_acceptance is not None
+            {"task_contract": args.task_contract}
+            if args.task_contract is not None
             else {}
         ),
     )
@@ -197,7 +197,7 @@ def _finish(args: argparse.Namespace) -> list[str]:
             assessment_path=assessment,
             subject=args.subject,
             checks=args.check,
-            adapter_inputs={"task_acceptance": args.acceptance_review},
+            adapter_inputs={"task_contract": args.task_contract_review},
         ),
     ]
 
@@ -228,13 +228,13 @@ def _assessment_example(_: argparse.Namespace) -> CommandResult:
     return CommandResult(_yaml_lines(value), {"example": value})
 
 
-def _acceptance_schema(_: argparse.Namespace) -> CommandResult:
+def _contract_schema(_: argparse.Namespace) -> CommandResult:
     value = adapters.schemas()
     return CommandResult(_yaml_lines(value), {"schema": value})
 
 
-def _acceptance_example(_: argparse.Namespace) -> CommandResult:
-    value = adapters.task_acceptance_examples()
+def _contract_example(_: argparse.Namespace) -> CommandResult:
+    value = adapters.task_contract_examples()
     return CommandResult(_yaml_lines(value), {"example": value})
 
 
