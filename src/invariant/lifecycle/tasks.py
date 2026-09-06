@@ -3,15 +3,25 @@ from __future__ import annotations
 import os
 import shutil
 import time
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
 from invariant import adapters
+from invariant.adapters.base import CANDIDATE_EVIDENCED, TASK_CREATED
 from invariant.errors import Blocked, InvariantError, RemotePushFailed
 from invariant.mechanics import config, coordinate, git, governance, landing, receipts
 from invariant.mechanics.documents import dump_yaml, load_yaml
 from invariant.semantics import guidance
 from invariant.semantics.models import Assessment
+from invariant.semantics.review import CandidateReview, candidate_review_schema
+
+
+@dataclass(frozen=True)
+class FlowResult:
+    lines: list[str]
+    data: dict[str, object]
+    outcome: str = "completed"
 
 
 def _valid_boundary(value: str) -> bool:
@@ -79,21 +89,28 @@ def _validate_adapter_receipt(receipt: dict[str, object]) -> None:
         raise Blocked("STALE: task adapter implementation changed", code="stale_receipt")
 
 
-def _raise_adapter_gate(repo: Path, task: str, receipt: dict[str, object], gate) -> None:
-    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
-    branch = str(lifecycle.get("branch") or "")
-    worktree = str(lifecycle.get("worktree") or repo)
-    receipts.set_lifecycle(repo, task, gate.stage, branch, worktree)
-    raise Blocked(
-        gate.message,
-        code=gate.code,
-        lines=[
-            f"TASK: {task}",
-            f"STATUS: {gate.stage}",
-            *gate.lines,
-            f"GUIDANCE: invariant task guidance {task}",
-        ],
-    )
+def _blocking_hook_requests(receipt: Mapping[str, object]) -> list[dict[str, object]]:
+    return [item for item in adapters.pending(receipt) if item.get("blocking", True)]
+
+
+def _hook_lines(receipt: Mapping[str, object]) -> list[str]:
+    lines: list[str] = []
+    for request in adapters.pending(receipt):
+        lines.append(
+            f"ACTION: {request.get('id')} — {request.get('kind')}"
+        )
+    return lines
+
+
+def _transition(
+    receipt: dict[str, object], stage: str, branch: str, worktree: str
+) -> dict[str, object]:
+    receipt["lifecycle"] = {
+        "stage": stage,
+        "branch": branch,
+        "worktree": worktree,
+    }
+    return receipt
 
 
 def _activate(
@@ -163,19 +180,7 @@ def begin(
             domains=domains,
         )
         _validate_adapter_receipt(receipt)
-        lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
-        stage = str(lifecycle.get("stage") or "")
-        gate = adapters.begin(
-            receipts.task_root(repo, task),
-            receipt,
-            adapter_inputs or {},
-        )
-        receipts.save(repo, task, receipt)
-        if gate:
-            _raise_adapter_gate(repo, task, receipt, gate)
-        if adapters.is_begin_stage(receipt, stage):
-            return _activate(repo, task, receipt, execution=_target_config(repo, str(receipt["integration_target"])).execution)
-        return _status_lines(repo, receipt)
+        return [*_status_lines(repo, receipt), *_hook_lines(receipt)]
 
     resolved = config.resolve(repo)
     selected_adapters = set(resolved.adapters.enabled)
@@ -199,23 +204,28 @@ def begin(
         domains=domains,
         adapters=adapter_ids,
     )
-    if adapter_ids:
-        receipt = receipts.set_lifecycle(
-            repo, task, adapters.begin_stage(adapter_ids), "", str(repo)
-        )
     receipt["adapter_digest"] = adapters.digest(adapter_ids)
-    # Persist the selected adapter protocol before parsing host input so invalid
-    # input remains recoverable through the same task receipt.
     receipts.save(repo, task, receipt)
-    gate = adapters.begin(
-        receipts.task_root(repo, task),
-        receipt,
-        adapter_inputs or {},
+    _activate(repo, task, receipt, execution=resolved.execution)
+    receipt = receipts.load(repo, task)
+    adapters.run_hook(
+        receipts.task_root(repo, task), receipt, TASK_CREATED, adapter_inputs or {}
     )
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    if _blocking_hook_requests(receipt) and lifecycle.get("stage") in {
+        "implementing",
+        "implementing-unborn",
+    }:
+        receipt = _transition(
+            receipt,
+            "briefing",
+            str(lifecycle.get("branch") or ""),
+            str(lifecycle.get("worktree") or repo),
+        )
+    if not _blocking_hook_requests(receipt):
+        receipt.pop("goal", None)
     receipts.save(repo, task, receipt)
-    if gate:
-        _raise_adapter_gate(repo, task, receipt, gate)
-    return _activate(repo, task, receipt, execution=resolved.execution)
+    return [*_status_lines(repo, receipt), *_hook_lines(receipt)]
 
 
 def _status_lines(repo: Path, receipt: dict[str, object]) -> list[str]:
@@ -236,13 +246,8 @@ def _status_lines(repo: Path, receipt: dict[str, object]) -> list[str]:
         f"BRANCH: {branch or 'none'}",
         f"BRANCH-HEAD: {branch_head or 'absent'}",
         f"WORKTREE: {lifecycle.get('worktree') or 'unknown'}",
-        f"LIFECYCLE-ROOT: {git.primary_worktree(repo)}",
-        f"RECEIPT: {receipts.receipt_path(repo, str(receipt.get('task')))}",
         f"ADAPTERS: {', '.join(adapter_ids) or 'none'}",
     ]
-    adapter_root = receipts.task_root(repo, str(receipt.get("task"))) / "adapters"
-    if adapter_root.is_dir():
-        output.append(f"ADAPTER-STATE: {adapter_root}")
     return output
 
 
@@ -252,7 +257,8 @@ def status(repo: Path, task: str) -> list[str]:
     path = receipts.receipt_path(repo, task)
     if not path.is_file():
         raise Blocked(f"TASK: {task}\nSTATUS: absent", code="missing_task")
-    return _status_lines(repo, receipts.load(repo, task))
+    receipt = receipts.load(repo, task)
+    return [*_status_lines(repo, receipt), *_hook_lines(receipt)]
 
 
 def check(
@@ -277,6 +283,98 @@ def check(
         domains=domains,
     )
     return [*lines, *_status_lines(repo, receipt)]
+
+
+def respond(repo: Path, task: str, request_id: str, source: str) -> FlowResult:
+    """Resolve one hook action and advance automatically when all gates are ready."""
+
+    receipt = receipts.load(repo, task)
+    _validate_adapter_receipt(receipt)
+    matches = [item for item in adapters.pending(receipt) if item.get("id") == request_id]
+    if len(matches) != 1:
+        raise InvariantError(
+            f"Invariant: task '{task}' has no pending action '{request_id}'",
+            code="unknown_action",
+        )
+    request = matches[0]
+    adapter = str(request.get("adapter") or "")
+    phase = str(request.get("phase") or "")
+    existing_core = [
+        item for item in adapters.pending(receipt)
+        if item.get("adapter") == "core" and item.get("id") != request_id
+    ]
+    if adapter == "core":
+        _apply_core_review(repo, task, request, source)
+        receipt["hook_requests"] = [
+            item for item in adapters.pending(receipt) if item.get("id") != request_id
+        ]
+    else:
+        context = request.get("context") if isinstance(request.get("context"), dict) else {}
+        candidate_tree = str(context.get("candidate_tree") or "") or None
+        adapters.run_hook(
+            receipts.task_root(repo, task),
+            receipt,
+            phase,
+            {adapter: source},
+            candidate_tree=candidate_tree,
+            evidence=tuple(
+                item
+                for item in context.get("evidence", [])
+                if isinstance(item, dict)
+            ),
+        )
+        receipt["hook_requests"] = [*adapters.pending(receipt), *existing_core]
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    stage = str(lifecycle.get("stage") or "")
+    if not _blocking_hook_requests(receipt) and stage == "briefing":
+        receipt.pop("goal", None)
+        active_stage = (
+            "implementing-unborn"
+            if str(receipt.get("integration_head")) == "unborn"
+            else "implementing"
+        )
+        receipt = _transition(
+            receipt,
+            active_stage,
+            str(lifecycle.get("branch") or ""),
+            str(lifecycle.get("worktree") or repo),
+        )
+        receipts.save(repo, task, receipt)
+        return FlowResult(
+            [f"RESOLVED: {request_id}", *_status_lines(repo, receipt)],
+            {"task": task, "stage": active_stage, "actions": []},
+            "ready",
+        )
+    if not _blocking_hook_requests(receipt) and stage == "awaiting-review":
+        active_stage = (
+            "implementing-unborn"
+            if str(receipt.get("integration_head")) == "unborn"
+            else "implementing"
+        )
+        receipt = _transition(
+            receipt,
+            active_stage,
+            str(lifecycle.get("branch") or ""),
+            str(lifecycle.get("worktree") or repo),
+        )
+        receipts.save(repo, task, receipt)
+        output = finish(
+            repo,
+            task,
+            assessment_path=str(_assessment_for_completion(repo, task)),
+            subject=str(receipt.get("finish_subject") or f"Invariant task {task}"),
+        )
+        return FlowResult(
+            [f"RESOLVED: {request_id}", *output],
+            {"task": task, "stage": "completed", "actions": []},
+        )
+    receipts.save(repo, task, receipt)
+    actions = adapters.pending(receipt)
+    return FlowResult(
+        [f"RESOLVED: {request_id}", *_status_lines(repo, receipt), *_hook_lines(receipt)],
+        {"task": task, "stage": stage, "actions": actions},
+        "needs_input" if actions else "ready",
+    )
 
 
 def _path_covered(path: str, claims: Iterable[str]) -> bool:
@@ -324,7 +422,7 @@ def _require_lifecycle_checkout(repo: Path, branch: str) -> None:
         raise Blocked(
             "Invariant: finish must run outside the managed task worktree so successful cleanup is safe",
             code="wrong_worktree",
-            lines=[f"LIFECYCLE-ROOT: {primary}", f"NEXT: run invariant task finish from {primary}"],
+            lines=[f"PRIMARY-CHECKOUT: {primary}", f"NEXT: run invariant task finish from {primary}"],
         )
 
 
@@ -358,7 +456,10 @@ def _complete_task(repo: Path, task: str, active_stage: str, branch: str, target
             raise Blocked(
                 f"Invariant: landed successfully but could not remove task branch '{branch}'"
             )
-    receipts.invalidate(repo, task)
+    landed_commit = git.resolve(repo, f"refs/heads/{target}")
+    if not landed_commit:
+        raise InvariantError(f"Invariant: completed integration branch '{target}' has no commit")
+    receipts.complete(repo, task, landed_commit)
 
 
 def finish(
@@ -376,8 +477,7 @@ def finish(
     _validate_adapter_receipt(receipt)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     stage = str(lifecycle.get("stage") or "")
-    adapter_gate = adapters.gate_for_stage(receipt, stage)
-    if stage not in {"implementing", "implementing-unborn"} and not adapters.is_review_stage(receipt, stage):
+    if stage not in {"implementing", "implementing-unborn", "awaiting-review"}:
         raise Blocked(f"Invariant: task '{task}' is not ready to finish (stage '{stage}')")
     active_stage = "implementing-unborn" if str(receipt.get("integration_head")) == "unborn" else "implementing"
     branch = str(lifecycle.get("branch") or "")
@@ -460,25 +560,40 @@ def finish(
     scopes = tuple(
         line.removeprefix("TOPOLOGY: ") for line in reach_lines if line.startswith("TOPOLOGY: ")
     ) or ("area.root",)
-    expected_tree = None
+    expected_tree = str(receipt.get("review_candidate_tree") or "") or None
     if adapters.enabled(receipt):
         candidate_tree = landing.prospective_tree(repo, target, None if active_stage == "implementing-unborn" else branch)
-        gate = adapters.review_candidate(
+        adapters.run_hook(
             receipts.task_root(repo, task),
             receipt,
-            candidate_tree,
+            CANDIDATE_EVIDENCED,
             adapter_inputs or {},
+            candidate_tree=candidate_tree,
         )
-        if gate:
-            _raise_adapter_gate(repo, task, receipt, gate)
-        if adapter_gate:
-            receipts.set_lifecycle(
-                repo,
-                task,
-                active_stage,
+        if _blocking_hook_requests(receipt):
+            receipt = _transition(
+                receipt,
+                "awaiting-review",
                 branch,
                 str(lifecycle.get("worktree") or repo),
             )
+            receipts.save(repo, task, receipt)
+            raise Blocked(
+                "Invariant: exact-candidate adapter review is required before landing",
+                code="hook_input_required",
+                lines=[
+                    f"TASK: {task}",
+                    "STATUS: awaiting-review",
+                    f"CANDIDATE-TREE: {candidate_tree}",
+                    *_hook_lines(receipt),
+                ],
+                data={"task": task, "stage": "awaiting-review", "actions": adapters.pending(receipt)},
+            )
+        if stage == "awaiting-review":
+            _transition(
+                receipt, active_stage, branch, str(lifecycle.get("worktree") or repo)
+            )
+            receipts.save(repo, task, receipt)
         expected_tree = candidate_tree
 
     combined_checks = tuple(sorted(set([*assessment.checks, *checks])))
@@ -504,13 +619,13 @@ def finish(
         local.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(assessment_path, local / "pending-assessment.yml")
         dump_yaml(local / "pending-finish.yml", {"subject": request.subject, "checks": list(checks)})
-        receipts.set_lifecycle(
-            repo,
-            task,
+        _transition(
+            receipt,
             "awaiting-landing",
             branch,
             str(lifecycle.get("worktree") or repo),
         )
+        receipts.save(repo, task, receipt)
         raise Blocked(
             "Invariant: landing awaits explicit continuation",
             code="lifecycle_paused",
@@ -549,8 +664,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
     _validate_adapter_receipt(receipt)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     stage = str(lifecycle.get("stage") or "")
-    adapter_gate = adapters.gate_for_stage(receipt, stage)
-    if stage not in {"implementing", "implementing-unborn"} and not adapters.is_review_stage(receipt, stage):
+    if stage not in {"implementing", "implementing-unborn", "awaiting-review"}:
         raise Blocked(f"Invariant: task '{task}' has no candidate to assess (stage '{stage}')")
     active_stage = (
         "implementing-unborn"
@@ -591,6 +705,19 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         ".invariant/CONSTRAINTS.yml",
         governance.constraints(candidate_repo),
         governance.constraints(candidate_repo, previous_ref) if previous_ref else [],
+    )
+    previous_semantics = {
+        row.identifier: row
+        for row in (governance.semantic_records(candidate_repo, previous_ref) if previous_ref else [])
+    }
+    changed_semantics = (
+        [
+            row
+            for row in governance.semantic_records(candidate_repo)
+            if previous_semantics.get(row.identifier) != row
+        ]
+        if ".invariant/SEMANTICS.yml" in paths
+        else []
     )
     selected_domains.update(str(row["id"]) for row in changed_domains)
     for row in changed_contracts:
@@ -639,13 +766,19 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         }
     )
     governance_refs = [
+        *[f"semantic:{row.identifier}" for row in changed_semantics],
         *[f"domain:{row['id']}" for row in changed_domains],
         *[f"contract:{row['id']}" for row in changed_contracts],
         *[f"constraint:{row['id']}" for row in changed_constraints],
         *changed_architecture,
     ]
     durable_registry_changed = bool(
-        {".invariant/DOMAINS.yml", ".invariant/CONTRACTS.yml", ".invariant/CONSTRAINTS.yml"}
+        {
+            ".invariant/SEMANTICS.yml",
+            ".invariant/DOMAINS.yml",
+            ".invariant/CONTRACTS.yml",
+            ".invariant/CONSTRAINTS.yml",
+        }
         .intersection(paths)
     )
     change_classification = (
@@ -682,9 +815,6 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         "checks": [],
         "allow_open": allow_open,
     }
-    adapter_analysis = adapters.prepare_candidate(
-        receipts.task_root(repo, task), receipt, candidate_tree
-    )
     required: list[dict[str, object]] = []
     if boundary == "unresolved":
         required.append(
@@ -699,14 +829,14 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
             {
                 "field": "governance",
                 "reason": "the candidate changes durable governance but no surviving candidate record can be inferred",
-                "allowed": ["domain:<id>", "contract:<id>", "constraint:<id>", "architecture:<path>#<anchor>"],
+                "allowed": ["semantic:<id>", "domain:<id>", "contract:<id>", "constraint:<id>", "architecture:<path>#<anchor>"],
             }
         )
     if reviews:
         required.append(
             {
                 "field": "architecture_reviews",
-                "reason": "review these affected decisions before copying their locators into the assessment",
+                "reason": "the final candidate review must acknowledge these affected decisions",
                 "values": reviews,
             }
         )
@@ -720,7 +850,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         )
     analysis: dict[str, object] = {
         "candidate_tree": candidate_tree,
-        "adapters": adapter_analysis,
+        "adapters": [],
         "reach": reach,
         "inferred": {
             "paths": paths,
@@ -736,6 +866,223 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
     return assessment, analysis
 
 
+def _request_packet(
+    repo: Path,
+    task: str,
+    assessment: dict[str, object],
+    analysis: dict[str, object],
+    evidence: list[dict[str, object]],
+) -> tuple[dict[str, object], dict[str, object]]:
+    packet_body: dict[str, object] = {
+        "version": 1,
+        "task": task,
+        "goal_digest": assessment["goal_digest"],
+        "candidate_tree": analysis["candidate_tree"],
+        "reach": analysis["reach"],
+        "changed_paths": assessment["paths"],
+        "affected_semantics": analysis["recommended_architecture_reviews"],
+        "governance": assessment["governance"],
+        "will_run": analysis["will_run"],
+        "evidence": evidence,
+    }
+    review_id = git.hash_text(repo, repr(packet_body))
+    packet = {**packet_body, "review_id": review_id}
+    request = {
+        "id": "core:candidate-review",
+        "adapter": "core",
+        "phase": CANDIDATE_EVIDENCED,
+        "kind": "review_semantics",
+        "prompt": (
+            "Review the exact candidate against the affected canonical prose. Return one "
+            "semantic effect, an attributable summary, and only genuine exceptions."
+        ),
+        "input_schema": candidate_review_schema(),
+        "blocking": True,
+        "context": packet,
+    }
+    return packet, request
+
+
+def _land_request_from_assessment(
+    repo: Path,
+    task: str,
+    assessment: dict[str, object],
+) -> landing.LandRequest:
+    receipt = receipts.load(repo, task)
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    active_stage = (
+        "implementing-unborn"
+        if str(receipt.get("integration_head")) == "unborn"
+        else "implementing"
+    )
+    branch = str(lifecycle.get("branch") or "")
+    boundary = assessment.get("boundary") if isinstance(assessment.get("boundary"), dict) else {}
+    disposition = str(boundary.get("disposition") or "no-record")
+    if disposition == "unresolved":
+        disposition = "no-record"
+    paths = assessment.get("paths", []) if isinstance(assessment.get("paths"), list) else []
+    return landing.LandRequest(
+        mode="direct" if active_stage == "implementing-unborn" else "merge",
+        merge_branch=None if active_stage == "implementing-unborn" else branch,
+        subject=f"Invariant task {task}",
+        units=(task,),
+        scopes=("area.root",),
+        paths=tuple(str(item) for item in paths) if active_stage == "implementing-unborn" else (),
+        domains=tuple(str(item) for item in assessment.get("domains", [])),
+        interfaces=tuple(str(item) for item in assessment.get("interfaces", [])),
+        governance_refs=tuple(str(item) for item in assessment.get("governance", [])),
+        reviewed=tuple(str(item) for item in assessment.get("architecture_reviews", [])),
+        boundary=disposition,
+        checks=tuple(str(item) for item in assessment.get("checks", [])),
+        target=str(receipt.get("integration_target") or ""),
+        allow_open=bool(assessment.get("allow_open", False)),
+    )
+
+
+def prepare_finish(
+    repo: Path,
+    task: str,
+    *,
+    subject: str | None = None,
+    checks: Iterable[str] = (),
+) -> FlowResult:
+    """Collect evidence, expose semantic hook actions, or complete a routine task."""
+
+    assessment, analysis = prepare_assessment(repo, task)
+    assessment["checks"] = sorted(
+        set([*assessment.get("checks", []), *[str(item) for item in checks]])
+    )
+    local = receipts.task_root(repo, task)
+    local.mkdir(parents=True, exist_ok=True)
+    prepared = local / "prepared-assessment.yml"
+    dump_yaml(prepared, assessment)
+    evidence_request = _land_request_from_assessment(repo, task, assessment)
+    if subject:
+        evidence_request = landing.LandRequest(
+            **{**evidence_request.__dict__, "subject": subject}
+        )
+    candidate, evidence_lines, evidence = landing.collect_evidence(repo, evidence_request)
+    analysis["candidate_tree"] = candidate.tree
+    evidence_root = local / "evidence"
+    evidence_root.mkdir(parents=True, exist_ok=True)
+    for item in evidence:
+        identifier = str(item.get("evidence_id") or git.hash_text(repo, repr(item)))
+        dump_yaml(evidence_root / f"{identifier.replace(':', '-')}.yml", item)
+
+    receipt = receipts.load(repo, task)
+    receipt["finish_subject"] = subject or f"Invariant task {task}"
+    receipt["review_candidate_tree"] = candidate.tree
+    adapters.run_hook(
+        local,
+        receipt,
+        CANDIDATE_EVIDENCED,
+        candidate_tree=candidate.tree,
+        evidence=tuple(evidence),
+    )
+    requests = adapters.pending(receipt)
+    semantic_required = bool(analysis.get("required"))
+    if semantic_required:
+        packet, core_request = _request_packet(repo, task, assessment, analysis, evidence)
+        dump_yaml(local / "review-packet.yml", packet)
+        requests.append(core_request)
+    receipt["hook_requests"] = requests
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    if requests:
+        receipt = _transition(
+            receipt,
+            "awaiting-review",
+            str(lifecycle.get("branch") or ""),
+            str(lifecycle.get("worktree") or repo),
+        )
+        receipts.save(repo, task, receipt)
+        lines = [
+            f"ASSESSMENT: inferred {task}",
+            *evidence_lines,
+            f"TASK: {task}",
+            "STATUS: awaiting-review",
+            f"CANDIDATE-TREE: {candidate.tree}",
+            *_hook_lines(receipt),
+        ]
+        return FlowResult(
+            lines,
+            {
+                "task": task,
+                "stage": "awaiting-review",
+                "candidate_tree": candidate.tree,
+                "actions": requests,
+                "evidence": evidence,
+            },
+            "needs_input",
+        )
+    output = finish(
+        repo,
+        task,
+        assessment_path=str(prepared),
+        subject=subject,
+    )
+    return FlowResult(
+        [f"ASSESSMENT: inferred {task}", *output],
+        {"task": task, "stage": "completed"},
+    )
+
+
+def _apply_core_review(
+    repo: Path,
+    task: str,
+    request: dict[str, object],
+    source: str,
+) -> None:
+    review = CandidateReview.load(source)
+    context = request.get("context") if isinstance(request.get("context"), dict) else {}
+    if (
+        review.review_id != context.get("review_id")
+        or review.candidate_tree != context.get("candidate_tree")
+    ):
+        raise Blocked(
+            "Invariant: candidate review is stale for the current review packet",
+            code="stale_candidate_review",
+        )
+    if review.verdict != "accepted" or review.exceptions:
+        raise Blocked(
+            "Invariant: candidate review must accept the candidate without unresolved exceptions",
+            code="candidate_not_accepted",
+        )
+    resolved = config.resolve(repo)
+    if resolved.authority == "human" and not review.authority.startswith("user:"):
+        raise Blocked(
+            "Invariant: human semantic authority requires an attributable user: locator",
+            code="authority_required",
+        )
+    local = receipts.task_root(repo, task)
+    assessment_path = local / "prepared-assessment.yml"
+    raw = load_yaml(assessment_path)
+    if not isinstance(raw, dict):
+        raise InvariantError("Invariant: prepared assessment is missing")
+    inferred = raw.get("boundary") if isinstance(raw.get("boundary"), dict) else {}
+    if inferred.get("disposition") == "recorded" and review.semantic_effect != "recorded":
+        raise Blocked(
+            "Invariant: candidate changes durable records and must be reviewed as recorded",
+            code="invalid_boundary",
+        )
+    if review.semantic_effect == "recorded" and not raw.get("governance"):
+        raise Blocked(
+            "Invariant: recorded semantic effect requires a surviving semantic record",
+            code="invalid_boundary",
+        )
+    raw["boundary"] = {"disposition": review.semantic_effect}
+    raw["architecture_reviews"] = list(context.get("affected_semantics", []))
+    raw["allow_open"] = True
+    raw["prose"] = review.summary
+    dump_yaml(local / "accepted-assessment.yml", raw)
+    shutil.copyfile(source, local / "candidate-review.yml")
+
+
+def _assessment_for_completion(repo: Path, task: str) -> Path:
+    local = receipts.task_root(repo, task)
+    accepted = local / "accepted-assessment.yml"
+    return accepted if accepted.is_file() else local / "prepared-assessment.yml"
+
+
 def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
     receipt = receipts.load(repo, task)
     _validate_adapter_receipt(receipt)
@@ -745,9 +1092,6 @@ def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
     target = str(receipt.get("integration_target") or "")
     if stage in {"implementing", "implementing-unborn"}:
         return _status_lines(repo, receipt)
-    adapter_gate = adapters.gate_for_stage(receipt, stage)
-    if adapter_gate:
-        raise Blocked(adapter_gate.message, code=adapter_gate.code, lines=list(adapter_gate.lines))
     if stage not in {"awaiting-branch", "awaiting-landing"}:
         raise Blocked(f"Invariant: task '{task}' cannot continue from stage '{stage or 'unknown'}")
     if not apply:
@@ -764,8 +1108,9 @@ def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
     if stage == "awaiting-branch":
         receipts.check_receipt(repo, task, goal_digest=str(receipt.get("goal_digest")))
         worktree = _create_branch(repo, branch, target)
-        receipt = receipts.set_lifecycle(repo, task, "implementing", branch, str(worktree))
-        return _status_lines(repo, receipt)
+        next_stage = "briefing" if _blocking_hook_requests(receipt) else "implementing"
+        receipt = receipts.set_lifecycle(repo, task, next_stage, branch, str(worktree))
+        return [*_status_lines(repo, receipt), *_hook_lines(receipt)]
     local = receipts.task_root(repo, task)
     pending_assessment = local / "pending-assessment.yml"
     pending = load_yaml(local / "pending-finish.yml")
@@ -793,7 +1138,7 @@ def continue_task(repo: Path, task: str, *, apply: bool = False) -> list[str]:
     )
 
 
-def task_guidance(repo: Path, task: str) -> list[str]:
+def task_guidance(repo: Path, task: str, *, full: bool = False) -> list[str]:
     receipt = receipts.load(repo, task)
     lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
     scope = receipt.get("scope") if isinstance(receipt.get("scope"), dict) else {}
@@ -829,7 +1174,7 @@ def task_guidance(repo: Path, task: str) -> list[str]:
         f"Stage: {stage}",
         f"Boundary: {change_classification.get('boundary') or 'unknown'}",
         f"Accepted ground: {captured_head or 'unknown'}",
-        f"Paths ({path_basis}): {', '.join(paths) or 'none selected'}",
+        f"Paths ({path_basis}): {_path_summary(paths)}",
         f"Interfaces: {', '.join(interfaces) or 'none selected'}",
         f"Domains: {', '.join(domains) or 'none selected'}",
     ]
@@ -839,7 +1184,13 @@ def task_guidance(repo: Path, task: str) -> list[str]:
     rows = governance.display_rows(repo, domains, accepted_at)
     if domains:
         output.extend(["", "# Selected durable governance", "", *rows])
-    architecture = governance.architecture_context(repo, domains, accepted_at)
+    architecture = governance.architecture_context(
+        repo,
+        domains,
+        accepted_at,
+        paths=paths,
+        interfaces=interfaces,
+    )
     if architecture:
         output.extend(["", "# Selected architecture prose", "", *architecture])
     discoveries = governance.discovery_context(repo, paths, domains)
@@ -848,13 +1199,31 @@ def task_guidance(repo: Path, task: str) -> list[str]:
     output.extend(
         [
             "",
-            *guidance.for_stage(str(lifecycle.get("stage") or "briefed")).splitlines(),
+            *guidance.for_stage(
+                str(lifecycle.get("stage") or "briefed"), full=full
+            ).splitlines(),
         ]
     )
-    adapter_guidance = adapters.guidance(receipt, stage)
+    adapter_phase = (
+        TASK_CREATED
+        if stage in {"briefing", "awaiting-branch"}
+        else CANDIDATE_EVIDENCED
+        if stage == "awaiting-review"
+        else stage
+    )
+    adapter_guidance = adapters.guidance(receipt, adapter_phase)
     if adapter_guidance:
         output.extend(["", *adapter_guidance])
     return output
+
+
+def _path_summary(paths: list[str], limit: int = 12) -> str:
+    if not paths:
+        return "none selected"
+    visible = paths[:limit]
+    remainder = len(paths) - len(visible)
+    suffix = f" (+{remainder} more)" if remainder else ""
+    return f"{', '.join(visible)}{suffix}"
 
 
 def invalidate(repo: Path, task: str) -> list[str]:

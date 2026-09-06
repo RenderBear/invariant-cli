@@ -74,9 +74,10 @@ for other coding agents and harnesses.
 
 The user can then ask for a change normally. The coding agent interprets the goal, invokes the
 `invariant` commands through its shell, implements and commits in the linked worktree Invariant
-creates, and runs `task finish` from the returned lifecycle root. Routine assessments are inferred;
-when decisions remain, the same command saves complete drafts and returns every requirement before
-verification. When Invariant
+creates, and runs `task finish` from the primary checkout. Routine assessments are inferred;
+when decisions remain, the same command collects exact-tree evidence and returns typed actions. The
+host answers each action with `task respond`; it never edits Invariant's internal assessment files.
+When Invariant
 needs authority or encounters a real conflict, the agent returns to the human with the decision—not
 with a request to investigate the code manually. No Invariant-specific model plugin is required.
 
@@ -123,7 +124,7 @@ execution: auto
 integration_branch: auto
 push_remote: off
 adapters:
-  task_contract: off
+  intent_brief: off
 ```
 
 Settings:
@@ -136,7 +137,7 @@ Settings:
 | `execution` | `auto` | `auto`, `assisted` | Whether state-changing lifecycle transitions run immediately or pause for explicit continuation. |
 | `integration_branch` | `auto` | `auto`, local branch name | The branch that receives verified landings. `auto` uses the primary lifecycle checkout's current branch when a task begins; a name fixes one local convergence target. |
 | `push_remote` | `off` | `off`, `on` | Whether a successful landing stays local or pushes the exact verified commit to the integration branch's existing upstream. |
-| `adapters.task_contract` | `off` | `off`, `on` | Bundled adapter that expands a request into a local task contract and reviews the exact candidate with proportional evidence. |
+| `adapters.intent_brief` | `off` | `off`, `on` | Bundled showcase adapter that expands intent, asks only material questions, and reviews the whole evidenced candidate before landing. |
 
 All selections live in `.invariant/config.yml`. Edit that tracked file directly or inspect and update
 validated settings through the CLI:
@@ -149,13 +150,38 @@ invariant config set execution assisted
 invariant config set integration_branch auto
 invariant config set integration_branch main
 invariant config set push_remote on
-invariant config set adapters.task_contract on
+invariant config set adapters.intent_brief on
 ```
 
-The task contract adapter is optional and lives outside the core semantic and lifecycle packages.
-It stores each contract and review under Git-local task runtime, never as repository governance. Its
-verification level is `inspection`, `targeted`, or `broad`, chosen from semantic reach and risk; a
-small presentation change can be satisfied by inspectable evidence without adding a unit test.
+The intent-brief adapter is optional and lives outside the core semantic and lifecycle packages. It
+does not own a second task lifecycle or define repository governance. At `task.created` it turns the
+request into one prose brief and may ask material questions. At `candidate.evidenced` it reviews the
+whole exact candidate and the evidence the CLI already collected. Both responses use the generic
+`task respond` action API.
+
+### Lifecycle hooks and the clean API
+
+Invariant exposes two intentional semantic suspension points:
+
+| Hook | Occurs | Stable input | Purpose |
+|---|---|---|---|
+| `task.created` | After the receipt and work location are selected, before implementation | Task ID, original goal, goal digest | Expand intent or interview when ambiguity would change the work. |
+| `candidate.evidenced` | After an exact candidate is built and mechanical evidence is collected, before landing | Goal digest, candidate tree, evidence receipts | Review meaning or intent against the actual candidate. |
+
+Hooks return actions as data. They do not create branches, invent stages, run checks, update refs,
+or require a second `task begin`. A response is bound to its hook context; changing the goal, brief,
+adapter code, or candidate invalidates it. `status: ok` with `outcome: needs_input` means the command
+succeeded and is waiting for judgment, rather than suffering a mechanical failure.
+
+```bash
+invariant --format json task begin import-processor --goal "Import the processor"
+invariant --format json task respond import-processor intent_brief:task.created --input brief.yml
+# implement and commit in the returned worktree
+invariant --format json task finish import-processor
+invariant --format json task respond import-processor intent_brief:candidate.evidenced --input review.yml
+```
+
+Routine tasks with no pending semantic action still finish in one command.
 
 ### Configure project-aware verification
 
@@ -211,6 +237,7 @@ Invariant adds only the state a repository needs:
 your-repository/
 ├── .invariant/
 │   ├── config.yml        optional repository configuration
+│   ├── SEMANTICS.yml     thin retrieval and invalidation index over canonical prose
 │   ├── DOMAINS.yml       stable responsibilities and architecture pointers
 │   ├── CONTRACTS.yml     executable promises between responsibilities
 │   ├── discoveries/      non-authoritative evidence from ongoing work
@@ -222,21 +249,28 @@ your-repository/
 - **Domain:** a stable area of responsibility, not necessarily a directory.
 - **Architecture:** Markdown that preserves ownership, rationale, state, failure behavior, and
   important restrictions.
+- **Semantic record:** a stable identity and small mechanical envelope around canonical prose. It
+  names authority, applicability, revisit triggers, verifiers, and explicit supersession without
+  forcing the argument body into a closed type system.
 - **Contract:** a promise one responsibility relies on from another, connected to executable
   verification.
 - **Discovery:** non-authoritative evidence about something missing, contradictory, or not yet
   understood.
 - **Audit:** a causally grounded record of what was inspected and found.
-- **Task contract:** an optional, disposable adapter contract for one local change.
+- **Intent brief:** optional task-local prose that expands the original goal without becoming
+  repository governance.
+- **Evidence receipt:** a candidate-bound observation captured by the CLI, including the exact tree,
+  command identity, environment fingerprints, result, output digest, and retained log.
 - **Coordination:** temporary dependencies and ownership while parallel work is active.
 
 The short form is:
 
 ```text
 request
-  → retrieve relevant architecture, contracts, and discoveries
+  → retrieve relevant semantic prose, contracts, and discoveries
   → investigate, coordinate, and implement
-  → review architectural impact and run affected checks
+  → construct the exact candidate and capture affected checks
+  → review the candidate against intent and durable meaning
   → converge safely
 
 uncertainty
@@ -244,3 +278,15 @@ uncertainty
   → deliberate resolution
   → architecture, contract, code, tests, documentation, follow-up, or no action
 ```
+
+Durability here means preserving an auditable interpretation, not declaring it eternally or
+mechanically true. Canonical prose stores the proposition, rationale, assumptions, alternatives,
+and revision conditions. `.invariant/SEMANTICS.yml` makes that prose retrievable and challengeable.
+Landed `semantic:<id>` references carry an `Invariant-Semantic: <id>@<digest>` attestation over the
+exact index envelope and canonical section in that tree. Superseded records remain explicit, and
+changes to applicability, prose, revisit coordinates, or verifiers reopen review.
+
+Use `invariant context semantics --path <path>` (or `--domain` / `--interface`) to retrieve the
+applicable active records as a clean text or JSON API. Each result includes the digest that binds
+its small index envelope to the exact canonical prose section; unscoped retrieval also exposes
+superseded history for audit.

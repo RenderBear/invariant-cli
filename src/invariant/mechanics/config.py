@@ -19,14 +19,14 @@ SETTABLE_KEYS = {
     "execution",
     "integration_branch",
     "push_remote",
-    "adapters.task_contract",
+    "adapters.intent_brief",
 }
 CODING_AGENT_CHOICES = {"claude", "codex"}
 
 
 @dataclass(frozen=True)
 class AdapterOptions:
-    values: tuple[tuple[str, bool], ...] = (("task_contract", False),)
+    values: tuple[tuple[str, bool], ...] = (("intent_brief", False),)
 
     @property
     def enabled(self) -> tuple[str, ...]:
@@ -133,7 +133,7 @@ def _from_raw(
         raise InvariantError(
             f"Invariant: .invariant/config.yml has invalid push_remote '{push_remote}' (use on or off)"
         )
-    adapters_raw = raw.get("adapters", {"task_contract": "off"})
+    adapters_raw = raw.get("adapters", {"intent_brief": "off"})
     if not isinstance(adapters_raw, dict):
         raise InvariantError("Invariant: .invariant/config.yml adapters must be a mapping")
     adapter_values: list[tuple[str, bool]] = []
@@ -143,8 +143,8 @@ def _from_raw(
         if not isinstance(enabled, str) or enabled not in {"on", "off"}:
             raise InvariantError(f"Invariant: adapters.{name} must be on or off")
         adapter_values.append((name, enabled == "on"))
-    if "task_contract" not in adapters_raw:
-        adapter_values.append(("task_contract", False))
+    if "intent_brief" not in adapters_raw:
+        adapter_values.append(("intent_brief", False))
         adapter_values.sort()
     adapters = AdapterOptions(tuple(adapter_values))
     verification_raw = raw.get("verification", {})
@@ -323,7 +323,7 @@ def initialize(
     execution: str | None = None,
     integration_branch: str | None = None,
     push_remote: str | None = None,
-    task_contract: bool | None = None,
+    intent_brief: bool | None = None,
 ) -> list[str]:
     path = repo / CONFIG_PATH
     if path.exists():
@@ -340,7 +340,7 @@ def initialize(
         "execution": execution if execution is not None else "auto",
         "integration_branch": branch_setting,
         "push_remote": push_remote if push_remote is not None else "off",
-        "adapters": {"task_contract": "on" if task_contract is True else "off"},
+        "adapters": {"intent_brief": "on" if intent_brief is True else "off"},
     }
     _from_raw(
         repo,

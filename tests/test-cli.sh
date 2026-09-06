@@ -48,7 +48,7 @@ printf '%s\n' "$out" | grep -q '^STATUS: implementing$' || die "status lost life
 printf '%s\n' "$out" | grep -q "^BRANCH: $branch$" || die "status lost task branch"
 out=$(cd "$fixture" && "$cli" task check cli-flow --goal-digest "$goal_digest")
 printf '%s\n' "$out" | grep -q '^BRIEF: fresh cli-flow$' || die "digest-based lifecycle check failed"
-ok "status and check resume lifecycle state without raw goal persistence"
+ok "status and check resume lifecycle state without re-supplying the goal"
 
 printf 'unrelated local note\n' > "$fixture/local-note.txt"
 peer=$(cd "$fixture" && "$cli" task begin cli-peer --goal "Run beside another task" \
@@ -68,12 +68,16 @@ printf 'two\n' >"$worktree/src/a.txt"
 git -C "$worktree" add src/a.txt
 git -C "$worktree" commit -qm implementation
 
-out=$(cd "$fixture" && "$cli" task finish cli-flow --subject "change source")
-printf '%s\n' "$out" | grep -q '^ASSESSMENT: inferred cli-flow$' || die "routine finish did not infer its assessment"
-printf '%s\n' "$out" | grep -q '^LANDED:' || die "finish did not use exact-tree landing"
-printf '%s\n' "$out" | grep -q '^STATUS: completed$' || die "finish did not complete lifecycle"
+out=$(cd "$fixture" && "$cli" --format json --verbose task finish cli-flow --subject "change source")
+printf '%s\n' "$out" | grep -q 'ASSESSMENT: inferred cli-flow' || die "routine finish did not infer its assessment"
+printf '%s\n' "$out" | grep -q 'LANDED:' || die "finish did not use exact-tree landing"
+printf '%s\n' "$out" | grep -q 'STATUS: completed' || die "finish did not complete lifecycle"
+printf '%s\n' "$out" | grep -q '"stage":"completed"' || die "finish JSON omitted terminal task state"
 [ "$(git -C "$fixture" branch --show-current)" = main ] || die "finish did not restore the integration branch"
 [ "$(cat "$fixture/src/a.txt")" = two ] || die "finish did not land implementation"
+landed=$(git -C "$fixture" rev-parse main)
+printf '%s\n' "$out" | grep -q "\"completion\":{\"commit\":\"$landed\"}" ||
+  die "finish JSON did not identify the archived completion"
 [ ! -f "$receipt" ] || die "finish did not invalidate the receipt"
 [ ! -e "$worktree" ] || die "finish did not remove the managed task worktree"
 if git -C "$fixture" show-ref --verify -q "refs/heads/$branch"; then die "finish did not remove the landed task branch"; fi
@@ -195,7 +199,7 @@ git -C "$fixture" branch -D "$failed_branch" >/dev/null
 ok "verification failure leaves the target unchanged and task work recoverable"
 
 json=$(cd "$fixture" && "$cli" --format json context reach --path src/a.txt)
-printf '%s\n' "$json" | grep -q '"protocol":1' || die "JSON protocol version is missing"
+printf '%s\n' "$json" | grep -q '"protocol":2' || die "JSON protocol version is missing"
 printf '%s\n' "$json" | grep -q '"command":"context.reach"' || die "JSON command identity is missing"
 printf '%s\n' "$json" | grep -q '"status":"ok"' || die "JSON success status is missing"
 printf '%s\n' "$json" | grep -q '"name":"TOPOLOGY","value":"area.src"' || die "JSON records are not structured"

@@ -66,6 +66,25 @@ def load(repo: Path, task: str) -> dict[str, Any]:
     return raw
 
 
+def load_completed(repo: Path, task: str) -> dict[str, Any] | None:
+    """Load the most recently archived completion for a reusable task id."""
+
+    root = git.common_dir(repo) / "invariant" / "history" / "tasks" / task
+    if not root.is_dir():
+        return None
+    candidates = list(root.glob("*/receipt.yml"))
+    if not candidates:
+        return None
+    path = max(candidates, key=lambda candidate: candidate.stat().st_mtime_ns)
+    raw = load_yaml(path)
+    if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("task") != task:
+        raise InvariantError(
+            f"Invariant: corrupt completed task archive '{task}'",
+            code="corrupt_receipt",
+        )
+    return raw
+
+
 def save(repo: Path, task: str, receipt: dict[str, Any]) -> None:
     dump_yaml(receipt_path(repo, task), receipt)
 
@@ -86,10 +105,18 @@ def open_receipt(
     target = resolved.integration_branch
     head = integration_head(repo, target)
     selected = sorted(set(domains))
+    selected_paths = sorted(set(paths))
+    selected_interfaces = sorted(set(interfaces))
     governance_snapshot = {
-        "selected_digest": governance.digest(repo, selected),
+        "selected_digest": governance.context_digest(
+            repo, selected, selected_paths, selected_interfaces
+        ),
         "integration_digest": (
-            governance.digest(repo, selected, head) if head != "unborn" else git.hash_text(repo, "")
+            governance.context_digest(
+                repo, selected, selected_paths, selected_interfaces, head
+            )
+            if head != "unborn"
+            else git.hash_text(repo, "")
         ),
     }
     change_classification = {
@@ -97,6 +124,7 @@ def open_receipt(
     }
     if posture:
         change_classification["posture"] = posture
+    adapter_ids = sorted(set(adapters))
     receipt = {
         "version": 1,
         "repository": repository_identity(repo, target),
@@ -106,14 +134,16 @@ def open_receipt(
         "integration_head": head,
         "mechanics_digest": mechanics_digest(),
         "scope": {
-            "paths": sorted(set(paths)),
-            "interfaces": sorted(set(interfaces)),
+            "paths": selected_paths,
+            "interfaces": selected_interfaces,
             "domains": selected,
         },
         "governance_snapshot": governance_snapshot,
         "change_classification": change_classification,
-        "adapters": sorted(set(adapters)),
+        "adapters": adapter_ids,
     }
+    if adapter_ids:
+        receipt["goal"] = goal
     save(repo, task, receipt)
     return receipt, [f"BRIEF: opened {task}", f"RECEIPT: {receipt_path(repo, task)}"]
 
@@ -157,6 +187,8 @@ def check_receipt(
     if mechanics_digest() != receipt.get("mechanics_digest"):
         raise Blocked("STALE: CLI mechanics changed", code="stale_receipt")
     selected = _scope(receipt, "domains")
+    selected_paths = _scope(receipt, "paths")
+    selected_interfaces = _scope(receipt, "interfaces")
     governance_snapshot = (
         receipt.get("governance_snapshot")
         if isinstance(receipt.get("governance_snapshot"), dict)
@@ -167,7 +199,9 @@ def check_receipt(
         if isinstance(receipt.get("change_classification"), dict)
         else {}
     )
-    if governance.digest(repo, selected) != governance_snapshot.get("selected_digest"):
+    if governance.context_digest(
+        repo, selected, selected_paths, selected_interfaces
+    ) != governance_snapshot.get("selected_digest"):
         raise Blocked("STALE: selected governance changed", code="stale_receipt")
 
     if (goal is None) == (goal_digest is None):
@@ -200,7 +234,13 @@ def check_receipt(
             raise Blocked(
                 "STALE: integration history no longer descends from the cached head", code="stale_receipt"
             )
-        integration_digest = governance.digest(repo, selected, current_head)
+        integration_digest = governance.context_digest(
+            repo,
+            selected,
+            selected_paths,
+            selected_interfaces,
+            current_head,
+        )
         if integration_digest != governance_snapshot.get("integration_digest"):
             raise Blocked(
                 "STALE: selected governance changed on the integration branch", code="stale_receipt"
@@ -262,3 +302,31 @@ def invalidate(repo: Path, task: str) -> list[str]:
     if local_task.is_dir():
         shutil.rmtree(local_task)
     return [f"BRIEF: invalidated {task}" if existed else f"BRIEF: absent {task}"]
+
+
+def complete(repo: Path, task: str, landed_commit: str) -> Path:
+    """Archive the task's semantic argument trail after successful local landing."""
+
+    receipt = load(repo, task)
+    receipt["completed_commit"] = landed_commit
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    receipt["lifecycle"] = {**lifecycle, "stage": "completed"}
+    local_task = task_root(repo, task)
+    local_task.mkdir(parents=True, exist_ok=True)
+    dump_yaml(local_task / "receipt.yml", receipt)
+    destination = (
+        git.common_dir(repo)
+        / "invariant"
+        / "history"
+        / "tasks"
+        / task
+        / landed_commit
+    )
+    if destination.exists():
+        raise InvariantError(
+            f"Invariant: completed task archive already exists for {task}@{landed_commit}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(local_task), str(destination))
+    receipt_path(repo, task).unlink(missing_ok=True)
+    return destination

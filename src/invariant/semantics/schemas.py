@@ -133,7 +133,7 @@ def assessment_schema() -> dict[str, Any]:
             },
             "governance": {
                 **string_list,
-                "description": "Candidate records: domain:<id>, contract:<id>, constraint:<id>, or architecture:<path>#<anchor>.",
+                "description": "Candidate records: semantic:<id>, domain:<id>, contract:<id>, constraint:<id>, or architecture:<path>#<anchor>.",
             },
             "architecture_reviews": {
                 **string_list,

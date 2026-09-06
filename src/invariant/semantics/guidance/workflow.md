@@ -43,7 +43,7 @@ applicable to the current stage.
 ### Implement the candidate
 
 Implement and commit the requested change in the generated `WORKTREE` returned by `task begin`.
-Leave `LIFECYCLE-ROOT` on the integration branch and run lifecycle commands there. Keep
+Leave the primary repository checkout on the integration branch and run lifecycle commands there. Keep
 repository evidence separate from accepted architectural authority. Preserve unresolved
 contradictions as evidence rather than silently choosing an interpretation.
 
@@ -55,17 +55,16 @@ architecture, governance, implementation, documentation, tests, follow-up work, 
 
 ### Prepare, verify, and finish
 
-After committing the candidate, finish from `LIFECYCLE-ROOT`:
+After committing the candidate, finish from the primary repository checkout:
 
 ```bash
 invariant --format json task finish <task-id>
 ```
 
-For a routine local candidate, `task finish` infers the complete assessment and continues directly
-through verification and landing. When semantic decisions or adapter evidence remain, it saves the
-candidate-bound drafts and returns the complete `required`, `inferred`, and `will_run` analysis in
-one response. Review the exact candidate against every recommended architecture decision, complete
-the saved files, and rerun the same finish command.
+For a routine local candidate, `task finish` infers the assessment and continues directly through
+verification and landing. When semantic decisions or adapter review remain, it returns typed
+candidate-bound actions. Resolve each action through `task respond`; do not edit task runtime or
+copy inferred locators into an assessment.
 
 Use the explicit preparation command only to inspect or export the draft before finishing:
 
@@ -140,9 +139,8 @@ upstream. Never choose or configure an upstream automatically, and never run `gi
 Invariant's landing flow. If the remote rejects the update, preserve and report the completed local
 landing.
 
-Repositories may enable the bundled `adapters.task_contract` unit. It expands the request into a
-Git-local task contract before implementation and reviews that contract against the exact
-prospective tree before landing. Use proportional evidence: inspection can satisfy a local
-presentation change, while affected behavior, cross-domain, persistence, security, or compatibility
-work needs focused or broad executable verification. Do not manufacture a persisted test merely
-because the adapter is enabled. When disabled, the fixed Invariant lifecycle remains unchanged.
+Repositories may enable the bundled `adapters.intent_brief` unit. It expands the request into a
+Git-local prose brief and may ask only material questions. After the CLI collects exact-tree
+evidence, the adapter returns one verdict over the whole brief before landing. Respond through the
+action API; do not edit task runtime or transcribe check output. When disabled, the fixed Invariant
+lifecycle remains unchanged.

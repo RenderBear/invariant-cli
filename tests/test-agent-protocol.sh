@@ -48,11 +48,11 @@ printf '%s\n' "$assessment_schema" | grep -q '"allow_open"' || die "assessment s
 if printf '%s\n' "$assessment_schema" | grep -q '"outcome_assessment"'; then
   die "core assessment schema still owns adapter review fields"
 fi
-contract_schema=$(cd "$governance" && "$cli" --format json task contract schema)
-printf '%s\n' "$contract_schema" | grep -q '"inspection","targeted","broad"' ||
-  die "task contract schema omitted proportional verification levels"
-printf '%s\n' "$contract_schema" | grep -q '"candidate_tree"' ||
-  die "task contract schema omitted exact-tree review binding"
+brief_schema=$(cd "$governance" && "$cli" --format json task intent-brief schema)
+printf '%s\n' "$brief_schema" | grep -q '"expand_intent"\|"brief"' ||
+  die "intent brief schema omitted prose-first expansion"
+printf '%s\n' "$brief_schema" | grep -q '"candidate_tree"' ||
+  die "intent brief schema omitted exact-tree review binding"
 if printf '%s\n' "$assessment_schema" | grep -q '"output"'; then die "schema JSON duplicated its text form"; fi
 ok "audit, assessment, and adapter schemas are machine-readable and compact"
 
@@ -155,14 +155,15 @@ out=$(cd "$architecture" && "$cli" task begin architecture --goal "Refine the ap
 architecture_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
 printf '\nThe application also owns recovery behavior.\n' >>"$architecture_worktree/docs/architecture.md"
 git -C "$architecture_worktree" commit -qam candidate
-if blocked=$(cd "$architecture" && "$cli" --format json task finish architecture 2>&1); then
-  die "task finish silently acknowledged an architecture review"
-fi
-printf '%s\n' "$blocked" | grep -q '"status":"blocked"' || die "finish did not return a blocked protocol result"
-printf '%s\n' "$blocked" | grep -q '"code":"assessment_completion_required"' ||
-  die "finish did not identify semantic assessment completion"
-printf '%s\n' "$blocked" | grep -q '"recommended_architecture_reviews":\["architecture:docs/architecture.md#application-boundary"\]' ||
-  die "finish did not return all missing semantic requirements together"
+review_request=$(cd "$architecture" && "$cli" --format json task finish architecture)
+printf '%s\n' "$review_request" | grep -q '"status":"ok"' ||
+  die "finish did not use the successful action protocol"
+printf '%s\n' "$review_request" | grep -q '"outcome":"needs_input"' ||
+  die "finish did not identify the pending semantic decision"
+printf '%s\n' "$review_request" | grep -q '"id":"core:candidate-review"' ||
+  die "finish did not expose one candidate-bound semantic review action"
+printf '%s\n' "$review_request" | grep -q '"affected_semantics":\["architecture:docs/architecture.md#application-boundary"\]' ||
+  die "finish did not include every affected semantic in the review packet"
 prepared=$(cd "$architecture" && "$cli" --format json task assessment prepare architecture)
 printf '%s\n' "$prepared" | grep -q '"boundary":{"disposition":"recorded"}' ||
   die "architecture prose was not inferred as a durable boundary change"
@@ -170,7 +171,7 @@ printf '%s\n' "$prepared" | grep -q '"governance":\["architecture:docs/architect
   die "registered architecture authority was not inferred as candidate governance"
 printf '%s\n' "$prepared" | grep -q '"recommended_architecture_reviews":\["architecture:docs/architecture.md#application-boundary"\]' ||
   die "affected architecture review was not exposed separately"
-ok "assessment preparation distinguishes registered authority from explicit review acknowledgement"
+ok "finish compiles inferred semantics into one candidate review action"
 
 runner="$fixtures/runner"
 new_repo "$runner"
@@ -226,7 +227,7 @@ cp "$assessment" "$runner/.git/invariant/tasks/cache/prepared-assessment.yml"
 out=$(cd "$runner" && "$cli" candidate verify "$branch" --assessment "$assessment")
 printf '%s\n' "$out" | grep -q '^CHECK: passed — runner:backend#tests/smoke$' || die "named runner did not execute"
 if printf '%s\n' "$out" | grep -q 'NOISY-SUCCESS-OUTPUT'; then die "successful verifier logs leaked into normal output"; fi
-out=$(cd "$runner" && "$cli" task finish cache)
+out=$(cd "$runner" && "$cli" task finish cache --check runner:backend#tests/smoke)
 printf '%s\n' "$out" | grep -q '^CHECK: reused — runner:backend#tests/smoke$' || die "finish did not reuse exact-candidate verification"
 printf '%s\n' "$out" | grep -q '^CHECK-CACHE: 1 reused$' || die "verification cache summary was missing"
 [ "$(cat "$runner/.git/runner-count")" = 1 ] || die "cached verifier executed more than once"

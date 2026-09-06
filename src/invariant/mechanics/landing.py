@@ -7,7 +7,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
 from typing import Iterable
@@ -99,7 +101,12 @@ def _last_attested(repo: Path, old: str) -> str | None:
     return None
 
 
-def _message(repo: Path, request: LandRequest, covers: str | None) -> str:
+def _message(
+    repo: Path,
+    request: LandRequest,
+    covers: str | None,
+    candidate_tree: str,
+) -> str:
     message = governance.commit_message(
         repo,
         request.subject,
@@ -113,6 +120,10 @@ def _message(repo: Path, request: LandRequest, covers: str | None) -> str:
         message += f"Invariant-Covers: {covers}\n"
     for reference in request.governance_refs:
         message += f"Invariant-Governance: {reference}\n"
+        if reference.startswith("semantic:"):
+            identifier = reference.removeprefix("semantic:")
+            digest = governance.semantic_record_digest(repo, identifier, candidate_tree)
+            message += f"Invariant-Semantic: {identifier}@{digest}\n"
     for reference in request.reviewed:
         if reference.startswith("architecture:"):
             message += f"Invariant-Architecture: {reference}\n"
@@ -182,8 +193,6 @@ def _construct(repo: Path, request: LandRequest, target: str) -> Candidate:
         if last and last != old:
             covers = f"{last}..{old}"
             reach_base = last
-    message = _message(repo, request, covers)
-
     if request.mode == "direct":
         environment, index = _temporary_index(repo)
         try:
@@ -195,21 +204,24 @@ def _construct(repo: Path, request: LandRequest, target: str) -> Candidate:
             tree = git.run(["write-tree"], cwd=repo, env=environment).stdout
         finally:
             index.unlink(missing_ok=True)
-        candidate = git.run(["commit-tree", tree, "-F", "-"], cwd=repo, input_text=message).stdout
+        parents: list[str] = []
     elif request.mode == "staged":
         assert old is not None
         tree = git.run(["write-tree"], cwd=repo).stdout
         if tree == git.resolve(repo, f"{old}^{{tree}}", ""):
             raise InvariantError("Invariant: staged index produces no change")
-        candidate = git.run(["commit-tree", tree, "-p", old, "-F", "-"], cwd=repo, input_text=message).stdout
+        parents = [old]
     else:
         assert old is not None and branch_ref is not None
         tree = git.merge_tree(repo, old, branch_ref)
-        candidate = git.run(
-            ["commit-tree", tree, "-p", old, "-p", branch_ref, "-F", "-"],
-            cwd=repo,
-            input_text=message,
-        ).stdout
+        parents = [old, branch_ref]
+    message = _message(repo, request, covers, tree)
+    arguments = ["commit-tree", tree]
+    for parent in parents:
+        arguments.extend(["-p", parent])
+    candidate = git.run(
+        [*arguments, "-F", "-"], cwd=repo, input_text=message
+    ).stdout
     return Candidate(candidate, tree, target, old, unborn, covers, reach_base)
 
 
@@ -346,6 +358,12 @@ def _governance_exists(repo: Path, reference: str) -> bool:
     if ":" not in reference:
         return False
     kind, identifier = reference.split(":", 1)
+    if kind == "semantic":
+        return identifier in {
+            record.identifier
+            for record in governance.semantic_records(repo)
+            if record.status == "active"
+        }
     if kind == "domain":
         return identifier in {str(row.get("id")) for row in governance.domains(repo)}
     if kind == "contract":
@@ -535,7 +553,9 @@ def _verification_paths(repo: Path, key: str) -> tuple[Path, Path]:
     return root / f"{key}.yml", root / f"{key}.log"
 
 
-def _run_locator(repo: Path, locator: str, candidate: Candidate) -> tuple[list[str], bool]:
+def _run_locator(
+    repo: Path, locator: str, candidate: Candidate
+) -> tuple[list[str], bool, dict[str, object]]:
     output = [f"CHECK: running — {locator}"]
     resolved = _resolve_verifier(repo, locator, candidate)
     payload = {
@@ -560,7 +580,11 @@ def _run_locator(repo: Path, locator: str, candidate: Candidate) -> tuple[list[s
         except InvariantError:
             raw = None
         if isinstance(raw, dict) and raw.get("key") == key and raw.get("status") == "passed":
-            return [f"CHECK: reused — {locator}", f"LOG: {log_path}"], True
+            return [f"CHECK: reused — {locator}", f"LOG: {log_path}"], True, raw
+    if resolved.cache == "never":
+        key = sha256(f"{key}\n{time.time_ns()}".encode()).hexdigest()
+        receipt_path, log_path = _verification_paths(repo, key)
+    started = time.monotonic()
     try:
         completed = subprocess.run(
             list(resolved.command),
@@ -576,6 +600,20 @@ def _run_locator(repo: Path, locator: str, candidate: Candidate) -> tuple[list[s
             for value in (exc.stdout, exc.stderr)
         )
         log_path.write_text(combined, encoding="utf-8")
+        timeout_payload = {
+            **payload,
+            "key": key,
+            "evidence_id": f"verification:{key}",
+            "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "status": "failed",
+            "exit_code": None,
+            "duration_ms": round((time.monotonic() - started) * 1000),
+            "output_digest": sha256(combined.encode()).hexdigest(),
+            "log": str(log_path),
+            "reusable": False,
+            "failure": "timeout",
+        }
+        dump_yaml(receipt_path, timeout_payload)
         raise Blocked(
             f"Invariant: verifier timed out — {locator}",
             code="verification_failed",
@@ -587,15 +625,26 @@ def _run_locator(repo: Path, locator: str, candidate: Candidate) -> tuple[list[s
     if completed.stderr:
         combined += completed.stderr
     log_path.write_text(combined, encoding="utf-8")
+    result_payload = {
+        **payload,
+        "key": key,
+        "evidence_id": f"verification:{key}",
+        "captured_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "status": "passed" if completed.returncode == 0 else "failed",
+        "exit_code": completed.returncode,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+        "output_digest": sha256(combined.encode()).hexdigest(),
+        "log": str(log_path),
+        "reusable": resolved.cache == "exact-tree",
+    }
+    dump_yaml(receipt_path, result_payload)
     if completed.returncode:
         raise Blocked(
             f"Invariant: verifier failed — {locator}",
             code="verification_failed",
             lines=[*output, *combined.rstrip("\n").splitlines(), f"LOG: {log_path}"],
         )
-    if resolved.cache == "exact-tree":
-        dump_yaml(receipt_path, {**payload, "key": key, "status": "passed", "log": str(log_path)})
-    return [*output, f"CHECK: passed — {locator}", f"LOG: {log_path}"], False
+    return [*output, f"CHECK: passed — {locator}", f"LOG: {log_path}"], False, result_payload
 
 
 def _boundary_review(repo: Path, request: LandRequest, reach_lines: list[str]) -> list[str]:
@@ -679,6 +728,112 @@ def _coordinate_verify(repo: Path, request: LandRequest, candidate: Candidate) -
     for requested in request.governance_refs:
         if not any(requested in governance.refs(value.get("governance")) for value in lease_values):
             raise Blocked(f"Invariant: governance '{requested}' is absent from the combined lease claims")
+
+
+def collect_evidence(
+    repo: Path, request: LandRequest
+) -> tuple[Candidate, list[str], list[dict[str, object]]]:
+    """Run exact-tree mechanical checks without authorizing or landing the candidate."""
+
+    _validate_request(request)
+    git.require_capabilities(repo)
+    target = request.target or config.resolve(repo).integration_branch
+    candidate = _construct(repo, request, target)
+    _checkout_safe(repo, request, candidate)
+    temporary = Path(tempfile.mkdtemp(prefix="invariant-evidence."))
+    verify_dir = temporary / "verify"
+    added = False
+    lines: list[str] = []
+    evidence: list[dict[str, object]] = []
+    try:
+        git.run(
+            ["worktree", "add", "--quiet", "--detach", str(verify_dir), candidate.commit],
+            cwd=repo,
+        )
+        added = True
+        options = {
+            "root_mode": candidate.unborn,
+            "history": not candidate.unborn,
+            "base": None if candidate.unborn else candidate.reach_base,
+            "domains_selected": list(request.domains),
+            "interfaces": list(request.interfaces),
+        }
+        reach_lines = governance.reach(verify_dir, **options)
+        verifier_lines = governance.verifiers(verify_dir, **options)
+        lines.extend(reach_lines)
+        prior_target = os.environ.get("INVARIANT_INTEGRATION_TARGET")
+        prior_unborn = os.environ.get("INVARIANT_ALLOW_UNBORN")
+        os.environ["INVARIANT_INTEGRATION_TARGET"] = target
+        os.environ["INVARIANT_ALLOW_UNBORN"] = "1" if candidate.unborn else "0"
+        try:
+            validation = state.validate(verify_dir)
+        finally:
+            if prior_target is None:
+                os.environ.pop("INVARIANT_INTEGRATION_TARGET", None)
+            else:
+                os.environ["INVARIANT_INTEGRATION_TARGET"] = prior_target
+            if prior_unborn is None:
+                os.environ.pop("INVARIANT_ALLOW_UNBORN", None)
+            else:
+                os.environ["INVARIANT_ALLOW_UNBORN"] = prior_unborn
+        if validation[-1] not in {
+            "Invariant state valid",
+            "no Invariant state — nothing to validate",
+        }:
+            raise Blocked(
+                "Invariant: candidate state validation failed",
+                code="invalid_state",
+                lines=validation,
+                data={"violations": validation},
+            )
+        snapshot = {
+            "kind": "candidate_snapshot",
+            "candidate_commit": candidate.commit,
+            "tree": candidate.tree,
+            "base": candidate.old or "unborn",
+            "target": candidate.target,
+            "changed_paths": _candidate_paths(verify_dir, candidate),
+        }
+        snapshot_id = sha256(
+            json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        evidence.append({"evidence_id": f"candidate:{snapshot_id}", **snapshot})
+        state_observation = {
+            "kind": "state_validation",
+            "candidate_commit": candidate.commit,
+            "tree": candidate.tree,
+            "validator": "invariant.state",
+            "mechanics": _verifier_mechanics_digest(),
+            "status": "passed",
+        }
+        state_id = sha256(
+            json.dumps(state_observation, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        evidence.append({"evidence_id": f"state:{state_id}", **state_observation})
+        executed: set[str] = set()
+        for line in verifier_lines:
+            if not line.startswith("VERIFY: "):
+                continue
+            locator = line.split(" ", 2)[2]
+            if locator in executed:
+                continue
+            check_lines, _, record = _run_locator(verify_dir, locator, candidate)
+            lines.extend(check_lines)
+            evidence.append(record)
+            executed.add(locator)
+        for locator in request.checks:
+            if locator in executed:
+                continue
+            check_lines, _, record = _run_locator(verify_dir, locator, candidate)
+            lines.extend(check_lines)
+            evidence.append(record)
+            executed.add(locator)
+        lines.append(f"EVIDENCE: {len(evidence)} exact-tree observation(s)")
+        return candidate, lines, evidence
+    finally:
+        if added:
+            git.run(["worktree", "remove", "--force", str(verify_dir)], cwd=repo, check=False)
+        shutil.rmtree(temporary, ignore_errors=True)
 
 
 def verify_and_land(repo: Path, request: LandRequest, *, update_ref: bool = True) -> list[str]:
@@ -770,7 +925,12 @@ def verify_and_land(repo: Path, request: LandRequest, *, update_ref: bool = True
             else:
                 os.environ["INVARIANT_ALLOW_UNBORN"] = prior_unborn
         if state_lines[-1] != "Invariant state valid" and state_lines[-1] != "no Invariant state — nothing to validate":
-            raise Blocked("Invariant: candidate state validation failed", code="invalid_state", lines=state_lines)
+            raise Blocked(
+                "Invariant: candidate state validation failed",
+                code="invalid_state",
+                lines=state_lines,
+                data={"violations": state_lines},
+            )
         governance.validate_trailer(verify_dir, candidate.commit)
         output.extend(_boundary_review(verify_dir, request, reach_lines))
 
@@ -789,13 +949,13 @@ def verify_and_land(repo: Path, request: LandRequest, *, update_ref: bool = True
             elif line.startswith("VERIFY: "):
                 locator = line.split(" ", 2)[2]
                 if locator not in executed:
-                    check_lines, cache_hit = _run_locator(verify_dir, locator, candidate)
+                    check_lines, cache_hit, _ = _run_locator(verify_dir, locator, candidate)
                     output.extend(check_lines)
                     reused += int(cache_hit)
                     executed.add(locator)
         for locator in request.checks:
             if locator not in executed:
-                check_lines, cache_hit = _run_locator(verify_dir, locator, candidate)
+                check_lines, cache_hit, _ = _run_locator(verify_dir, locator, candidate)
                 output.extend(check_lines)
                 reused += int(cache_hit)
                 executed.add(locator)

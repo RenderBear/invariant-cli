@@ -1,14 +1,15 @@
 #!/bin/sh
-# Verify the task contract adapter and generalized discovery ontology.
+# Verify the intent brief hooks and generalized discovery ontology.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
 cli="$root/bin/invariant"
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/invariant-semantic-test.XXXXXX")
-contract_file="$fixture-contract.yml"
+unborn=$(mktemp -d "${TMPDIR:-/tmp}/invariant-unborn-hook.XXXXXX")
+brief_file="$fixture-brief.yml"
 review_file="$fixture-review.yml"
-assessment="$fixture-assessment.yml"
-cleanup() { rm -rf "$fixture" "$contract_file" "$review_file" "$assessment"; }
+semantic_review="$fixture-semantic-review.yml"
+cleanup() { rm -rf "$fixture" "$unborn" "$brief_file" "$review_file" "$semantic_review"; }
 trap cleanup EXIT HUP INT TERM
 
 git -C "$fixture" init -qb main
@@ -32,7 +33,7 @@ cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
 execution: auto
 adapters:
-  task_contract: on
+  intent_brief: on
 EOF
 cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
 version: 1
@@ -57,43 +58,53 @@ die() { echo "not ok - $1"; exit 1; }
 
 goal='Change the source with explicit acceptance'
 goal_digest=$(printf '%s' "$goal" | git -C "$fixture" hash-object --stdin)
-if out=$(cd "$fixture" && "$cli" task begin semantic-flow --goal "$goal" \
-    --path src/a.txt --domain source 2>&1); then
-  die "task contract adapter was silently skipped"
-fi
-printf '%s\n' "$out" | grep -q '^STATUS: awaiting-task-contract$' ||
-  die "task contract did not expose its lifecycle gate"
-[ "$(git -C "$fixture" branch --show-current)" = main ] ||
-  die "task contract gate created the work branch early"
-ok "task contract is an optional pre-implementation adapter gate"
-
-cat >"$contract_file" <<EOF
-version: 1
-adapter: task_contract
-source_goal_digest: $goal_digest
-requirements:
-  goal: $goal
-  outcomes:
-    - id: O1
-      prose: Source behavior changes.
-  acceptance:
-    - id: A1
-      prose: The committed source contains the new value.
-  constraints:
-    - id: C1
-      prose: Existing repository governance remains unchanged.
-verification:
-  level: targeted
-  rationale: This bounded source change has focused repository evidence.
-EOF
 out=$(cd "$fixture" && "$cli" task begin semantic-flow --goal "$goal" \
-  --path src/a.txt --domain source --task-contract-file "$contract_file")
-printf '%s\n' "$out" | grep -q '^STATUS: implementing$' ||
-  die "expanded task did not enter implementation"
+    --path src/a.txt --domain source)
+printf '%s\n' "$out" | grep -q '^STATUS: briefing$' ||
+  die "intent expansion did not expose its action"
+printf '%s\n' "$out" | grep -q '^ACTION: intent_brief:task.created — expand_intent$' ||
+  die "intent expansion action was not structured"
+[ "$(git -C "$fixture" branch --show-current)" = main ] ||
+  die "task creation moved the integration checkout"
 branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
 worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
-[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_contract/contract.yml" ] ||
-  die "task contract was not stored under adapter runtime"
+[ -d "$worktree" ] || die "single begin did not create the isolated worktree"
+ok "one begin creates the task and exposes intent expansion as data"
+
+cat >"$brief_file" <<EOF
+version: 1
+adapter: intent_brief
+source_goal_digest: $goal_digest
+brief: >-
+  Change the committed source value while preserving existing repository governance.
+questions:
+  - id: desired-value
+    prompt: What should the new value be?
+    answer: ''
+EOF
+out=$(cd "$fixture" && "$cli" task respond semantic-flow intent_brief:task.created \
+  --input "$brief_file")
+printf '%s\n' "$out" | grep -q '^STATUS: briefing$' ||
+  die "a material unanswered question did not retain briefing"
+printf '%s\n' "$out" | grep -q '^ACTION: intent_brief:task.created — answer_questions$' ||
+  die "the interview did not return the material question"
+cat >"$brief_file" <<EOF
+version: 1
+adapter: intent_brief
+source_goal_digest: $goal_digest
+brief: >-
+  Change the committed source value to two while preserving existing repository governance.
+questions:
+  - id: desired-value
+    prompt: What should the new value be?
+    answer: Use the literal value two.
+EOF
+out=$(cd "$fixture" && "$cli" task respond semantic-flow intent_brief:task.created \
+  --input "$brief_file")
+printf '%s\n' "$out" | grep -q '^STATUS: implementing$' ||
+  die "answered intent brief did not enter implementation"
+[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/intent_brief/brief.yml" ] ||
+  die "intent brief was not stored under adapter runtime"
 cat >"$worktree/docs/architecture.md" <<'EOF'
 # Architecture
 
@@ -106,12 +117,11 @@ printf '%s\n' "$guidance" | grep -q '^# Active task context$' ||
   die "compiled guidance omitted the active semantic envelope"
 printf '%s\n' "$guidance" | grep -q '^Paths (current candidate): docs/architecture.md$' ||
   die "compiled guidance preserved stale initial paths instead of current candidate paths"
-printf '%s\n' "$guidance" | grep -q '^# Task contract$' ||
-  die "compiled guidance omitted the adapter contract"
-printf '%s\n' "$guidance" | grep -q '^# Durable semantic reasoning$' ||
-  die "stage guidance omitted durable semantic reasoning"
-printf '%s\n' "$guidance" | grep -q '^# Repository archaeology$' ||
-  die "stage guidance omitted repository archaeology"
+printf '%s\n' "$guidance" | grep -q '^# Intent brief$' ||
+  die "compiled guidance omitted the intent brief"
+if printf '%s\n' "$guidance" | grep -q '^# Repository archaeology$'; then
+  die "default guidance returned the full generic handbook"
+fi
 printf '%s\n' "$guidance" | grep -q '^# Selected architecture prose$' ||
   die "compiled guidance omitted selected architecture prose"
 printf '%s\n' "$guidance" | grep -q 'The source domain owns the durable value and consumers may not redefine it.' ||
@@ -123,63 +133,99 @@ printf '%s\n' "$guidance" | grep -q '^DISCOVERY-CONTEXT: implicit-source (open)$
   die "compiled guidance omitted the relevant discovery"
 printf '%s\n' "$guidance" | grep -q 'Source recovery ownership is still implicit.' ||
   die "compiled guidance reduced discovery reasoning to an identifier"
-printf '%s\n' "$guidance" | grep -q '^# Progressive discovery$' ||
-  die "stage guidance omitted progressive discovery prose"
-printf '%s\n' "$guidance" | grep -q '^# Task contract adapter$' ||
+printf '%s\n' "$guidance" | grep -q 'Do not create requirement taxonomies' ||
   die "stage guidance omitted the enabled adapter"
+full_guidance=$(cd "$fixture" && "$cli" task guidance semantic-flow --full)
+printf '%s\n' "$full_guidance" | grep -q '^# Repository archaeology$' ||
+  die "full guidance did not expose the detailed handbook"
 git -C "$worktree" restore docs/architecture.md
-ok "free-form brief, discovery, coordinate, and landing prose is compiled for the active stage"
+ok "guidance compiles accepted context and keeps the long handbook lazy"
 
 printf 'two\n' >"$worktree/src/a.txt"
 git -C "$worktree" add src/a.txt
 git -C "$worktree" commit -qm implementation
-cat >"$assessment" <<EOF
-version: 1
-goal_digest: $goal_digest
-paths: [src/a.txt]
-interfaces: []
-domains: [source]
-boundary:
-  disposition: no-record
-governance: []
-architecture_reviews: [architecture:docs/architecture.md#source-ownership]
-checks: []
-EOF
-if out=$(cd "$fixture" && "$cli" task finish semantic-flow --assessment "$assessment" 2>&1); then
-  die "task contract review was silently skipped"
-fi
+out=$(cd "$fixture" && "$cli" task finish semantic-flow)
 candidate_tree=$(printf '%s\n' "$out" | sed -n 's/^CANDIDATE-TREE: //p')
-[ -n "$candidate_tree" ] || die "task contract review did not identify the exact candidate tree"
-[ -f "$fixture/.git/invariant/tasks/semantic-flow/adapters/task_contract/prepared-review.yml" ] ||
-  die "candidate-bound adapter review was not prepared under adapter runtime"
+[ -n "$candidate_tree" ] || die "finish did not identify the exact candidate tree"
+printf '%s\n' "$out" | grep -q '^ACTION: intent_brief:candidate.evidenced — review_intent$' ||
+  die "intent review hook was not exposed"
+printf '%s\n' "$out" | grep -q '^ACTION: core:candidate-review — review_semantics$' ||
+  die "affected semantic prose was not compiled into the final review"
 [ "$(git -C "$fixture" show main:src/a.txt)" = one ] ||
-  die "outcome gate advanced the target before review"
+  die "review actions advanced the target"
 
+brief_digest=$(shasum -a 256 "$fixture/.git/invariant/tasks/semantic-flow/adapters/intent_brief/brief.yml" | awk '{print $1}')
 cat >"$review_file" <<EOF
 version: 1
-adapter: task_contract
+adapter: intent_brief
 source_goal_digest: $goal_digest
+brief_digest: $brief_digest
 candidate_tree: $candidate_tree
-results:
-  - satisfies: A1
-    disposition: satisfied
-    prose: The candidate contains the committed value.
-    evidence: [repo:src/a.txt]
-  - satisfies: C1
-    disposition: satisfied
-    prose: The candidate leaves durable repository governance unchanged.
-    evidence: [inspection:.invariant]
+verdict: accepted
+summary: The exact candidate implements the whole intent brief.
+exceptions: []
 EOF
-out=$(cd "$fixture" && "$cli" task finish semantic-flow --assessment "$assessment" --task-contract-review "$review_file")
+out=$(cd "$fixture" && "$cli" task respond semantic-flow intent_brief:candidate.evidenced \
+  --input "$review_file")
+printf '%s\n' "$out" | grep -q '^STATUS: awaiting-review$' ||
+  die "resolving intent review discarded the core semantic action"
+cat >"$semantic_review" <<EOF
+version: 1
+review_id: $(sed -n 's/^review_id: //p' "$fixture/.git/invariant/tasks/semantic-flow/review-packet.yml")
+candidate_tree: $candidate_tree
+verdict: accepted
+summary: The bounded source change preserves the accepted ownership decision.
+semantic_effect: no-record
+authority: agent:semantic-flow
+exceptions: []
+EOF
+out=$(cd "$fixture" && "$cli" task respond semantic-flow core:candidate-review \
+  --input "$semantic_review")
 printf '%s\n' "$out" | grep -q '^STATUS: completed$' ||
-  die "satisfied exact-tree outcome review did not complete"
+  die "resolved exact-tree reviews did not complete"
 [ "$(git -C "$fixture" branch --show-current)" = main ] ||
   die "completed reviewed task did not restore main"
 [ "$(cat "$fixture/src/a.txt")" = two ] || die "reviewed task was not landed"
 if git -C "$fixture" show-ref --verify -q "refs/heads/$branch"; then
   die "reviewed task branch survived cleanup"
 fi
-ok "the bundled adapter binds proportional acceptance evidence to the exact candidate tree"
+landed=$(git -C "$fixture" rev-parse main)
+[ -f "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/receipt.yml" ] ||
+  die "completion discarded the argument trail"
+[ -d "$fixture/.git/invariant/history/tasks/semantic-flow/$landed/evidence" ] ||
+  die "completion discarded exact-tree evidence"
+ok "whole-intent and semantic reviews bind archived evidence to the exact candidate"
+
+git -C "$unborn" init -qb main
+git -C "$unborn" config user.name test
+git -C "$unborn" config user.email test@example.com
+mkdir -p "$unborn/.invariant"
+cat >"$unborn/.invariant/config.yml" <<'EOF'
+version: 1
+execution: auto
+adapters:
+  intent_brief: on
+EOF
+unborn_goal='Establish the first repository tree'
+unborn_digest=$(printf '%s' "$unborn_goal" | git -C "$unborn" hash-object --stdin)
+out=$(cd "$unborn" && "$cli" task begin unborn-intent --goal "$unborn_goal")
+printf '%s\n' "$out" | grep -q '^STATUS: briefing$' ||
+  die "an unborn repository bypassed its task-created hook"
+out=$(cd "$unborn" && "$cli" task status unborn-intent)
+printf '%s\n' "$out" | grep -q '^ACTION: intent_brief:task.created — expand_intent$' ||
+  die "task status did not expose the pending hook action"
+cat >"$brief_file" <<EOF
+version: 1
+adapter: intent_brief
+source_goal_digest: $unborn_digest
+brief: Establish the requested first repository tree without publishing it.
+questions: []
+EOF
+out=$(cd "$unborn" && "$cli" task respond unborn-intent intent_brief:task.created \
+  --input "$brief_file")
+printf '%s\n' "$out" | grep -q '^STATUS: implementing-unborn$' ||
+  die "resolved unborn intent did not return to direct implementation"
+ok "task-created hooks gate both born and unborn repository lifecycles"
 
 (cd "$fixture" && "$cli" config set authority human >/dev/null)
 git -C "$fixture" add .invariant/config.yml
@@ -235,4 +281,4 @@ fi
   die "discovery resolution to non-contract work was rejected"
 ok "human-authority discoveries require approval while agent-authority discoveries can proceed"
 
-echo "4 semantic option checks passed"
+echo "5 semantic option checks passed"

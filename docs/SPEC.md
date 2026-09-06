@@ -91,7 +91,8 @@ The `invariant` CLI owns deterministic operations:
   lifecycle mutation;
 - constructing exact Git candidates;
 - selecting declared verifiers;
-- running checks against an exact tree;
+- running checks against an exact tree and capturing their command, environment, result, output
+  digest, and log as evidence;
 - validating audit and lease freshness;
 - detecting conflicts and concurrent ref movement;
 - atomically updating a local ref when explicitly requested;
@@ -115,7 +116,7 @@ The CLI owns the fixed repository lifecycle. It owns:
 - running exact-tree verification;
 - atomically landing onto the integration target;
 - optionally publishing that exact landing under explicit tracked policy;
-- releasing associated leases and invalidating the completed receipt.
+- releasing associated leases, removing active work, and archiving the completed argument trail.
 
 The host may be a coding agent, purpose-built harness, IDE integration, or automation system. It
 owns the conversation, performs implementation inside the CLI-provided work context, supplies
@@ -168,33 +169,34 @@ task and follows the same shape:
 
 ```text
 begin
-  -> brief
-  -> receipt
-  -> isolated work branch
+  -> receipt + isolated work branch
+  -> task.created hook actions
   -> implementation by the host
   -> exact prospective tree
-  -> reach and semantic review
-  -> verification
+  -> reach + exact-tree mechanical evidence
+  -> candidate.evidenced hook actions
+  -> final verification
   -> atomic local landing
   -> optional configured upstream push
-  -> receipt and coordination cleanup
+  -> active-state cleanup + completed argument archive
 ```
 
 `invariant task begin` captures the target, gathers the mechanically available context, records the
 semantic envelope, and creates or reuses a generated branch in a dedicated linked worktree. It
 leaves the integration checkout unchanged so several tasks can begin concurrently in one clone and
-returns both the task worktree and lifecycle root.
+returns the task worktree plus typed lifecycle state and actions. Git-common runtime paths remain an
+implementation detail.
 
 The initial durable-meaning boundary defaults to `unresolved`. A harness may provide a grounded
 disposition early, but the CLI does not require a human or agent to predict candidate reach before
 the candidate exists. Final boundary review remains mandatory during `task finish`.
 
-`invariant task finish` first generates an assessment when none exists. Routine candidates continue
-directly; when semantic input is missing, it saves the draft and returns every required decision,
-inferred field, and planned verifier together without discarding valid mechanical work. Finishing
-then constructs the exact prospective merge tree, recomputes reach, validates the assessment, runs
-affected checks and reviews, and compare-and-swaps the local integration ref. If verification or
-landing fails, the worktree remains recoverable. When remote
+`invariant task finish` generates its internal assessment, constructs the prospective candidate,
+and captures applicable mechanical evidence. Routine candidates continue directly. When semantic
+input remains, it returns typed actions with a successful `needs_input` outcome; the host resolves
+them through `task respond`, never by editing task runtime. The last response continues into final
+validation and compare-and-swaps the local integration ref. If verification or landing fails, the
+worktree remains recoverable. When remote
 publication is enabled, it occurs only after local landing; a rejected push leaves that verified
 local landing intact and reports it explicitly.
 
@@ -233,6 +235,7 @@ Tracked repository state remains:
 
 ```text
 .invariant/config.yml
+.invariant/SEMANTICS.yml
 .invariant/DOMAINS.yml
 .invariant/CONTRACTS.yml
 .invariant/audits/<id>.yml
@@ -255,19 +258,27 @@ Disposable local receipts remain outside repository state:
 
 ```text
 <git-common-dir>/invariant/briefs/<task-id>.yml
+<git-common-dir>/invariant/tasks/<task-id>/...
+```
+
+After a successful landing, task-local evidence and semantic inputs move to:
+
+```text
+<git-common-dir>/invariant/history/tasks/<task-id>/<landed-commit>/...
 ```
 
 The standing of each object is:
 
 | Object | Standing | Lifetime |
 |---|---|---|
-| Domain, architecture, contract | accepted authority | repository history |
+| Semantic record and canonical prose | accepted interpretation | repository history |
+| Domain and contract projections | accepted authority | repository history |
 | Audit, discovery | evidence only | repository history |
-| Task contract and review | optional adapter state | active task |
+| Intent brief and candidate reviews | task-local semantic argument | archived after landing |
 | Plan, lease | coordination only | active work |
-| Receipt | cache integrity only | disposable |
+| Active receipt | cache integrity only | active task |
 | Git tree and commit | causal implementation fact | repository history |
-| Verification result | evidence for one exact tree | candidate lifetime |
+| Verification result | reproducible observation for one exact tree | archived after landing |
 
 Only accepted governance binds future work. Evidence can motivate governance but cannot become
 authority without explicit adoption.
@@ -284,7 +295,7 @@ execution: auto
 integration_branch: auto
 push_remote: off
 adapters:
-  task_contract: off
+  intent_brief: off
 ```
 
 `coding_agents` records the non-empty set of supported coding agents configured during repository
@@ -365,19 +376,74 @@ initialization before project state is created.
 `invariant config init` remains the lower-level configuration-only initializer.
 `invariant config set <key> <value>` updates one validated setting atomically. The settable keys are
 `coding_agents`, `authority`, `execution`, `integration_branch`, `push_remote`,
-and `adapters.task_contract`. Version `1` is the configuration schema marker, not an operational
+and `adapters.intent_brief`. Version `1` is the configuration schema marker, not an operational
 setting.
 
 Optional additions to the fixed core are configured under `adapters`. The bundled
-`task_contract` adapter is one indivisible unit: its pre-hook expands the request into a local
-task contract with stable IDs, and its post-hook assesses those IDs against the exact
-prospective tree. It is either enabled in full or disabled; requirements expansion and outcome review are
-not independent lifecycle modes. The model-led default leaves the adapter disabled and relies on
-the coding agent's normal understanding plus normal candidate review.
+`intent_brief` adapter demonstrates the hook API: `task.created` expands the original goal into one
+prose brief and may interview the user; `candidate.evidenced` returns one whole-candidate verdict
+after evidence collection. It cannot create stages, branches, checks, or ref updates. Both hook
+responses use `task respond`. The model-led default leaves the adapter disabled and relies on the
+coding agent's normal understanding plus normal candidate review.
 
 ## 7. Semantic model
 
-### 7.1 Domains
+### 7.1 Semantic records: an open envelope around prose
+
+Invariant preserves an auditable interpretation, not an interpretation-free fact. The canonical
+Markdown should store the argument: proposition, rationale, evidence considered, assumptions,
+alternatives, consequences, and conditions for revision. The CLI deliberately does not parse those
+sentences into a closed claim taxonomy.
+
+`.invariant/SEMANTICS.yml` is a thin mechanical index:
+
+```yaml
+version: 1
+records:
+  - id: processor-source-ownership
+    document: architecture:docs/architecture.md#processor-source-ownership
+    authority: user:task:import-processor#turn-3
+    status: active
+    applies_to: [repo:services/document-processor, interface:processor-source]
+    revisit_on: [repo:.gitmodules, repo:services/document-processor/.git]
+    verifies: [command:checks/ordinary-processor-source.sh]
+    supersedes: [processor-external-ownership]
+    relations:
+      challenges: [semantic:processor-external-ownership]
+    facets:
+      confidence: accepted
+```
+
+Only the fields needed for durable mechanics are fixed:
+
+- `id` provides a stable identity;
+- `document` points to the exact canonical prose section;
+- `authority` explains why the interpretation may govern;
+- `status` and `supersedes` preserve revision rather than overwriting history;
+- `applies_to` retrieves the record from path, interface, or domain context;
+- `revisit_on` reopens review when a dependency or contradiction trigger changes;
+- `verifies` projects portions of the meaning into executable witnesses;
+- `relations` and `facets` are open vocabularies for challenge, support, confidence, local
+  terminology, or future repository-specific concepts.
+
+The index therefore knows where meaning applies and when to revisit it, but not what the prose
+means. A verifier failure challenges the interpretation; it cannot decide whether code, verifier,
+or interpretation should change. Likewise, strong evidence has no authority by itself, while a
+provisional decision may still be authoritative within its stated scope.
+
+`revisit_on: semantic:<id>` forms an explicit dependency edge. Retrieval follows those edges so a
+dependent interpretation is present when its premise is in context. Invalidation propagates only
+when the premise's envelope or canonical prose changes—not whenever ordinary code covered by that
+premise changes. Open `relations` never acquire this behavior implicitly.
+
+When a landing records `semantic:<id>`, its commit also carries `Invariant-Semantic:
+<id>@<sha256>`. The digest covers the normalized envelope and exact canonical Markdown section in
+the candidate tree. Landing-history validation rejects missing, malformed, or stale bindings.
+
+The older domain and contract registries remain supported as useful projections. They are not the
+universal ontology.
+
+### 7.2 Domains
 
 A domain is a stable semantic responsibility and retrieval index. It is not a directory, package,
 service, or ownership lock merely because those structures happen to align.
@@ -396,7 +462,7 @@ domains:
 The CLI validates identifiers, parent references, cycles, contract references, and architecture
 anchors. The semantic caller selects which domains apply to a task.
 
-### 7.2 Architecture
+### 7.3 Architecture
 
 Anchored Markdown sections hold rationale, responsibility boundaries, critical choices,
 consequences, and revision conditions. The Markdown remains canonical; registry pointers establish
@@ -412,7 +478,7 @@ provider-neutral. Revisit this if engines no longer share lifecycle or replaceme
 Architecture compliance requires semantic review against a concrete candidate. The CLI can locate
 affected sections and validate a review acknowledgement, but it cannot perform the review.
 
-### 7.3 Contracts
+### 7.4 Contracts
 
 A contract is an accepted executable promise relied on across domains.
 
@@ -437,7 +503,7 @@ possible interpretation. If a promise has no stable observable consequence, reco
 architecture or a constraint rather than pretending it is executable. The CLI selects and runs
 declared verifiers; it does not invent contracts or tests.
 
-### 7.4 Durable meaning
+### 7.5 Durable meaning
 
 The semantic reviewer asks:
 
@@ -458,48 +524,34 @@ The result supplied to verification is one of:
 These are semantic assertions with mechanical validation. A reach classification never manufactures
 the assertion.
 
-### 7.5 Task contract adapter
+### 7.6 Intent-brief adapter
 
-When `adapters.task_contract` is enabled, the host supplies a task-local contract:
+When `adapters.intent_brief` is enabled, `task begin` returns a `task.created` action whose response
+is a task-local prose brief:
 
 ```yaml
 version: 1
-adapter: task_contract
+adapter: intent_brief
 source_goal_digest: <goal-digest-from-task-begin>
-requirements:
-  goal: Restore active jobs when the browser is reopened.
-  outcomes:
-    - id: O1
-      prose: Non-terminal jobs are visible after reopening.
-  acceptance:
-    - id: A1
-      prose: Reopening restores each non-terminal job once.
-  constraints:
-    - id: C1
-      prose: Chat events remain browser-session scoped.
-verification:
-  level: targeted
-  rationale: Recovery behavior is bounded and has focused integration checks.
+brief: >-
+  Restore each non-terminal job once when the browser is reopened. Keep chat events scoped to the
+  current browser session and preserve existing recovery behavior for terminal jobs.
+questions:
+  - id: retention-window
+    prompt: Must recovery survive expiry of the existing retention window?
+    answer: No; preserve the existing window.
 ```
 
-Stable IDs provide task dependency points while prose remains first-class. The original request and
-its goal digest stay authoritative; the adapter records a derived expansion rather than silently
-replacing them. The contract is stored under
-`<git-common-dir>/invariant/tasks/<task-id>/adapters/task_contract/`, not accepted as repository
-governance.
+Questions are optional and may remain only when different answers would materially change the
+candidate or its acceptance. The brief is an expansion of the original goal, not a replacement for
+it and not repository governance. There are no outcome/acceptance/constraint mirrors or inert
+verification labels.
 
-The verification level is proportional to semantic reach and risk, not raw diff size:
-
-- `inspection` covers local presentation or documentation changes with directly observable results;
-- `targeted` covers bounded behavior with focused existing checks;
-- `broad` covers cross-domain, persistence, security, compatibility, or similarly high-risk work.
-
-At finish, the adapter creates a separate exact-tree review. Every required acceptance or outcome
-and every stated constraint must be satisfied and carry inspectable evidence. Evidence may be an
-existing test, command, schema, source inspection, screenshot, or human review. A task does not
-require a new persisted test merely because the adapter is enabled; durable repository contracts,
-by contrast, require reusable
-executable verifiers.
+At `candidate.evidenced`, the adapter receives the exact candidate tree, brief digest, goal digest,
+and evidence already captured by core. It returns one `accepted`, `rejected`, or `uncertain` verdict,
+one substantive summary, and genuine exceptions. It does not manually restate one result per
+sentence or transcribe evidence the CLI already owns. A changed candidate, goal, brief, or adapter
+implementation invalidates the review.
 
 ## 8. CLI contract
 
@@ -526,21 +578,23 @@ invariant config show
 invariant config init
 invariant config set <key> <value>
 invariant task begin <task-id> --goal <text> [semantic scope...]
-                     [--task-contract|--no-task-contract]
-                     [--task-contract-file <file>]
+                     [--intent-brief|--no-intent-brief]
+                     [--intent-brief-file <file>]
 invariant task status <task-id>
 invariant task check <task-id> [semantic scope...]
-invariant task finish <task-id> [--assessment <file>] [--check <locator>]...
-                      [--task-contract-review <file>]
+invariant task finish <task-id> [--check <locator>]...
+invariant task respond <task-id> <action-id> --input <file>
 invariant task continue <task-id> [--apply]
 invariant task invalidate <task-id>
-invariant task guidance <task-id>
+invariant task guidance <task-id> [--full]
 invariant task assessment <schema|example>
 invariant task assessment prepare <task-id> [--output <file>]
-invariant task contract <schema|example>
+invariant task intent-brief <schema|example>
 invariant state validate
 invariant context map
 invariant context rows <domain>...
+invariant context semantics [--path <path>]... [--domain <domain>]...
+                            [--interface <interface>]... [--at <commit>]
 invariant context digest [--at <commit>] <domain>...
 invariant context reach [--base <ref>] [--path <path>]...
                         [--interface <name>]... [--domain <id>]...
@@ -581,30 +635,26 @@ checks:
 
 The assessment records the caller's semantic decisions. It is not accepted governance and need not
 be committed. The CLI validates references, completeness, and consistency with the candidate.
-When no draft exists, `task finish` invokes assessment preparation itself. If no semantic completion
-is required, it proceeds in the same command. Otherwise it saves the draft and returns one typed
-object containing the draft, inferred values, remaining required decisions, recommended architecture
-reviews, and exact verifiers that will run. `task assessment prepare` exposes the same operation for
-explicit inspection or export. Schema and example commands expose the source-of-truth shapes used by
-validation.
+`task finish` owns assessment preparation. If no semantic judgment remains, it proceeds in the same
+command. Otherwise it returns action objects whose contexts contain the exact candidate tree,
+affected semantics, inferred governance, and captured evidence. `task assessment prepare` exposes
+the lower-level assessment for diagnostics and migration; normal hosts do not edit it.
 
-Adapter inputs do not extend this core assessment schema. When the task contract adapter is
-enabled, the preparation step—invoked automatically by `task finish` or explicitly through
-`task assessment prepare`—also writes a separate Git-local review:
+Adapter inputs do not extend the core assessment schema. When the intent-brief adapter is enabled,
+its final action accepts a separate whole-candidate review:
 
 ```yaml
 version: 1
-adapter: task_contract
+adapter: intent_brief
 source_goal_digest: <goal-digest>
+brief_digest: <brief-digest>
 candidate_tree: <exact-tree-id>
-results:
-  - satisfies: A1
-    disposition: satisfied
-    prose: The candidate restores each persisted non-terminal job once.
-    evidence: [test:tests/test_job_restore.py]
+verdict: accepted
+summary: The exact candidate satisfies the whole intent brief and the collected evidence supports it.
+exceptions: []
 ```
 
-`invariant task contract schema` exposes both the adapter contract and review shapes.
+`invariant task intent-brief schema` exposes both adapter response shapes.
 
 ### 8.2 Structured output
 
@@ -616,17 +666,45 @@ JSON uses one envelope:
 
 ```json
 {
-  "protocol": 1,
-  "command": "context.reach",
+  "protocol": 2,
+  "command": "task.finish",
   "status": "ok",
-  "result": {},
+  "outcome": "needs_input",
+  "result": {
+    "task": {
+      "id": "example",
+      "stage": "awaiting-review",
+      "goal_digest": "<goal-digest>",
+      "scope": {"paths": ["src/example.py"], "interfaces": [], "domains": []},
+      "boundary": "no-record",
+      "integration": {"target": "main", "base": "<base-commit>"},
+      "work": {"branch": "invariant/work/example-<nonce>", "worktree": "<path>"},
+      "adapters": [],
+      "actions": [
+        {
+          "id": "core:candidate-review",
+          "adapter": "core",
+          "phase": "candidate.evidenced",
+          "kind": "review_semantics",
+          "blocking": true,
+          "prompt": "Review the exact candidate against the affected canonical prose.",
+          "input_schema": {},
+          "context": {"candidate_tree": "<tree>"}
+        }
+      ],
+      "artifacts": [],
+      "completion": {"commit": ""}
+    },
+    "candidate": {"tree": "<tree>", "evidence": []}
+  },
   "diagnostics": []
 }
 ```
 
-Stable diagnostic codes carry detail such as changed governance, missing review, stale evidence,
-verification failure, conflict, or concurrent ref movement. Applications must use codes and fields,
-not parse human prose.
+`outcome` distinguishes completed work, work ready for implementation, input suspension, and
+assisted approval from actual failures. Stable diagnostic codes carry changed governance, stale
+evidence, verification failure, conflict, or concurrent ref movement. Applications must use fields,
+action IDs, and schemas—not parse human prose or inspect Git-common runtime paths.
 
 Process exits remain deliberately small:
 
@@ -636,7 +714,45 @@ Process exits remain deliberately small:
 
 Detailed distinctions belong in structured diagnostics rather than a growing exit-code taxonomy.
 
-### 8.3 Output discipline
+### 8.3 Lifecycle hook protocol
+
+The hook surface contains only two blocking semantic suspension points. Mechanical steps are not
+hooks: keeping them in core prevents an adapter from replacing branch isolation, evidence
+collection, verification, or compare-and-swap landing.
+
+| Phase | Ordering guarantee | Context | Allowed result |
+|---|---|---|---|
+| `task.created` | Receipt, target, base, branch name, and work location have been selected; implementation has not begun | task, original goal, goal digest | private state, artifacts, or blocking response actions |
+| `candidate.evidenced` | One exact candidate tree has been constructed and its applicable mechanical observations captured; integration has not moved | task, goal digest, candidate tree, evidence receipts | private state, artifacts, or blocking response actions |
+
+Each action contains a stable ID, owner, phase, kind, human prompt, JSON Schema, blocking flag, and
+candidate-specific context. The CLI stores it in the active receipt and returns it in typed output.
+`task respond` resolves exactly one ID. Adapter response files are transported through the CLI and
+stored privately; they are never accepted governance merely because an adapter produced them.
+
+Hook execution follows these rules:
+
+1. Replaying a phase with unchanged context must return an equivalent pending request or recognize
+   the already accepted artifact.
+2. A response is checked against every available causal binding: goal digest at intake; goal,
+   brief, and candidate digests at final review.
+3. The task cannot implement while a blocking `task.created` action remains. Resolving the last one
+   advances to implementation without a second begin.
+4. The integration ref cannot move while a blocking `candidate.evidenced` action remains. Resolving
+   the last one continues to landing automatically, except for an independent assisted-execution
+   pause.
+5. Changing a candidate while review is pending causes `task finish` to construct new evidence and
+   invalidate the old candidate response. Rejection or uncertainty retains the worktree for repair.
+6. An adapter owns only its private state and action semantics. It cannot choose lifecycle stages,
+   invoke Git transitions, mark mechanical evidence passed, or authorize repository-wide meaning.
+7. Core semantic review uses the same action transport, so hosts need one response API rather than
+   a special assessment-file editing path.
+
+There is intentionally no blocking post-update hook: after compare-and-swap succeeds, an optional
+integration must not retroactively make the local landing ambiguous. Notifications or publication
+beyond the separately configured upstream push belong to the host.
+
+### 8.4 Output discipline
 
 - Standard output contains only the selected result format.
 - Successful verifier output is retained in ignored Git-local logs and summarized rather than
@@ -680,14 +796,16 @@ A candidate is identified by exact Git object identity. Initial candidate forms 
 
 Verification:
 
-1. captures the candidate tree;
+1. constructs and captures the candidate commit and tree;
 2. computes actual changed paths and section reach;
 3. validates tracked Invariant state;
-4. checks the supplied domains and governance references;
-5. requires acknowledgements for every affected architecture section;
-6. selects and runs affected contract verifiers and supplied repository checks;
-7. validates the boundary disposition;
-8. returns evidence bound to the candidate tree and CLI version.
+4. selects and runs affected semantic/contract verifiers and supplied repository checks;
+5. records command identity, working directory, executable/environment fingerprints, timestamps,
+   duration, status, exit code, output digest, and retained log;
+6. presents those observations with the exact candidate to semantic review;
+7. validates the resulting authority, architecture acknowledgements, governance references, and
+   boundary disposition;
+8. reruns volatile checks or reuses only exact-tree evidence whose declared cache policy permits it.
 
 Standalone verification never updates a ref. Within `task finish`, verification is the mandatory
 precondition to the same atomic landing operation.
@@ -754,7 +872,7 @@ starts from the requested behavior, traces it through ownership, state, interfac
 and consumers, and expands only while new evidence could change implementation, durable-boundary
 judgment, or verification.
 
-Typed outcomes, acceptance IDs, paths, interfaces, and domains are retrieval and invalidation
+Stable semantic IDs, paths, interfaces, domains, and revisit triggers are retrieval and invalidation
 coordinates. They do not bound the form of semantic reasoning or replace its prose. The semantic
 pass keeps requested meaning, accepted repository meaning, and observed behavior distinct; records
 disagreement rather than silently choosing a source; and treats bounded absence as evidence only
@@ -762,11 +880,13 @@ when the searched scope and exact tree are explicit.
 
 `task guidance` compiles the selected context rather than merely printing locators. It includes:
 
-- the task's free-form expanded requirements, when enabled;
+- the task's prose intent brief, when enabled;
 - selected durable rows and their anchored architecture sections at the captured integration head;
 - the observation, basis, evidence, searched scope, and relevance of open discoveries intersecting
-  the task;
 - the prose guidance applicable to the current stage.
+
+Default guidance is the concise stage core. `--full` adds repository archaeology, the detailed
+semantic reasoning handbook, discovery/coordination material, and protocol reference.
 
 Architecture is read from the captured accepted ground so candidate edits cannot silently rewrite
 the premise used to interpret their own change. Discoveries remain non-authoritative and may evolve
@@ -827,8 +947,10 @@ guidance do not evict the brief cache: they are recomputed or reloaded independe
 hash skill packages. Skill loading and context compaction belong to the host. Verification evidence
 may be reused only for the exact tree and base, verification mechanics version, runner configuration,
 working directory, executable environment, and verifier identity that produced it; changing the
-candidate always invalidates that evidence. These receipts and their full logs live under the
-Git-local Invariant runtime. Reach, semantic reviews, candidate state, prospective-tree construction,
+candidate always invalidates that evidence. Active receipts and logs live under Git-local Invariant
+runtime. On successful landing, the task receipt, evidence, brief, and reviews are archived under
+`invariant/history/tasks/<task>/<landed-commit>/`; active task state disappears. Reach, semantic
+reviews, candidate state, prospective-tree construction,
 and compare-and-swap target checks are always recomputed even when an expensive verifier result is
 reused. Volatile runners use `cache: never`.
 
@@ -842,10 +964,11 @@ With automatic execution, the CLI:
 
 1. opens or refreshes the task receipt;
 2. creates or reuses an isolated linked worktree without moving the integration checkout;
-3. returns control to the host for implementation;
-4. resumes at `task finish` and advances through candidate construction, verification, and local
-   landing without routine confirmations;
-5. stops only for missing semantic authority, failed checks, conflict, concurrent movement, or
+3. exposes any `task.created` action and then returns control for implementation;
+4. resumes at `task finish`, captures candidate-bound evidence, and exposes any
+   `candidate.evidenced` actions;
+5. advances through final verification and local landing after the last action is resolved;
+6. stops only for missing semantic authority, failed checks, conflict, concurrent movement, or
    unauthorized external effects.
 
 ### 14.2 Assisted execution
@@ -857,15 +980,17 @@ local ref update.
 Both profiles preserve the same receipts, branches, candidate construction, checks, and landing
 guarantees. The distinction is only where the CLI pauses.
 
-### 14.3 Task contract adapter
+### 14.3 Intent-brief adapter
 
-With the bundled adapter enabled, `task begin` pauses at `awaiting-task-contract` until the host
-supplies a valid local contract. `task finish` publishes the exact candidate tree and pauses at
-`awaiting-task-contract-review` until every required acceptance ID is conclusively satisfied with
-evidence for that tree. A changed tree regenerates and invalidates the review.
+With the bundled adapter enabled, the single `task begin` creates or reserves normal isolated work
+and returns a `task.created` action. The task enters `briefing` only while material intent input is
+pending; `task respond` advances it without replaying begin. `task finish` then captures evidence
+for the exact candidate and returns a `candidate.evidenced` whole-intent review. A changed tree,
+brief, goal, or adapter implementation invalidates the review.
 
-When disabled, both adapter hooks disappear together. Briefing, receipts, generated branches,
-durable-meaning review, exact-tree verification, and atomic landing remain mandatory core behavior.
+When disabled, those adapter actions disappear. Core semantic review still uses the same action
+transport when durable meaning is affected. Receipts, generated branches, candidate-bound evidence,
+exact-tree verification, and atomic landing remain mandatory core behavior.
 
 ## 15. Skills
 
@@ -940,8 +1065,10 @@ The first CLI release is complete when:
 - no context or verification command depends on a loaded skill;
 - context mechanics do not depend on coordination runtime;
 - semantic selections enter through explicit arguments or a versioned assessment document;
-- prose remains first-class while optional stable outcome and acceptance IDs provide dependency
-  points when enabled;
+- canonical prose remains first-class while the semantic index supplies only identity, authority,
+  applicability, revisit, verifier, relation, and supersession coordinates;
+- lifecycle hooks return typed actions and never create a second task lifecycle;
+- candidate reviews consume CLI-captured evidence instead of manually transcribing it;
 - discoveries represent observations, basis, relevance, and broad resolutions without requiring a
   contract;
 - exact-tree verification can run without updating a ref;

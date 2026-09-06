@@ -65,22 +65,34 @@ invariant --format json task begin fix-job-recovery \
   --goal "Restore active jobs after restart" \
   --path src/jobs.py
 
-# Commit in the returned WORKTREE, then finish from LIFECYCLE-ROOT.
+# Commit in the returned worktree, then finish from the repository checkout.
 invariant --format json task finish fix-job-recovery
 ```
 
 For a routine local candidate, `task finish` infers the assessment and continues through exact-tree
-verification and landing. If semantic decisions remain, it saves an editable draft in Git-local
-runtime and returns all missing requirements together. Complete the draft and rerun the same
-command. `task assessment prepare` remains available for explicit inspection. A failed finish
-preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
+verification and landing. If semantic decisions remain, it returns one or more typed `actions`
+with `outcome: needs_input`. Submit each response through the action ID; do not edit runtime files:
 
-When `adapters.task_contract` is enabled, `task begin` first asks the agent for a local task
-contract. The adapter preserves the original goal digest, expands the request, and records an
-`inspection`, `targeted`, or `broad` verification level. After implementation, `task finish` also
-writes a candidate-bound review beside that contract. The agent resolves its results
-with proportional evidence before finishing; a local button-label change may use source or visual
-inspection rather than a new persisted test.
+```bash
+invariant --format json task respond fix-job-recovery core:candidate-review \
+  --input semantic-review.yml
+```
+
+`task assessment prepare` remains available for low-level inspection. A failed finish
+preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
+Successful completion archives the brief, review packet, evidence, and final receipt under
+Git-common Invariant history keyed by the landed commit.
+
+When `adapters.intent_brief` is enabled, the single `task begin` creates the normal isolated worktree
+and returns a `task.created` action. The adapter writes one prose brief and asks only questions whose
+answers would materially change implementation or acceptance. After implementation, `task finish`
+collects mechanical evidence and returns a `candidate.evidenced` action. Its response is one verdict
+over the whole brief—not a matrix of placeholders or manually transcribed check results.
+
+These are hook actions, not adapter-owned stages. The core still owns receipt freshness, branch
+isolation, candidate construction, exact-tree verification, assisted transitions, compare-and-swap
+landing, and cleanup. A changed goal, brief, adapter implementation, or candidate tree invalidates
+the corresponding response.
 
 ## Governance passes
 
@@ -127,9 +139,17 @@ invariant evidence audit schema
 invariant evidence audit example
 invariant task assessment schema
 invariant task assessment example
-invariant task contract schema
-invariant task contract example
+invariant task intent-brief schema
+invariant task intent-brief example
+invariant context semantics --path src/example.py
 ```
 
-For automation, `--format json` emits the compact protocol envelope. Add `--verbose` only when the
-full human-readable rendering is also needed.
+`context semantics` also accepts repeated `--domain` and `--interface` coordinates plus `--at` for
+historical retrieval. Scoped queries return applicable active records; an unscoped query returns the
+full index, including superseded records. JSON results retain open `relations` and `facets` and carry
+the canonical-prose digest.
+
+For automation, `--format json` emits protocol 2 with typed task state, actions, artifacts, and an
+`outcome` such as `ready`, `needs_input`, or `awaiting_approval`. Add `--verbose` only when the full
+human-readable rendering is also needed. `task guidance` is concise by default; use
+`task guidance <id> --full` when the detailed reasoning handbook is genuinely useful.

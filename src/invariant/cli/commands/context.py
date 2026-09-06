@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from invariant.errors import Blocked
+from invariant.cli.output import CommandResult
 from invariant.mechanics import git, governance
 
 
@@ -23,6 +24,14 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     rows = commands.add_parser("rows")
     rows.add_argument("domains", nargs="*")
     rows.set_defaults(_handler=_rows, _command="context.rows")
+    semantics = commands.add_parser(
+        "semantics", help="Retrieve semantic records by path, interface, or domain"
+    )
+    semantics.add_argument("--path", action="append", default=[])
+    semantics.add_argument("--domain", action="append", default=[])
+    semantics.add_argument("--interface", action="append", default=[])
+    semantics.add_argument("--at")
+    semantics.set_defaults(_handler=_semantics, _command="context.semantics")
     digest = commands.add_parser("digest")
     digest.add_argument("domains", nargs="*")
     digest.add_argument("--at")
@@ -56,6 +65,33 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def _rows(args: argparse.Namespace) -> list[str]:
     return governance.display_rows(git.root(), args.domains)
+
+
+def _semantics(args: argparse.Namespace) -> CommandResult:
+    repo = git.root()
+    if args.path or args.domain or args.interface:
+        records = governance.applicable_semantic_records(
+            repo,
+            paths=args.path,
+            selected_domains=args.domain,
+            interfaces=args.interface,
+            at=args.at,
+        )
+    else:
+        records = governance.semantic_records(repo, args.at)
+    values = [
+        {
+            **record.as_dict(),
+            "digest": governance.semantic_record_digest(repo, record.identifier, args.at),
+        }
+        for record in records
+    ]
+    lines = [
+        f"SEMANTIC: {item['id']} ({item['status']}) — {item['document']}"
+        for item in values
+    ]
+    lines.append(f"SEMANTICS: {len(values)}")
+    return CommandResult(lines, {"semantics": values})
 
 
 def _digest(args: argparse.Namespace) -> list[str]:

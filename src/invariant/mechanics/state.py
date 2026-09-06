@@ -5,10 +5,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from invariant.mechanics import config, git
+from invariant.mechanics import config, git, governance
 from invariant.mechanics.documents import load_yaml
 from invariant.mechanics.governance import architecture_refs, refs
 from invariant.semantics.discovery import Discovery, validate_shape
+from invariant.semantics.records import SemanticRecord, parse_document
 
 
 def _valid_id(value: Any) -> bool:
@@ -69,6 +70,19 @@ def _surface(repo: Path, value: str, label: str) -> list[str]:
     if value.startswith("interface:") and value != "interface:":
         return []
     return [f"{label} surface '{value}' must use repo: or interface:"]
+
+
+def _revisit_coordinate(value: str, label: str) -> list[str]:
+    """Validate a future invalidation trigger; the named path may not exist yet."""
+
+    if value.startswith("repo:"):
+        path = value.removeprefix("repo:").split("#", 1)[0]
+        relative = Path(path)
+        if path and not relative.is_absolute() and ".." not in relative.parts:
+            return []
+    elif value.startswith("interface:") and value != "interface:":
+        return []
+    return [f"{label} revisit coordinate '{value}' must use a safe repo: or interface: locator"]
 
 
 def _verifier(repo: Path, value: str, label: str) -> list[str]:
@@ -238,7 +252,8 @@ def _landing_history(repo: Path) -> list[str]:
     gap_tip = ""
     for commit in commits.stdout.splitlines():
         boundary = git.trailers(repo, commit, "Invariant-Boundary")
-        governance = git.trailers(repo, commit, "Invariant-Governance")
+        governance_refs = git.trailers(repo, commit, "Invariant-Governance")
+        semantic_attestations = git.trailers(repo, commit, "Invariant-Semantic")
         covers = git.trailers(repo, commit, "Invariant-Covers")
         label = f"landing history commit {commit[:12]}"
         if not adopted and boundary:
@@ -258,8 +273,41 @@ def _landing_history(repo: Path) -> list[str]:
         if value not in {"no-record", "recorded"} and not re.fullmatch(r"audit:[A-Za-z0-9._-]+", value):
             errors.append(f"{label} has an invalid Invariant-Boundary disposition")
             continue
-        if value == "recorded" and not governance:
+        if value == "recorded" and not governance_refs:
             errors.append(f"{label} uses Invariant-Boundary recorded without Invariant-Governance")
+        semantic_refs = {
+            reference.removeprefix("semantic:")
+            for reference in governance_refs
+            if reference.startswith("semantic:")
+        }
+        parsed_attestations: dict[str, str] = {}
+        for attestation in semantic_attestations:
+            identifier, separator, digest = attestation.partition("@")
+            if (
+                not separator
+                or not git.valid_id(identifier)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                errors.append(f"{label} has invalid Invariant-Semantic attestation '{attestation}'")
+                continue
+            if identifier in parsed_attestations:
+                errors.append(f"{label} attests semantic record '{identifier}' more than once")
+            parsed_attestations[identifier] = digest
+        for identifier in sorted(semantic_refs):
+            if identifier not in parsed_attestations:
+                errors.append(f"{label} does not bind semantic:{identifier} to canonical prose")
+                continue
+            try:
+                expected_digest = governance.semantic_record_digest(repo, identifier, commit)
+            except InvariantError as exc:
+                errors.append(f"{label} {exc.message.removeprefix('Invariant: ')}")
+                continue
+            if parsed_attestations[identifier] != expected_digest:
+                errors.append(f"{label} has stale semantic attestation for '{identifier}'")
+        for identifier in sorted(set(parsed_attestations) - semantic_refs):
+            errors.append(
+                f"{label} attests semantic record '{identifier}' without Invariant-Governance"
+            )
         if last:
             if gap:
                 parent = git.resolve(repo, f"{commit}^1") or ""
@@ -311,6 +359,7 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
     discovery_rows: list[tuple[Path, Discovery, dict[str, Any]]] = []
     audit_rows: list[tuple[Path, dict[str, Any]]] = []
     observation_rows: list[tuple[Path, dict[str, Any]]] = []
+    semantic_rows: list[SemanticRecord] = []
 
     for path, raw in parsed.items():
         relative = path.relative_to(repo).as_posix() if repo in path.parents else path.as_posix()
@@ -319,6 +368,11 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
                 config.resolve(repo)
             except Exception as exc:
                 failures.append(f"{relative} {str(exc).removeprefix('Invariant: ')}")
+        elif relative == ".invariant/SEMANTICS.yml":
+            try:
+                semantic_rows.extend(parse_document(raw))
+            except InvariantError as exc:
+                failures.append(f"{relative} {exc.message.removeprefix('Invariant: ')}")
         elif relative == ".invariant/DOMAINS.yml":
             values = raw.get("domains")
             if not isinstance(values, list) or not values:
@@ -346,16 +400,65 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
             observation_rows.append((path, raw))
         else:
             failures.append(
-                f"{relative} is not a version-1 config, domain, contract, legacy constraint, audit, discovery, or observation file"
+                f"{relative} is not a version-1 config, semantic record, domain, contract, legacy constraint, audit, discovery, or observation file"
             )
 
     domain_ids = [str(row.get("id", "")) for row in domain_rows]
     contract_ids = [str(row.get("id", "")) for row in contract_rows]
     constraint_ids = [str(row.get("id", "")) for row in constraint_rows]
     discovery_ids = [row.identifier for _, row, _ in discovery_rows]
+    semantic_ids = [row.identifier for row in semantic_rows]
     for name, values in (("domain", domain_ids), ("contract", contract_ids), ("constraint", constraint_ids), ("discovery", discovery_ids)):
         for value in sorted({item for item in values if values.count(item) > 1}):
             failures.append(f"duplicate {name} '{value}'")
+
+    semantic_by_id = {row.identifier: row for row in semantic_rows}
+    for row in semantic_rows:
+        label = f".invariant/SEMANTICS.yml:{row.identifier}"
+        failures.extend(_authority(repo, row.authority, label))
+        failures.extend(_architecture(repo, row.document, label))
+        if not row.applies_to and not row.revisit_on:
+            failures.append(f"{label} requires applies_to or revisit_on coordinates")
+        for locator in row.applies_to:
+            if locator.startswith("domain:"):
+                domain = locator.removeprefix("domain:")
+                if domain not in domain_ids:
+                    failures.append(f"{label} references missing domain '{domain}'")
+            elif locator.startswith(("repo:", "interface:")):
+                failures.extend(_surface(repo, locator, label))
+            else:
+                failures.append(
+                    f"{label} applicability '{locator}' must use repo:, interface:, or domain:"
+                )
+        for locator in row.revisit_on:
+            if locator.startswith("semantic:"):
+                target = locator.removeprefix("semantic:")
+                if target not in semantic_ids:
+                    failures.append(f"{label} revisits missing semantic record '{target}'")
+            elif locator.startswith(("repo:", "interface:")):
+                failures.extend(_revisit_coordinate(locator, label))
+            else:
+                failures.append(
+                    f"{label} revisit coordinate '{locator}' must use repo:, interface:, or semantic:"
+                )
+        for locator in row.verifies:
+            failures.extend(_verifier(repo, locator, label))
+        for target in row.supersedes:
+            if target == row.identifier:
+                failures.append(f"{label} cannot supersede itself")
+            elif target not in semantic_by_id:
+                failures.append(f"{label} supersedes missing semantic record '{target}'")
+            elif semantic_by_id[target].status != "superseded":
+                failures.append(
+                    f"{label} supersedes '{target}', but that record is not marked superseded"
+                )
+        for relation, targets in row.relations.items():
+            for target in targets:
+                semantic = target.removeprefix("semantic:")
+                if target.startswith("semantic:") and semantic not in semantic_by_id:
+                    failures.append(
+                        f"{label} relation '{relation}' references missing semantic record '{semantic}'"
+                    )
 
     parents: dict[str, str] = {}
     for row in domain_rows:

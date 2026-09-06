@@ -12,7 +12,16 @@ def agent_workflow() -> str:
     return read("bootstrap")
 
 
-def for_stage(stage: str) -> str:
+def for_stage(stage: str, *, full: bool = False) -> str:
+    if not full:
+        names = (
+            ["land", "human-ergonomics"]
+            if stage in {"awaiting-review", "awaiting-landing"}
+            else ["brief", "human-ergonomics"]
+            if stage in {"briefing", "awaiting-branch"}
+            else ["brief", "land", "human-ergonomics"]
+        )
+        return "\n\n".join(read(name) for name in names)
     if stage == "awaiting-landing":
         names = ["semantic-reasoning", "repository-archaeology", "land", "human-ergonomics"]
     elif stage in {"implementing", "implementing-unborn"}:

@@ -13,6 +13,7 @@ from invariant.errors import InvariantError
 class CommandResult:
     lines: list[str]
     data: dict[str, Any] | list[Any]
+    outcome: str = "completed"
 
 
 def _records(lines: list[str]) -> list[dict[str, str]]:
@@ -40,9 +41,10 @@ def emit_success(
         print(
             json.dumps(
                 {
-                    "protocol": 1,
+                    "protocol": 2,
                     "command": command,
                     "status": "ok",
+                    "outcome": result.outcome if isinstance(result, CommandResult) else "completed",
                     "result": payload,
                     "diagnostics": [],
                 },
@@ -68,9 +70,10 @@ def emit_error(
         print(
             json.dumps(
                 {
-                    "protocol": 1,
+                    "protocol": 2,
                     "command": command,
                     "status": status,
+                    "outcome": "blocked" if status == "blocked" else "failed",
                     "result": result,
                     "diagnostics": [{"code": error.code, "message": error.message}],
                 },

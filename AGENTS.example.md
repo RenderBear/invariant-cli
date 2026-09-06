@@ -24,13 +24,14 @@ invariant --format json task begin <task-id> --goal <text> \
   [--path <path>]... [--interface <name>]... [--domain <id>]...
 ```
 
-Implement and commit only in the returned `WORKTREE`; Invariant leaves `LIFECYCLE-ROOT` on the
-integration branch so other tasks can start concurrently. Run `invariant task guidance <task-id>`
-whenever the task is resumed, context is compacted, or detailed semantic guidance is needed.
+Implement and commit only in the returned `WORKTREE`; Invariant leaves the primary repository
+checkout on the integration branch so other tasks can start concurrently. Run `invariant task
+guidance <task-id>` whenever the task is resumed or context is compacted; add `--full` only when the
+detailed reasoning handbook is needed.
 
 ### Finish
 
-From `LIFECYCLE-ROOT`, run:
+From the primary repository checkout, run:
 
 ```bash
 invariant --format json task finish <task-id>
@@ -38,13 +39,13 @@ invariant --format json task finish <task-id>
 
 For routine candidates, `task finish` prepares the assessment, verifies the exact prospective tree,
 compare-and-swaps the local integration ref, and cleans the task worktree in one command. If
-semantic decisions or adapter evidence remain, it saves complete drafts and returns every missing
-requirement together. Review and complete those files, then rerun the same command. A failed finish
-keeps the integration ref unchanged and retains the task worktree for recovery.
+semantic decisions or adapter review remain, it returns typed actions with `outcome: needs_input`.
+Resolve each with `invariant task respond <task-id> <action-id> --input <file>`; never edit task
+runtime. A failed finish keeps the integration ref unchanged and retains the worktree for recovery.
 
 Use `invariant task status <task-id>` for lifecycle state and `invariant task guidance <task-id>` for
 the complete stage-specific protocol, locator forms, architecture context, and human escalation
-rules. Use the published `evidence audit schema`, `task assessment schema`, and `task contract
+rules. Use the published `evidence audit schema`, `task assessment schema`, and `task intent-brief
 schema` commands instead of inspecting Invariant's implementation.
 
 ### Governance passes

@@ -8,7 +8,7 @@ Use locator namespaces consistently. Validation does not convert one semantic ob
 |---|---|
 | Authority source | `user:task:<id>#<turn>`, `user:url:https://...`, `design:task:<id>`, `design:url:https://...`, `architecture:repo:<path>#<anchor>`, or `design:repo:<path>#<anchor>` |
 | Architecture reference | `architecture:<markdown-path>#<heading-slug>` |
-| Governance reference | `domain:<id>`, `contract:<id>`, `constraint:<id>`, or an exact registered architecture reference |
+| Governance reference | `semantic:<id>`, `domain:<id>`, `contract:<id>`, `constraint:<id>`, or an exact registered architecture reference |
 | Surface | `repo:<path>` or `interface:<name>` |
 | Evidence | `repo:<path>`, `commit:<ref>`, `interface:<name>`, `task:<id>`, or `url:https://...` |
 | Verifier | `command:<executable-path>`, `test:<test-path>`, `schema:<schema-path>`, or `runner:<name>#<target>` |
@@ -34,11 +34,11 @@ records. A later pass may instead reconcile existing records with changed reposi
 ### Prepare structured inputs
 
 Before writing an audit, load `invariant evidence audit schema`. Run `invariant task finish
-<task-id>` after committing; it prepares routine assessments automatically and returns one complete
-missing-requirements object when semantic input remains. Use `invariant task assessment prepare
-<task-id>` for explicit inspection and consult `invariant task assessment schema` when needed. When
-the task contract adapter is enabled, load `invariant task contract schema`; keep its contract
-and candidate-bound review separate from the repository semantic assessment.
+<task-id>` after committing; it prepares routine assessments, collects exact-tree evidence, and
+returns typed actions when semantic input remains. Resolve those actions only through `invariant
+task respond <task-id> <action-id> --input <file>`. Use `invariant task assessment prepare <task-id>`
+for explicit low-level inspection. When the intent-brief adapter is enabled, load `invariant task
+intent-brief schema`; keep its task-local prose separate from repository governance.
 
-Prefer compact JSON for automation. Consume the complete `required`, `inferred`, and `will_run`
-payload in one pass rather than probing the protocol one validation error at a time.
+Prefer compact JSON for automation. Treat `status: ok, outcome: needs_input` as a successful
+suspension for judgment, consume every returned action, and never infer lifecycle state from prose.

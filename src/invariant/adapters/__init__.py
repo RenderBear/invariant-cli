@@ -2,19 +2,14 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
-from typing import Mapping
+from typing import Any, Mapping
 
-from invariant.adapters.base import AdapterGate, TaskAdapter
-from invariant.adapters.task_contract.adapter import (
-    TaskContractAdapter,
-    contract_schema,
-    examples,
-    review_schema,
-)
+from invariant.adapters.base import HOOK_PHASES, HookContext, HookRequest, TaskAdapter
+from invariant.adapters.intent_brief.adapter import IntentBriefAdapter
 from invariant.errors import InvariantError
 
 
-_REGISTRY: dict[str, TaskAdapter] = {"task_contract": TaskContractAdapter()}
+_REGISTRY: dict[str, TaskAdapter] = {"intent_brief": IntentBriefAdapter()}
 
 
 def validate(ids: tuple[str, ...]) -> None:
@@ -45,7 +40,7 @@ def enabled(receipt: Mapping[str, object]) -> tuple[str, ...]:
     return tuple(str(item) for item in value) if isinstance(value, list) else ()
 
 
-def states(receipt: Mapping[str, object]) -> dict[str, dict[str, object]]:
+def states(receipt: Mapping[str, object]) -> dict[str, dict[str, Any]]:
     value = receipt.get("adapter_state")
     if not isinstance(value, dict):
         return {}
@@ -56,81 +51,70 @@ def states(receipt: Mapping[str, object]) -> dict[str, dict[str, object]]:
     }
 
 
-def begin(
+def pending(receipt: Mapping[str, object]) -> list[dict[str, Any]]:
+    value = receipt.get("hook_requests", [])
+    return [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
+def run_hook(
     task_root: Path,
     receipt: dict[str, object],
-    inputs: Mapping[str, str | None],
-) -> AdapterGate | None:
+    phase: str,
+    inputs: Mapping[str, str | None] | None = None,
+    *,
+    candidate_tree: str | None = None,
+    evidence: tuple[dict[str, Any], ...] = (),
+) -> list[HookRequest]:
+    """Run all adapters for a lifecycle phase and collect every request.
+
+    Requests are data, not exceptions or lifecycle stages.  The lifecycle may
+    choose whether blocking requests prevent its next transition.
+    """
+
     identifiers = enabled(receipt)
     validate(identifiers)
+    if phase not in HOOK_PHASES:
+        raise InvariantError(f"Invariant: unknown lifecycle hook phase '{phase}'")
     current = states(receipt)
+    requests: list[HookRequest] = []
+    previous_artifacts = receipt.get("hook_artifacts", [])
+    artifacts: dict[tuple[str, str], dict[str, Any]] = {
+        (str(item.get("adapter") or ""), str(item.get("id") or "")): dict(item)
+        for item in previous_artifacts
+        if isinstance(item, dict)
+    } if isinstance(previous_artifacts, list) else {}
+    context = HookContext(
+        task_root=task_root,
+        task=str(receipt.get("task") or ""),
+        phase=phase,
+        goal=str(receipt.get("goal") or ""),
+        goal_digest=str(receipt.get("goal_digest") or ""),
+        candidate_tree=candidate_tree,
+        evidence=evidence,
+    )
     for identifier in identifiers:
-        state, gate = _REGISTRY[identifier].begin(
-            task_root,
-            str(receipt.get("goal_digest") or ""),
-            inputs.get(identifier),
+        result = _REGISTRY[identifier].handle(
+            context,
             current.get(identifier),
+            (inputs or {}).get(identifier),
         )
-        if gate:
-            receipt["adapter_state"] = current
-            return gate
-        if state is not None:
-            current[identifier] = state
+        current[identifier] = result.state
+        for request in result.requests:
+            if request.adapter != identifier or request.phase != phase:
+                raise InvariantError(
+                    f"Invariant: adapter '{identifier}' returned a request for the wrong hook"
+                )
+            requests.append(request)
+        for artifact in result.artifacts:
+            value = {**artifact, "adapter": identifier, "phase": phase}
+            artifacts[(identifier, str(value.get("id") or value.get("kind") or ""))] = value
+    request_ids = [request.id for request in requests]
+    if len(request_ids) != len(set(request_ids)):
+        raise InvariantError("Invariant: lifecycle hook request ids must be unique")
     receipt["adapter_state"] = current
-    return None
-
-
-def prepare_candidate(
-    task_root: Path,
-    receipt: dict[str, object],
-    candidate_tree: str,
-) -> list[dict[str, object]]:
-    identifiers = enabled(receipt)
-    validate(identifiers)
-    current = states(receipt)
-    missing = [identifier for identifier in identifiers if identifier not in current]
-    if missing:
-        raise InvariantError(
-            f"Invariant: task has no captured state for adapter '{missing[0]}'",
-            code="corrupt_receipt",
-        )
-    return [
-        _REGISTRY[identifier].prepare_candidate(
-            task_root,
-            str(receipt.get("goal_digest") or ""),
-            candidate_tree,
-            current[identifier],
-        )
-        for identifier in identifiers
-    ]
-
-
-def review_candidate(
-    task_root: Path,
-    receipt: dict[str, object],
-    candidate_tree: str,
-    inputs: Mapping[str, str | None],
-) -> AdapterGate | None:
-    identifiers = enabled(receipt)
-    validate(identifiers)
-    current = states(receipt)
-    missing = [identifier for identifier in identifiers if identifier not in current]
-    if missing:
-        raise InvariantError(
-            f"Invariant: task has no captured state for adapter '{missing[0]}'",
-            code="corrupt_receipt",
-        )
-    for identifier in identifiers:
-        gate = _REGISTRY[identifier].review_candidate(
-            task_root,
-            str(receipt.get("goal_digest") or ""),
-            candidate_tree,
-            inputs.get(identifier),
-            current[identifier],
-        )
-        if gate:
-            return gate
-    return None
+    receipt["hook_requests"] = [request.as_dict() for request in requests]
+    receipt["hook_artifacts"] = list(artifacts.values())
+    return requests
 
 
 def context(task_root: Path, receipt: dict[str, object]) -> list[str]:
@@ -146,59 +130,22 @@ def context(task_root: Path, receipt: dict[str, object]) -> list[str]:
     return output
 
 
-def guidance(receipt: dict[str, object], stage: str) -> list[str]:
+def guidance(receipt: dict[str, object], phase: str) -> list[str]:
     output: list[str] = []
     validate(enabled(receipt))
     for identifier in enabled(receipt):
-        text = _REGISTRY[identifier].guidance(stage)
+        content = _REGISTRY[identifier].guidance(phase)
         if output:
             output.append("")
-        output.extend(text.splitlines())
+        output.extend(content.splitlines())
     return output
 
 
-def gate_for_stage(receipt: dict[str, object], stage: str) -> AdapterGate | None:
-    for identifier in enabled(receipt):
-        adapter = _REGISTRY[identifier]
-        if stage == getattr(adapter, "begin_stage", ""):
-            return AdapterGate(
-                stage,
-                f"Invariant: task needs input for the {identifier} adapter",
-                "adapter_input_required",
-            )
-        if stage == getattr(adapter, "review_stage", ""):
-            return AdapterGate(
-                stage,
-                f"Invariant: task needs candidate review from the {identifier} adapter",
-                "adapter_review_required",
-            )
-    return None
+def schemas(identifier: str = "intent_brief") -> dict[str, Any]:
+    validate((identifier,))
+    return _REGISTRY[identifier].schemas()
 
 
-def is_review_stage(receipt: dict[str, object], stage: str) -> bool:
-    return any(
-        stage == getattr(_REGISTRY[identifier], "review_stage", "")
-        for identifier in enabled(receipt)
-    )
-
-
-def is_begin_stage(receipt: dict[str, object], stage: str) -> bool:
-    return any(
-        stage == getattr(_REGISTRY[identifier], "begin_stage", "")
-        for identifier in enabled(receipt)
-    )
-
-
-def begin_stage(ids: tuple[str, ...]) -> str:
-    validate(ids)
-    if not ids:
-        raise InvariantError("Invariant: no adapter is enabled", code="missing_adapter")
-    return str(getattr(_REGISTRY[ids[0]], "begin_stage"))
-
-
-def schemas() -> dict[str, object]:
-    return {"contract": contract_schema(), "review": review_schema()}
-
-
-def task_contract_examples() -> dict[str, object]:
-    return examples()
+def examples(identifier: str = "intent_brief") -> dict[str, Any]:
+    validate((identifier,))
+    return _REGISTRY[identifier].examples()

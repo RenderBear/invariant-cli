@@ -7,7 +7,6 @@ import yaml
 
 from invariant import adapters
 from invariant.cli.output import CommandResult
-from invariant.errors import Blocked
 from invariant.lifecycle import tasks
 from invariant.mechanics import git, receipts
 from invariant.mechanics.documents import dump_yaml
@@ -36,14 +35,14 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     begin.add_argument("--interface", action="append", default=[])
     begin.add_argument("--domain", action="append", default=[])
     begin.add_argument(
-        "--task-contract-file",
-        help="task contract adapter input; supplying it enables the adapter for this task",
+        "--intent-brief-file",
+        help="optional intent brief response; supplying it enables the adapter for this task",
     )
     begin.add_argument(
-        "--task-contract",
+        "--intent-brief",
         action=argparse.BooleanOptionalAction,
         default=None,
-        help="override the configured task contract adapter for this task",
+        help="override the configured intent brief adapter for this task",
     )
     begin.set_defaults(_handler=_begin, _command="task.begin")
 
@@ -66,15 +65,19 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     finish.add_argument("task_id", help=TASK_ID_HELP)
     finish.add_argument(
         "--assessment",
-        help="assessment file (defaults to a Git-local draft, prepared automatically when absent)",
+        help="legacy low-level assessment input; normal task finish is CLI-managed",
     )
     finish.add_argument("--subject")
     finish.add_argument("--check", action="append", default=[])
-    finish.add_argument(
-        "--task-contract-review",
-        help="candidate-bound task contract review (defaults to the Git-local prepared review)",
-    )
     finish.set_defaults(_handler=_finish, _command="task.finish")
+
+    respond = commands.add_parser(
+        "respond", help="Resolve one structured lifecycle or adapter action"
+    )
+    respond.add_argument("task_id", help=TASK_ID_HELP)
+    respond.add_argument("request_id", help="action id returned by begin or finish")
+    respond.add_argument("--input", required=True, help="YAML or JSON response document")
+    respond.set_defaults(_handler=_respond, _command="task.respond")
 
     continuation = commands.add_parser("continue")
     continuation.add_argument("task_id", help=TASK_ID_HELP)
@@ -87,6 +90,11 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
     guide = commands.add_parser("guidance")
     guide.add_argument("task_id", help=TASK_ID_HELP)
+    guide.add_argument(
+        "--full",
+        action="store_true",
+        help="include the detailed semantic reasoning and protocol handbook",
+    )
     guide.set_defaults(_handler=_guidance, _command="task.guidance")
 
     assessment = commands.add_parser("assessment", help="Inspect or prepare task assessments")
@@ -108,21 +116,21 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         _handler=_assessment_prepare, _command="task.assessment.prepare"
     )
 
-    contract = commands.add_parser(
-        "contract", help="Inspect the bundled task contract adapter protocol"
+    intent = commands.add_parser(
+        "intent-brief", help="Inspect the bundled intent brief adapter protocol"
     )
-    contracts = contract.add_subparsers(dest="contract_command", required=True)
-    contract_schema = contracts.add_parser(
-        "schema", help="Print the contract and review schemas"
+    intents = intent.add_subparsers(dest="intent_command", required=True)
+    intent_schema = intents.add_parser(
+        "schema", help="Print the brief and review schemas"
     )
-    contract_schema.set_defaults(
-        _handler=_contract_schema, _command="task.contract.schema"
+    intent_schema.set_defaults(
+        _handler=_intent_schema, _command="task.intent-brief.schema"
     )
-    contract_example = contracts.add_parser(
-        "example", help="Print proportional contract and review examples"
+    intent_example = intents.add_parser(
+        "example", help="Print prose-first brief and whole-candidate review examples"
     )
-    contract_example.set_defaults(
-        _handler=_contract_example, _command="task.contract.example"
+    intent_example.set_defaults(
+        _handler=_intent_example, _command="task.intent-brief.example"
     )
 
 
@@ -130,26 +138,118 @@ def _repo():
     return git.root()
 
 
-def _begin(args: argparse.Namespace) -> list[str]:
-    return tasks.begin(
-        _repo(),
+def _receipt_payload(task_id: str, receipt: dict[str, object]) -> dict[str, object]:
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    scope = receipt.get("scope") if isinstance(receipt.get("scope"), dict) else {}
+    change = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    return {
+        "id": task_id,
+        "stage": str(lifecycle.get("stage") or "briefed"),
+        "goal_digest": str(receipt.get("goal_digest") or ""),
+        "scope": {
+            "paths": list(scope.get("paths", [])),
+            "interfaces": list(scope.get("interfaces", [])),
+            "domains": list(scope.get("domains", [])),
+        },
+        "boundary": str(change.get("boundary") or "unresolved"),
+        "integration": {
+            "target": str(receipt.get("integration_target") or ""),
+            "base": str(receipt.get("integration_head") or ""),
+        },
+        "work": {
+            "branch": str(lifecycle.get("branch") or ""),
+            "worktree": str(lifecycle.get("worktree") or ""),
+        },
+        "adapters": list(adapters.enabled(receipt)),
+        "actions": adapters.pending(receipt),
+        "artifacts": receipt.get("hook_artifacts", []),
+        "completion": {"commit": str(receipt.get("completed_commit") or "")},
+    }
+
+
+def _task_payload(repo: Path, task_id: str) -> dict[str, object]:
+    return _receipt_payload(task_id, receipts.load(repo, task_id))
+
+
+def _terminal_task_payload(
+    repo: Path, task_id: str, stage: str = "completed"
+) -> dict[str, object]:
+    completed = receipts.load_completed(repo, task_id) if stage == "completed" else None
+    if completed is not None:
+        return _receipt_payload(task_id, completed)
+    return {
+        "id": task_id,
+        "stage": stage,
+        "goal_digest": "",
+        "scope": {"paths": [], "interfaces": [], "domains": []},
+        "boundary": "unresolved",
+        "integration": {"target": "", "base": ""},
+        "work": {"branch": "", "worktree": ""},
+        "adapters": [],
+        "actions": [],
+        "artifacts": [],
+        "completion": {"commit": ""},
+    }
+
+
+def _task_result(repo: Path, task_id: str, lines: list[str]) -> CommandResult:
+    payload = _task_payload(repo, task_id)
+    stage = str(payload["stage"])
+    outcome = (
+        "needs_input"
+        if payload["actions"]
+        else "awaiting_approval"
+        if stage in {"awaiting-branch", "awaiting-landing"}
+        else "ready"
+    )
+    return CommandResult(lines, {"task": payload}, outcome)
+
+
+def _flow_result(
+    repo: Path, task_id: str, result: tasks.FlowResult
+) -> CommandResult:
+    if receipts.receipt_path(repo, task_id).is_file():
+        task_payload = _task_payload(repo, task_id)
+    else:
+        task_payload = _terminal_task_payload(repo, task_id)
+    data: dict[str, object] = {"task": task_payload}
+    candidate_tree = result.data.get("candidate_tree")
+    evidence = result.data.get("evidence")
+    if candidate_tree or evidence:
+        data["candidate"] = {
+            "tree": str(candidate_tree or ""),
+            "evidence": evidence if isinstance(evidence, list) else [],
+        }
+    return CommandResult(result.lines, data, result.outcome)
+
+
+def _begin(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.begin(
+        repo,
         args.task_id,
         goal=args.goal,
         boundary=args.boundary,
         paths=args.path,
         interfaces=args.interface,
         domains=args.domain,
-        adapter_inputs={"task_contract": args.task_contract_file},
+        adapter_inputs={"intent_brief": args.intent_brief_file},
         adapter_overrides=(
-            {"task_contract": args.task_contract}
-            if args.task_contract is not None
+            {"intent_brief": args.intent_brief}
+            if args.intent_brief is not None
             else {}
         ),
     )
+    return _task_result(repo, args.task_id, lines)
 
 
-def _status(args: argparse.Namespace) -> list[str]:
-    return tasks.status(_repo(), args.task_id)
+def _status(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    return _task_result(repo, args.task_id, tasks.status(repo, args.task_id))
 
 
 def _check(args: argparse.Namespace) -> list[str]:
@@ -165,53 +265,54 @@ def _check(args: argparse.Namespace) -> list[str]:
     )
 
 
-def _finish(args: argparse.Namespace) -> list[str]:
+def _finish(args: argparse.Namespace) -> CommandResult:
     repo = _repo()
-    prepared = receipts.task_root(repo, args.task_id) / "prepared-assessment.yml"
-    prefix: list[str] = []
-    if not args.assessment and not prepared.is_file():
-        assessment_value, analysis = tasks.prepare_assessment(repo, args.task_id)
-        dump_yaml(prepared, assessment_value)
-        lines, required = _preparation_lines(repo, args.task_id, prepared, analysis)
-        if required:
-            raise Blocked(
-                "Invariant: the generated assessment needs semantic completion before landing",
-                code="assessment_completion_required",
-                lines=[
-                    *lines,
-                    f"NEXT: complete {prepared} and rerun invariant task finish {args.task_id}",
-                ],
-                data={
-                    "assessment": assessment_value,
-                    "analysis": analysis,
-                    "path": str(prepared),
-                },
-            )
-        prefix = [f"ASSESSMENT: inferred {args.task_id}"]
-    assessment = args.assessment or str(prepared)
-    return [
-        *prefix,
-        *tasks.finish(
+    if args.assessment:
+        lines = tasks.finish(
             repo,
             args.task_id,
-            assessment_path=assessment,
+            assessment_path=args.assessment,
             subject=args.subject,
             checks=args.check,
-            adapter_inputs={"task_contract": args.task_contract_review},
-        ),
-    ]
+        )
+        return CommandResult(
+            lines, {"task": _terminal_task_payload(repo, args.task_id)}
+        )
+    result = tasks.prepare_finish(
+        repo, args.task_id, subject=args.subject, checks=args.check
+    )
+    return _flow_result(repo, args.task_id, result)
 
 
-def _continue(args: argparse.Namespace) -> list[str]:
-    return tasks.continue_task(_repo(), args.task_id, apply=args.apply)
+def _respond(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    result = tasks.respond(repo, args.task_id, args.request_id, args.input)
+    return _flow_result(repo, args.task_id, result)
 
 
-def _invalidate(args: argparse.Namespace) -> list[str]:
-    return tasks.invalidate(_repo(), args.task_id)
+def _continue(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.continue_task(repo, args.task_id, apply=args.apply)
+    if "STATUS: completed" in lines:
+        return CommandResult(
+            lines,
+            {"task": _terminal_task_payload(repo, args.task_id)},
+        )
+    return _task_result(repo, args.task_id, lines)
 
 
-def _guidance(args: argparse.Namespace) -> list[str]:
-    return tasks.task_guidance(_repo(), args.task_id)
+def _invalidate(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.invalidate(repo, args.task_id)
+    return CommandResult(
+        lines, {"task": _terminal_task_payload(repo, args.task_id, "invalidated")}
+    )
+
+
+def _guidance(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.task_guidance(repo, args.task_id, full=args.full)
+    return CommandResult(lines, {"task": _task_payload(repo, args.task_id), "guidance": "\n".join(lines)})
 
 
 def _yaml_lines(value: object) -> list[str]:
@@ -228,13 +329,13 @@ def _assessment_example(_: argparse.Namespace) -> CommandResult:
     return CommandResult(_yaml_lines(value), {"example": value})
 
 
-def _contract_schema(_: argparse.Namespace) -> CommandResult:
-    value = adapters.schemas()
+def _intent_schema(_: argparse.Namespace) -> CommandResult:
+    value = adapters.schemas("intent_brief")
     return CommandResult(_yaml_lines(value), {"schema": value})
 
 
-def _contract_example(_: argparse.Namespace) -> CommandResult:
-    value = adapters.task_contract_examples()
+def _intent_example(_: argparse.Namespace) -> CommandResult:
+    value = adapters.examples("intent_brief")
     return CommandResult(_yaml_lines(value), {"example": value})
 
 

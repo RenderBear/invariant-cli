@@ -6,10 +6,12 @@ from pathlib import Path
 import yaml
 
 from invariant import adapters
-from invariant.adapters.task_contract import TaskContract, TaskContractReview
+from invariant.adapters.base import CANDIDATE_EVIDENCED, HOOK_PHASES, TASK_CREATED
+from invariant.adapters.intent_brief.models import IntentBrief, IntentReview
 from invariant.semantics import guidance
 from invariant.semantics.discovery import Discovery, validate_shape
 from invariant.semantics.models import Assessment
+from invariant.semantics.records import parse_document
 
 
 PACKAGE = Path(__file__).parents[1] / "src" / "invariant"
@@ -49,62 +51,48 @@ def test_protocol_uses_the_new_namespace() -> None:
         assert "GIT_INTENT_" not in text, path
 
 
-def test_task_contract_keeps_prose_and_stable_ids(tmp_path: Path) -> None:
-    path = tmp_path / "contract.yml"
+def test_intent_brief_keeps_one_prose_body_and_material_questions(tmp_path: Path) -> None:
+    path = tmp_path / "brief.yml"
     path.write_text(
         yaml.safe_dump(
             {
                 "version": 1,
-                "adapter": "task_contract",
+                "adapter": "intent_brief",
                 "source_goal_digest": "goal-id",
-                "requirements": {
-                    "goal": "Restore active jobs after reopening.",
-                    "outcomes": [{"id": "O1", "prose": "Active jobs remain visible."}],
-                    "acceptance": [{"id": "A1", "prose": "Each job appears once."}],
-                    "constraints": [{"id": "C1", "prose": "Chat remains session scoped."}],
-                },
-                "verification": {
-                    "level": "targeted",
-                    "rationale": "A bounded behavior change has focused existing tests.",
-                },
-            }
-        ),
-        encoding="utf-8",
-    )
-    contract = TaskContract.load(path)
-    assert contract.goal == "Restore active jobs after reopening."
-    assert contract.nodes["outcomes"] == ["O1"]
-    assert contract.required == ["A1", "C1"]
-    assert contract.nodes["constraints"] == ["C1"]
-    assert contract.verification_level == "targeted"
-    assert "Active jobs remain visible." in path.read_text(encoding="utf-8")
-
-
-def test_task_contract_review_is_separate_exact_tree_adapter_input(tmp_path: Path) -> None:
-    path = tmp_path / "review.yml"
-    path.write_text(
-        yaml.safe_dump(
-            {
-                "version": 1,
-                "adapter": "task_contract",
-                "source_goal_digest": "abc",
-                "candidate_tree": "tree-id",
-                "results": [
-                    {
-                        "satisfies": "A1",
-                        "disposition": "satisfied",
-                        "prose": "The candidate restores each job once.",
-                        "evidence": ["test:tests/test_jobs.py"],
-                    }
+                "brief": "Restore active jobs once after reopening; keep chat session scoped.",
+                "questions": [
+                    {"id": "retention", "prompt": "How long should jobs remain?", "answer": ""}
                 ],
             }
         ),
         encoding="utf-8",
     )
-    review = TaskContractReview.load(path)
+    brief = IntentBrief.load(path)
+    assert "Restore active jobs" in brief.brief
+    assert [question.identifier for question in brief.unanswered] == ["retention"]
+
+
+def test_intent_review_is_one_exact_tree_verdict(tmp_path: Path) -> None:
+    path = tmp_path / "review.yml"
+    path.write_text(
+        yaml.safe_dump(
+            {
+                "version": 1,
+                "adapter": "intent_brief",
+                "source_goal_digest": "abc",
+                "brief_digest": "brief-id",
+                "candidate_tree": "tree-id",
+                "verdict": "accepted",
+                "summary": "The exact candidate restores each job once.",
+                "exceptions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    review = IntentReview.load(path)
     assert review.candidate_tree == "tree-id"
-    assert review.results[0].reference == "A1"
-    assert review.results[0].disposition == "satisfied"
+    assert review.verdict == "accepted"
+    assert review.exceptions == []
 
 
 def test_discovery_can_resolve_without_a_contract() -> None:
@@ -133,38 +121,57 @@ def test_discovery_can_resolve_without_a_contract() -> None:
 def test_stage_guidance_remains_free_form_and_composable() -> None:
     text = guidance.for_stage("implementing")
     assert "# Brief" in text
-    assert "# Durable semantic reasoning" in text
-    assert "# Repository archaeology" in text
-    assert "# Progressive discovery" in text
-    assert "# Coordinate" in text
     assert "# Land" in text
     assert "# Human ergonomics" in text
-    assert "# Agent protocol reference" in text
-    assert "Requested meaning" in text
-    assert "Trace behavior end to end" in text
+    assert "# Repository archaeology" not in text
+    full = guidance.for_stage("implementing", full=True)
+    assert "# Durable semantic reasoning" in full
+    assert "# Repository archaeology" in full
+    assert "# Agent protocol reference" in full
 
 
-def test_task_contract_is_a_bundled_adapter_not_semantics() -> None:
-    adapter = adapters.task_contract_examples()
-    assert adapter["contract"]["adapter"] == "task_contract"
-    assert adapter["review"]["adapter"] == "task_contract"
-    assert not (PACKAGE / "semantics" / "guidance" / "task-acceptance.md").exists()
-    assert not (PACKAGE / "semantics" / "guidance" / "outcome-review.md").exists()
+def test_intent_brief_is_a_bundled_adapter_not_semantics() -> None:
+    adapter = adapters.examples()
+    assert adapter["brief"]["adapter"] == "intent_brief"
+    assert adapter["review"]["adapter"] == "intent_brief"
+    assert set(HOOK_PHASES) == {TASK_CREATED, CANDIDATE_EVIDENCED}
     for path in (PACKAGE / "adapters").rglob("*.py"):
         imports = imported_modules(path)
         assert not any(name.startswith("invariant.lifecycle") for name in imports), path
 
 
-def test_task_contract_example_allows_inspection_without_a_persisted_test(tmp_path: Path) -> None:
-    examples = adapters.task_contract_examples()
-    contract_path = tmp_path / "contract.yml"
+def test_intent_brief_examples_are_valid_without_a_requirement_matrix(tmp_path: Path) -> None:
+    examples = adapters.examples()
+    contract_path = tmp_path / "brief.yml"
     review_path = tmp_path / "review.yml"
-    contract_path.write_text(yaml.safe_dump(examples["contract"]), encoding="utf-8")
+    contract_path.write_text(yaml.safe_dump(examples["brief"]), encoding="utf-8")
     review_path.write_text(yaml.safe_dump(examples["review"]), encoding="utf-8")
-    contract = TaskContract.load(contract_path)
-    review = TaskContractReview.load(review_path)
-    assert contract.verification_level == "inspection"
-    assert review.results[0].evidence == ["inspection:src/components/SaveButton.tsx"]
+    brief = IntentBrief.load(contract_path)
+    review = IntentReview.load(review_path)
+    assert brief.questions == []
+    assert review.verdict == "accepted"
+
+
+def test_semantic_record_is_a_small_open_envelope() -> None:
+    records = parse_document(
+        {
+            "version": 1,
+            "records": [
+                {
+                    "id": "job-recovery",
+                    "document": "architecture:docs/architecture.md#job-recovery",
+                    "authority": "user:task:recovery#turn-2",
+                    "applies_to": ["repo:src/jobs", "interface:jobs-v1"],
+                    "revisit_on": ["repo:src/storage"],
+                    "relations": {"challenges": ["semantic:session-only-jobs"]},
+                    "facets": {"confidence": "provisional", "vocabulary": ["active job"]},
+                }
+            ],
+        }
+    )
+    assert records[0].identifier == "job-recovery"
+    assert records[0].relations["challenges"] == ["semantic:session-only-jobs"]
+    assert records[0].facets["confidence"] == "provisional"
 
 
 def test_installed_agent_workflow_matches_portable_reference() -> None:

@@ -249,7 +249,7 @@ def _interactive(repo) -> bootstrap.BootstrapSettings:
     )
     task_adapter = _select(
         "Task adapter",
-        "Should Invariant expand each request and validate a local task contract?",
+        "Should Invariant expand each request into a prose intent brief?",
         (
             (
                 "model",
@@ -257,9 +257,9 @@ def _interactive(repo) -> bootstrap.BootstrapSettings:
                 "Use the coding agent's normal understanding and the core verification lifecycle.",
             ),
             (
-                "contract",
-                "Task contract",
-                "Expand requirements before work and review the exact candidate with proportional evidence.",
+                "brief",
+                "Intent brief",
+                "Expand intent, ask material questions, and review the exact candidate before landing.",
             ),
         ),
         "model",
@@ -270,7 +270,7 @@ def _interactive(repo) -> bootstrap.BootstrapSettings:
         execution=execution,
         integration_branch=integration_branch,
         push_remote=push_remote,
-        task_contract=task_adapter == "contract",
+        intent_brief=task_adapter == "brief",
     )
 
 
@@ -296,8 +296,8 @@ def _summary(lines: list[str], *, show_logo: bool) -> None:
         branch = f"{branch} (current branch)"
     publication = "Local only" if value("PUSH-REMOTE") == "off" else "Existing upstream"
     task_adapter = (
-        "Task contract"
-        if value("TASK-CONTRACT-ADAPTER") == "on"
+        "Intent brief"
+        if value("INTENT-BRIEF-ADAPTER") == "on"
         else "Agent's own workflow"
     )
 
