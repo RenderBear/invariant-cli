@@ -374,11 +374,17 @@ def _governance_exists(repo: Path, reference: str) -> bool:
         path = identifier.split("#", 1)[0]
         if not (repo / path).is_file():
             return False
-        return reference in {
+        registered = {
             item
             for row in [*governance.domains(repo), *governance.contracts(repo)]
             for item in governance.architecture_refs(row.get("architecture"))
         }
+        registered.update(
+            record.document
+            for record in governance.semantic_records(repo)
+            if record.status == "active"
+        )
+        return reference in registered
     return False
 
 
