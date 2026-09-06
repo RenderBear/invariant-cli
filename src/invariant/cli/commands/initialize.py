@@ -49,8 +49,8 @@ def _option_lines(
         active = index == selected
         marker = "●" if active else "○"
         suffix = " (recommended)" if value == default else ""
-        marker = _color("36" if active else "2", marker)
-        option = _color("1;36", label) if active else label
+        marker = _color("32" if active else "2", marker)
+        option = _color("4", label) if active else label
         recommendation = _color("32", suffix)
         output.append(f"  {marker} {option}{recommendation}")
     output.append(_color("2", f"    {options[selected][2]}"))
