@@ -124,16 +124,17 @@ SVG figures under `.github/assets/` follow the document palette with one additio
 ## Terminal palette
 
 Colour is expressed as ANSI attributes so the user's terminal theme supplies the actual hues.
-Every attribute has exactly one role.
+Every attribute has exactly one role. The wordmark is the only bold, coloured element in a
+result block; nothing else competes with it.
 
 | Token | Attribute | Role |
 | --- | --- | --- |
-| Accent | `1;36` bold cyan | The `Invariant` wordmark, the connected agent's name and glyph, the user prompt, command callouts |
-| Strong | `1` bold | Panel titles, the active option in a questionnaire, failure messages |
-| Muted | `2` dim | Field labels, rules, the spinner line, durations, hints |
-| Ok | `1;32` bold green / `32` green | Success headings and trail marks; completed, ready, valid, landed states |
-| Warn | `1;33` bold amber / `33` amber | The next-action arrow, warnings, recommended options; waiting and in-progress states |
-| Bad | `1;31` bold red | Failure marks, errors; failed, invalid, stale, absent states |
+| Accent | `1;36` bold cyan | The `Invariant` wordmark, the connected agent's name and glyph, the user prompt, the next-action arrow and command callouts |
+| Strong | `1` bold | The active option in a questionnaire, emphasis inside agent prose |
+| Muted | `2` dim | Block titles, field labels, the turn rule, the spinner line, durations, hints |
+| Ok | `32` green | Success block titles and trail marks; completed, ready, valid, landed states |
+| Warn | `1;33` bold amber / `33` amber | Warnings, recommended options; waiting and in-progress states |
+| Bad | `1;31` bold red | Failure marks; failed, invalid, stale, absent states |
 
 Plain text is the default; nothing else is coloured. `NO_COLOR` disables every attribute, and
 output that is not a terminal is emitted as the plain `NAME: value` records.
@@ -147,7 +148,7 @@ output that is not a terminal is emitted as the plain `NAME: value` records.
 | `!` | A warning |
 | `→` | The single next action |
 | `›` | Speech: after `(mode)` for the user, after `(provider)` for the agent; also a command to run |
-| `─` | A rule under a heading |
+| `─` | The turn rule between conversation turns |
 | `·` | A separator between short facts on one line |
 | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | Activity in progress |
 
@@ -156,8 +157,7 @@ output that is not a terminal is emitted as the plain `NAME: value` records.
 Result block:
 
 ```text
-Invariant · Repository                 accent wordmark · strong title
-────────────────────────────           muted rule, 56 columns or the terminal width
+Invariant  Repository                  accent wordmark, two spaces, muted title
   Status     needs attention           muted label column, value; state words toned
   Branch     main
   Change     cfB (implementing)        a repeated label is shown once
@@ -166,19 +166,20 @@ Invariant · Repository                 accent wordmark · strong title
   → invariant state validate           callouts close the block after a blank line
 ```
 
-- A success block replaces the wordmark with `✓ Title` in Ok.
-- The rule appears when the block has more than two fields.
+- The wordmark line is the only heading. There is no rule, banner, or box.
+- A success block keeps the wordmark and sets the title in Ok: `Invariant  Change landed`.
 - Labels are the record names in sentence case, right-padded to the widest label.
 - `Status` values are toned by state; other values are plain.
 - `Next`, `Warning`, `Error`, `Invalid`, `Request`, and `Command` records are callouts. They
-  are removed from their record position and rendered last, in order, one per line.
+  are removed from their record position and rendered last, in order, one per line. `Next`,
+  `Request`, and `Command` glyphs are Accent; `Warning` is Warn; `Error` and `Invalid` are Bad.
 - Non-record lines pass through unchanged and reset label folding.
 
 Failure:
 
 ```text
-× no coding agent is connected; run 'invariant connect codex'   bad mark, strong message
-Invariant · Change
+× no coding agent is connected; run 'invariant connect codex'   bad mark, plain message
+Invariant  Change
   Change     add-div
   Status     needs attention
 
@@ -191,13 +192,11 @@ records follow on standard output as an ordinary block.
 Conversation:
 
 ```text
-Invariant · conversation
-────────────────────────────
-  codex  ·  Ask mode  ·  session 1
-
+Invariant  conversation
+  codex  ·  ask mode  ·  session 1
   :help for commands  ·  Ctrl-C to leave
 
-(ask) › what owns job recovery?         muted mode, accent ›, strong question (redrawn after Enter)
+(ask) › what owns job recovery?         muted mode, accent ›, plain question (redrawn after Enter)
 
 (codex) › thinking ⠹ · 4s               the agent's line while it works, muted detail
 (codex) › 4.2s                          the same line once settled: muted duration only

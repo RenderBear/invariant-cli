@@ -294,8 +294,7 @@ def _summary(
         "claude": "Claude Code",
     }.get(value("AGENT"), value("AGENT"))
 
-    print(f"\n{_color(style.OK, f'{style.CHECK} Repository ready')}")
-    print(style.rule())
+    print(f"\n{style.wordmark('Repository ready', tone=style.OK_TEXT)}")
     rows = (
         *([("Agent", agent)] if agent else []),
         ("Autonomy", f"{authority} · {execution}"),

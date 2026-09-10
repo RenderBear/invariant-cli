@@ -1,8 +1,10 @@
 """Terminal presentation for the human-facing command surface.
 
-Colour carries meaning only: one accent for identity, three tones for state. Structure comes
-from alignment, a single rule under headings, and callouts that always close a block. Everything
-degrades to the plain `NAME: value` records when output is not a terminal.
+One accent, and it belongs to the wordmark: `Invariant` is the only bold, coloured thing in a
+result block, so it reads a size larger than everything around it. Titles, labels, rules, and
+hints are dim; values are plain; state words carry one of three tones. Structure comes from
+alignment and whitespace, never from borders or banners. Everything degrades to the plain
+`NAME: value` records when output is not a terminal.
 """
 
 from __future__ import annotations
@@ -35,8 +37,6 @@ NEXT = "→"
 PROMPT = "›"
 RULE = "─"
 DOT = "·"
-
-RULE_WIDTH = 56
 
 _TITLES = {
     "ask": "Answer",
@@ -74,7 +74,7 @@ _WAIT_STATES = {
 _BAD_STATES = {"failed", "error", "invalid", "stale", "unavailable", "absent"}
 
 _CALLOUTS = {
-    "Next": (WARN, NEXT),
+    "Next": (ACCENT, NEXT),
     "Warning": (WARN, CAUTION),
     "Error": (BAD, CROSS),
     "Invalid": (BAD, CROSS),
@@ -104,15 +104,13 @@ def columns(stream: TextIO | None = None) -> int:
     return width if width >= 24 else 80
 
 
-def rule(stream: TextIO | None = None) -> str:
-    return paint(MUTED, RULE * min(RULE_WIDTH, columns(stream) - 2), stream=stream)
+def wordmark(subtitle: str | None = None, *, tone: str = MUTED) -> str:
+    """`Invariant` in the accent, then the context in a quiet tone two spaces to the right."""
 
-
-def wordmark(subtitle: str | None = None) -> str:
     mark = paint(ACCENT, "Invariant")
     if not subtitle:
         return mark
-    return f"{mark} {paint(MUTED, DOT)} {paint(STRONG, subtitle)}"
+    return f"{mark}  {paint(tone, subtitle)}"
 
 
 def prompt(mode: str = "ask") -> str:
@@ -189,7 +187,7 @@ def prose(text: str, *, width: int | None = None) -> list[str]:
 
 
 def user_line(message: str, mode: str = "ask") -> str:
-    return f"{prompt(mode)}{paint(STRONG, message)}"
+    return f"{prompt(mode)}{message}"
 
 
 def redraw_user_line(
@@ -243,17 +241,14 @@ def session_intro(name: str, mode: str, identifier: int) -> str:
                 "TIP: :help shows session commands; Ctrl-C ends this console",
             ]
         )
-    mode_name = "Ask" if mode == "ask" else "Change"
     separator = f"  {paint(MUTED, DOT)}  "
     context = separator.join(
-        [paint(ACCENT, name), f"{mode_name} mode", f"session {identifier}"]
+        [paint(ACCENT, name), f"{mode} mode", f"session {identifier}"]
     )
     return "\n".join(
         [
             wordmark("conversation"),
-            rule(),
             f"  {context}",
-            "",
             paint(MUTED, f"  :help for commands  {DOT}  Ctrl-C to leave"),
             "",
         ]
@@ -411,8 +406,8 @@ def _state(value: str) -> str:
     return value
 
 
-def panel(title: str, lines: Sequence[str], *, success: bool = False) -> str:
-    """Render records as an aligned block: heading, rule, fields, then closing callouts."""
+def panel(title: str | None, lines: Sequence[str], *, success: bool = False) -> str:
+    """Render records as an aligned block: wordmark line, fields, then closing callouts."""
 
     values = list(lines)
     if not interactive():
@@ -433,10 +428,7 @@ def panel(title: str, lines: Sequence[str], *, success: bool = False) -> str:
         width = max(width, len(label))
         fields.append((label, match.group(2)))
 
-    heading = paint(OK, f"{CHECK} {title}") if success else wordmark(title)
-    output = [heading]
-    if len(fields) > 2:
-        output.append(rule())
+    output = [wordmark(title, tone=OK_TEXT if success else MUTED)]
     previous = ""
     for field in fields:
         if isinstance(field, str):
@@ -459,7 +451,9 @@ def panel(title: str, lines: Sequence[str], *, success: bool = False) -> str:
 
 
 def render(command: str, lines: Sequence[str]) -> str:
-    title = _TITLES.get(command, "Invariant")
+    if not lines:
+        return ""
+    title = _TITLES.get(command)
     if command == "init" and "STATUS: unchanged" in lines:
         title = "Configuration unchanged"
     if command == "change" and not any(line == "STATUS: complete" for line in lines):
@@ -477,4 +471,4 @@ def error(message: str) -> str:
     if not interactive(sys.stderr):
         return message
     detail = message.removeprefix("Invariant: ")
-    return f"{paint(BAD, CROSS, stream=sys.stderr)} {paint(STRONG, detail, stream=sys.stderr)}"
+    return f"{paint(BAD, CROSS, stream=sys.stderr)} {detail}"
