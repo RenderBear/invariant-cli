@@ -239,7 +239,7 @@ Conversation:
 
 (ask) › what owns job recovery?         muted mode, accent ›, plain question (redrawn after Enter)
 
-(codex) › 4.2s                          the same line once settled: muted duration only
+(codex) ›                               the settled speaker line, with no duration
   The job runner owns recovery. Restart re-queues every non-terminal
   job once …
 
@@ -254,8 +254,8 @@ Conversation:
 - The question line is redrawn in that shape once Enter is pressed, when it fits on one physical
   line.
 - The agent's line is its activity line: `thinking` plus the spinner while it works, with the
-  elapsed time after three seconds, replaced in place by the duration alone when the answer
-  arrives, or by `×` and the duration on failure. It stays in the transcript.
+  elapsed time after three seconds. When the answer arrives it settles to the speaker marker alone;
+  elapsed time is never retained on a completed response. A failure retains only `×`.
 - Agent prose follows on the next lines at a measure of 88 columns or the terminal width minus
   four, indented two spaces, with list items hanging under their marker.
 - Markdown headings, `**strong**` spans, and `` `code` `` spans render in Strong with their

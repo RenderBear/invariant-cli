@@ -147,6 +147,8 @@ def test_start_brands_once_and_separates_complete_turns(tmp_path: Path) -> None:
     assert len(dividers) == 2, output
     assert output.index("First answer.") < dividers[0].start() < output.index("Second")
     assert output.index("Second answer.") < dividers[1].start()
+    assert "(codex) ›\n  First answer." in output
+    assert not re.search(r"\(codex\) › \d", output)
     assert "Sessions  1" not in output
     assert output.rstrip().endswith("Session ended")
 

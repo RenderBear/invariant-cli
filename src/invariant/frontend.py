@@ -774,12 +774,9 @@ def _show_agent(
     provider: AgentProvider,
     message: str,
     *,
-    elapsed_seconds: float | None = None,
     heading: bool = True,
 ) -> None:
-    rendered = style.agent_message(
-        provider.value, message, elapsed_seconds=elapsed_seconds, heading=heading
-    )
+    rendered = style.agent_message(provider.value, message, heading=heading)
     if rendered:
         print(rendered)
 
@@ -793,7 +790,6 @@ def _session_turn(
     model: str | None,
     timeout: int,
 ) -> None:
-    started = time.monotonic()
     turn = style.turn(provider.value)
     try:
         with turn:
@@ -808,7 +804,6 @@ def _session_turn(
             )
     except AgentInvocationError as exc:
         raise _agent_error(exc) from exc
-    waited = time.monotonic() - started
     session.provider_session_id = result.session_id
     response = result.response.get("message")
     if not isinstance(response, str) or not response.strip():
@@ -817,18 +812,14 @@ def _session_turn(
             code="invalid_agent_output",
         )
     if session.mode == "ask" or result.response.get("action") == "answer":
-        _show_agent(
-            provider, response.strip(), elapsed_seconds=waited, heading=not turn.rendered
-        )
+        _show_agent(provider, response.strip(), heading=not turn.rendered)
         return
     if result.response.get("action") != "change":
         raise InvariantError(
             f"Invariant: {provider.value} returned an invalid session action",
             code="invalid_agent_output",
         )
-    _show_agent(
-        provider, response.strip(), elapsed_seconds=waited, heading=not turn.rendered
-    )
+    _show_agent(provider, response.strip(), heading=not turn.rendered)
     changed = _change(
         argparse.Namespace(
             using=provider,
@@ -3195,7 +3186,6 @@ def run(argv: list[str] | None = None) -> int:
                 rendered = style.agent_message(
                     provider_value,
                     "\n".join(result.lines),
-                    elapsed_seconds=result.data.get("elapsed_seconds"),
                     heading=not result.data.get("heading_shown"),
                 )
             else:

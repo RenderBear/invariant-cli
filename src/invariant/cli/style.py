@@ -257,7 +257,6 @@ def agent_message(
     message: str,
     *,
     terminal: bool | None = None,
-    elapsed_seconds: float | None = None,
     heading: bool = True,
 ) -> str:
     """Render agent prose as conversation, not as an Invariant result panel."""
@@ -272,8 +271,6 @@ def agent_message(
     if not heading:
         return f"{body}\n"
     head = speaker(name)
-    if elapsed_seconds is not None:
-        head += f" {paint(MUTED, elapsed(elapsed_seconds))}"
     return f"{head}\n{body}\n"
 
 
@@ -434,9 +431,8 @@ class Turn(Activity):
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=max(0.2, self.interval * 2))
-        waited = paint(MUTED, elapsed(time.monotonic() - self._started), stream=self.stream)
-        mark = "" if exc_type is None else f"{paint(BAD, CROSS, stream=self.stream)} "
-        self.stream.write(f"\r\033[2K{speaker(self.name)} {mark}{waited}\n")
+        mark = "" if exc_type is None else f" {paint(BAD, CROSS, stream=self.stream)}"
+        self.stream.write(f"\r\033[2K{speaker(self.name)}{mark}\n")
         self.stream.flush()
         self.rendered = True
 
