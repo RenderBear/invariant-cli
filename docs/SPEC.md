@@ -1,5 +1,11 @@
 # Invariant CLI — design of record
 
+This document is the design of record for the reference CLI implementation. The
+implementation-independent contract it implements — tracked state, record envelopes, the task
+lifecycle and its actions, landing guarantees, commit trailers, and the JSON envelope — is defined
+in [`protocol/protocol.md`](../protocol/protocol.md). Where the two disagree, the protocol governs
+and this document is wrong.
+
 Invariant is a repository-native control plane for long-running agentic work, delivered as a
 portable command-line application. It records accepted architectural meaning and binds explicit
 review assertions to repository changes while owning deterministic mechanics, the fixed repository
@@ -897,7 +903,7 @@ JSON uses one envelope:
 
 ```json
 {
-  "protocol": 2,
+  "protocol": 1,
   "command": "task.finish",
   "status": "ok",
   "outcome": "needs_input",

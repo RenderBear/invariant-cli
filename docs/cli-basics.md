@@ -322,7 +322,7 @@ historical retrieval. Scoped queries return applicable active records; an unscop
 full index, including superseded records. JSON results retain open `relations` and `facets` and carry
 the canonical-prose digest.
 
-For automation, `--format json` emits protocol 2 with typed task state, actions, artifacts, and an
+For automation, `--format json` emits protocol 1 with typed task state, actions, artifacts, and an
 `outcome` such as `ready`, `needs_input`, or `awaiting_approval`. Add `--verbose` only when the full
 human-readable rendering is also needed. `task guidance` is concise by default; use
 `task guidance <id> --full` when the detailed reasoning handbook is genuinely useful.

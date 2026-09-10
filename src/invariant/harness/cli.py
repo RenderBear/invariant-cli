@@ -644,7 +644,7 @@ def _envelope(
 ) -> str:
     return json.dumps(
         {
-            "protocol": 2,
+            "protocol": 1,
             "command": command,
             "status": status,
             "outcome": outcome,

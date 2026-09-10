@@ -1,7 +1,7 @@
 # Design language
 
 The presentation reference for Invariant's two human surfaces: the explanatory document
-[`model.html`](model.html) and the terminal. It records tokens, scales, and component rules. The
+[`model.html`](../protocol/model.html) and the terminal. It records tokens, scales, and component rules. The
 machine and contributor contract lives in [`SPEC.md`](SPEC.md).
 
 ## Document palette

@@ -106,7 +106,7 @@ def test_global_options_are_accepted_after_the_subcommand(tmp_path: Path) -> Non
             [str(CLI), *arguments], cwd=repo, capture_output=True, text=True, check=False
         )
         payload = json.loads(completed.stdout)
-        assert payload["protocol"] == 2, arguments
+        assert payload["protocol"] == 1, arguments
     completed = subprocess.run(
         [str(AGENT), "doctor", "--format", "json"], cwd=repo, capture_output=True, text=True, check=False
     )
@@ -131,12 +131,12 @@ def test_harness_uses_the_core_envelope_and_preserves_exit_codes(tmp_path: Path)
     repo = repository(tmp_path / "repo")
     code, payload = invariant(repo, "doctor", executable=AGENT)
     assert code == 0
-    assert payload["protocol"] == 2 and payload["command"] == "agent.doctor"
+    assert payload["protocol"] == 1 and payload["command"] == "agent.doctor"
     assert payload["status"] == "ok" and payload["outcome"] == "completed"
 
     code, payload = invariant(repo, "resolve", "missing", "--using", "codex", executable=AGENT)
     assert code == 1, payload
-    assert payload["protocol"] == 2 and payload["command"] == "agent.resolve"
+    assert payload["protocol"] == 1 and payload["command"] == "agent.resolve"
     assert payload["status"] == "blocked" and payload["outcome"] == "blocked"
     assert codes(payload) == ["missing_task"]
 

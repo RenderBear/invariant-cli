@@ -251,7 +251,7 @@ git -C "$fixture" branch -D "$failed_branch" >/dev/null
 ok "verification failure leaves the target unchanged and task work recoverable"
 
 json=$(cd "$fixture" && "$cli" --format json context reach --path src/a.txt)
-printf '%s\n' "$json" | grep -q '"protocol":2' || die "JSON protocol version is missing"
+printf '%s\n' "$json" | grep -q '"protocol":1' || die "JSON protocol version is missing"
 printf '%s\n' "$json" | grep -q '"command":"context.reach"' || die "JSON command identity is missing"
 printf '%s\n' "$json" | grep -q '"status":"ok"' || die "JSON success status is missing"
 printf '%s\n' "$json" | grep -q '"reach":"bounded"' || die "JSON reach is not typed"

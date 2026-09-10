@@ -135,7 +135,8 @@ linked worktrees share one logical kernel while preserving isolated candidates.
 
 ## Read further
 
-- [Explanatory model](docs/model.html) — the architecture, authority model, and guarantees.
+- [Explanatory model](protocol/model.html) — the architecture, authority model, and guarantees.
+- [Protocol](protocol/protocol.md) — the implementation-independent contract: state, lifecycle, landing, and the JSON envelope.
 - [CLI basics](docs/cli-basics.md) — complete commands and a task walkthrough.
 - [Design language](docs/design.md) — the document and terminal palette, glyphs, and layout rules.
-- [SPEC.md](docs/SPEC.md) — the exhaustive machine and contributor design of record.
+- [SPEC.md](docs/SPEC.md) — the exhaustive design of record for this CLI implementation.

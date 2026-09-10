@@ -52,7 +52,7 @@ def emit_success(
         print(
             json.dumps(
                 {
-                    "protocol": 2,
+                    "protocol": 1,
                     "command": command,
                     "status": "ok",
                     "outcome": (
@@ -85,7 +85,7 @@ def emit_error(
         print(
             json.dumps(
                 {
-                    "protocol": 2,
+                    "protocol": 1,
                     "command": command,
                     "status": status,
                     "outcome": (
