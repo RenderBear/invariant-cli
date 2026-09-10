@@ -925,6 +925,12 @@ def finish(
         expected_tree = expected_tree or candidate_tree
 
     combined_checks = tuple(sorted(set([*assessment.checks, *checks])))
+    coordination = (
+        receipt.get("coordination")
+        if isinstance(receipt.get("coordination"), dict)
+        else {}
+    )
+    plan = str(coordination.get("plan") or "") or None
     request = landing.LandRequest(
         mode="direct" if active_stage == TaskStage.IMPLEMENTING_UNBORN else "merge",
         merge_branch=None if active_stage == TaskStage.IMPLEMENTING_UNBORN else branch,
@@ -943,6 +949,7 @@ def finish(
         boundary=assessment.boundary.disposition,
         checks=combined_checks,
         target=target,
+        plan=plan,
         allow_open=assessment.allow_open,
         expected_tree=expected_tree,
     )
@@ -1287,6 +1294,12 @@ def _land_request_from_assessment(
     if disposition == "unresolved":
         disposition = "no-record"
     paths = assessment.get("paths", []) if isinstance(assessment.get("paths"), list) else []
+    coordination = (
+        receipt.get("coordination")
+        if isinstance(receipt.get("coordination"), dict)
+        else {}
+    )
+    plan = str(coordination.get("plan") or "") or None
     return landing.LandRequest(
         mode="direct" if active_stage == TaskStage.IMPLEMENTING_UNBORN else "merge",
         merge_branch=None if active_stage == TaskStage.IMPLEMENTING_UNBORN else branch,
@@ -1305,6 +1318,7 @@ def _land_request_from_assessment(
         boundary=disposition,
         checks=tuple(str(item) for item in assessment.get("checks", [])),
         target=str(receipt.get("integration_target") or ""),
+        plan=plan,
         allow_open=bool(assessment.get("allow_open", False)),
     )
 

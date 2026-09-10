@@ -799,7 +799,7 @@
 
     <section id="parallel" aria-labelledby="parallel-title">
       <h2 id="parallel-title">6. Changes are plural because work is parallel</h2>
-      <p><strong>Change</strong> remains the singular object type. A repository may hold many Changes at once. Parallelism is expressed through their captured bases, dependencies, claims, and convergence order—not through another semantic tier.</p>
+      <p><strong>Change</strong> remains the singular object type. A repository may hold many Changes at once, and one end-to-end Change may contain several independently executable work items. The host keeps small, coupled work single and parallelizes only disjoint ready work. Parallelism is expressed through captured bases, dependencies, claims, and convergence order—not through another semantic tier.</p>
 
       <figure>
         <div class="scroll-frame">
@@ -847,7 +847,7 @@
             </div>
           </div>
         </div>
-        <figcaption>Plans and reserved work are coordination mechanics. They prevent conflicting work and stale handoffs, but they never create decision authority.</figcaption>
+        <figcaption>Plans and reserved work are coordination mechanics. Unchanged-contract consumers may proceed together; a contract-changing provider converges before its consumers start from the new snapshot. Coordination prevents conflicting work and stale handoffs, but never creates decision authority.</figcaption>
       </figure>
     </section>
 

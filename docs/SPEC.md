@@ -270,8 +270,9 @@ The human-facing model operations are:
 - `ask PROMPT`, a fresh read-only repository question;
 - `start [PROMPT]`, a persistent read-only conversation that may route implementation requests
   through `change` when its local runtime mode permits;
-- `change PROMPT`, a generated task ID plus isolated provider write, candidate commit, evidence,
-  verification, typed action resolution, and local landing; and
+- `change PROMPT`, a generated task ID plus read-only work classification, one isolated provider
+  write or policy-driven coordinated writes, candidate convergence, evidence, verification, typed
+  action resolution, and local landing; and
 - `establish`, a generated governance task ID plus read-only audit, deterministic audit persistence,
   unambiguous projection, verification, and local landing.
 
@@ -1152,6 +1153,18 @@ projects and validates accepted meaning from the audit; it does not infer missin
 Coordination is optional and activated only by the host when work is genuinely parallel,
 independently owned, or handoff-sensitive.
 
+The public `change` host performs a read-only classification before implementation. A small or
+tightly coupled request remains one work item. A request becomes a parallel plan only when at least
+two useful work items have disjoint path, interface, and governance claims. The host dispatches all
+ready work items concurrently, up to its worker limit, and orders overlapping or dependent work.
+
+An unchanged accepted contract may be consumed by independent work items concurrently. Creating or
+evolving a contract requires exactly one provider work item; affected consumers declare reliance and
+depend on that provider. The provider converges first, and dependent worktrees are created from that
+converged candidate snapshot so frontend and backend consumers cannot continue from an obsolete
+contract. After every work item converges, the aggregate candidate passes the ordinary exact-tree
+review, verification, and atomic landing lifecycle.
+
 Plans describe units, dependencies, path/interface/governance claims, provides/relies relationships,
 and checks. Leases record temporary ownership against an integration ground and causal branch tip.
 
@@ -1164,7 +1177,8 @@ The CLI mechanically validates:
 - selected governance digests;
 - lease freshness and liveness facts.
 
-The CLI does not decide to create workers or maintain conversations. Those are harness concerns.
+The core CLI does not decide to create workers or maintain conversations. Those are public-host and
+harness concerns governed by the policy above.
 
 Core context and candidate verification must not depend on coordination runtime. Coordination may
 depend on context mechanics, never the reverse.

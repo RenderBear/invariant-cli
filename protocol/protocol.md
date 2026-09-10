@@ -478,6 +478,20 @@ Coordination is optional and activated only by a host for work that is genuinely
 independently owned, or handoff-sensitive. Nothing in the lifecycle depends on it; it may depend on
 context mechanics, never the reverse.
 
+A host that offers an end-to-end Change operation MUST apply a parallelization policy before it
+dispatches write workers. The policy keeps a small or tightly coupled Change in one work item. It
+creates multiple work items only when at least two have concrete, non-overlapping claims and can make
+meaningful progress independently. Ready work items SHOULD run concurrently; dependency edges, claim
+overlap, or a shared mutable surface require ordering rather than optimistic concurrent writes.
+
+Contract synchronization is causal. Work items that only consume an unchanged accepted contract may
+run concurrently. When a work item creates or evolves a contract, it is the sole provider for that
+contract in the plan, and every affected consumer depends on it. The host MUST converge the provider
+into the Change candidate before dispatching those consumers, and consumers MUST start from that
+converged snapshot. This permits independent frontend and backend work without allowing either side
+to implement against an obsolete contract. The whole converged candidate is still reviewed,
+verified, and landed atomically through one task lifecycle.
+
 A **plan** describes units, dependencies, path/interface/governance claims, provides/relies
 relationships, and checks. A **lease** records temporary ownership of a unit against an integration
 ground and causal branch tip, with a duration. The implementation validates target and ground
@@ -485,8 +499,9 @@ existence, acyclic dependency order, provider-before-consumer edges, unordered c
 selected governance digests, and lease freshness and liveness. Concurrent acquisition of one lease
 grants exactly one holder.
 
-The implementation never decides to create workers or hold conversations. Landing does not consult
-leases except to release the ones explicitly associated with the landed task.
+The core implementation never decides to create workers or hold conversations. A public host may do
+so under the policy above. Landing does not consult leases except to authenticate coordinated claims
+and release the ones explicitly associated with the landed task.
 
 ---
 
@@ -650,6 +665,7 @@ Codes are stable identifiers. Messages are for humans and may change.
 | Code | Meaning |
 |---|---|
 | `invalid_plan`, `missing_plan` | plan errors |
+| `parallel_claim_violation` | a parallel work item changed a path outside its declared claim; work is retained |
 | `stale_lease` | a landing since the lease's ground touched the leased unit; re-lease against the new ground or release |
 
 **Harness and publication**

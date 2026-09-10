@@ -202,6 +202,11 @@ def _receipt_payload(task_id: str, receipt: dict[str, object]) -> dict[str, obje
         "adapters": list(adapters.enabled(receipt)),
         "actions": adapters.action_descriptors(receipt),
         "artifacts": receipt.get("hook_artifacts", []),
+        "coordination": (
+            receipt.get("coordination")
+            if isinstance(receipt.get("coordination"), dict)
+            else {}
+        ),
         "assurance": receipt.get("assurance", {}),
         "completion": {"commit": str(receipt.get("completed_commit") or "")},
     }
@@ -242,6 +247,7 @@ def _terminal_task_payload(
         "adapters": [],
         "actions": [],
         "artifacts": [],
+        "coordination": {},
         "assurance": {},
         "completion": {"commit": ""},
     }

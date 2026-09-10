@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import re
 import secrets
@@ -26,6 +27,7 @@ from invariant.harness import cli as harness_cli
 from invariant.harness.providers import (
     AgentInvocationError,
     AgentProvider,
+    AgentWriteResult,
     connect,
     connection_status,
     invoke,
@@ -34,9 +36,9 @@ from invariant.harness.providers import (
 )
 from invariant.harness import preferences
 from invariant.lifecycle import bootstrap
-from invariant.mechanics import config, git, receipts
+from invariant.mechanics import config, coordinate, git, receipts
 from invariant.mechanics import governance
-from invariant.mechanics.documents import load_yaml
+from invariant.mechanics.documents import dump_yaml, load_yaml
 from invariant.semantics import sources
 from invariant.semantics.namespaces import Locator, parse_source_scope
 
@@ -1752,6 +1754,702 @@ def _resolve_actions(
     )
 
 
+@dataclass(frozen=True)
+class _ChangeUnit:
+    identifier: str
+    label: str
+    objective: str
+    dependencies: tuple[str, ...]
+    paths: tuple[str, ...]
+    interfaces: tuple[str, ...]
+    governance: tuple[str, ...]
+    provides: tuple[str, ...]
+    relies_on: tuple[str, ...]
+    verifies: tuple[str, ...]
+
+    def plan_row(self) -> dict[str, object]:
+        return {
+            "id": self.identifier,
+            "objective": self.objective,
+            "dependencies": list(self.dependencies),
+            "paths": list(self.paths),
+            "interfaces": list(self.interfaces),
+            "governance": list(self.governance),
+            "provides": list(self.provides),
+            "relies_on": list(self.relies_on),
+            "verifies": list(self.verifies),
+        }
+
+
+@dataclass(frozen=True)
+class _ChangePlan:
+    strategy: str
+    summary: str
+    units: tuple[_ChangeUnit, ...] = ()
+
+    @property
+    def parallel(self) -> bool:
+        return self.strategy == "parallel"
+
+
+def _change_plan_schema() -> dict[str, Any]:
+    string_list = {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["strategy", "summary", "units"],
+        "properties": {
+            "strategy": {"type": "string", "enum": ["single", "parallel"]},
+            "summary": {"type": "string", "minLength": 1},
+            "units": {
+                "type": "array",
+                "maxItems": 8,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "id",
+                        "objective",
+                        "dependencies",
+                        "paths",
+                        "interfaces",
+                        "governance",
+                        "provides",
+                        "relies_on",
+                        "verifies",
+                    ],
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                        },
+                        "objective": {"type": "string", "minLength": 1},
+                        "dependencies": string_list,
+                        "paths": string_list,
+                        "interfaces": string_list,
+                        "governance": string_list,
+                        "provides": string_list,
+                        "relies_on": string_list,
+                        "verifies": string_list,
+                    },
+                },
+            },
+        },
+    }
+
+
+def _change_plan_prompt(repo: Path, goal: str) -> str:
+    return (
+        "Classify one requested repository change before implementation. Inspect the repository "
+        "read-only and return exactly one JSON object matching the supplied schema. Choose single "
+        "for a small, cohesive, tightly coupled, or uncertain change. Choose parallel only when at "
+        "least two work items can make meaningful progress independently with non-overlapping path, "
+        "interface, and governance claims. Do not manufacture work merely to use more workers.\n\n"
+        "For a parallel plan, give every work item a short stable id, a self-contained objective, "
+        "repository-relative path prefixes without globs, exact interface and governance claims, "
+        "and at least one executable verifier locator (command:<executable-path>, test:<test-path>, "
+        "schema:<executable-path>, or a configured runner:<name>#<target>). Unordered work items must "
+        "have disjoint claims.\n\n"
+        "Contract synchronization is causal. Work items that consume an unchanged accepted contract "
+        "may run concurrently. If a work item creates or evolves a contract, make it the sole provider "
+        "by listing the same contract locator in governance and provides. Every affected consumer must "
+        "list that locator in relies_on and depend on the provider. The host will converge providers "
+        "before creating dependent worktrees. A frontend and backend may therefore run concurrently "
+        "against a stable contract, while consumers of an evolving contract must follow its provider.\n\n"
+        "For strategy=single, return an empty units array. For strategy=parallel, return between two "
+        "and eight units.\n\n"
+        f"Request:\n{goal.strip()}\n"
+        f"{_grounding_prompt(repo)}"
+    )
+
+
+def _string_tuple(value: object, label: str) -> tuple[str, ...]:
+    if not isinstance(value, list) or any(
+        not isinstance(item, str) or not item.strip() for item in value
+    ):
+        raise AgentInvocationError(
+            f"change planner returned invalid {label}", code="invalid_agent_output"
+        )
+    return tuple(sorted(set(item.strip() for item in value)))
+
+
+def _parse_change_plan(
+    change_id: str, response: dict[str, Any]
+) -> _ChangePlan:
+    strategy = response.get("strategy")
+    summary = response.get("summary")
+    raw_units = response.get("units")
+    if strategy not in {"single", "parallel"} or not isinstance(summary, str) or not summary.strip():
+        raise AgentInvocationError(
+            "change planner returned an invalid strategy", code="invalid_agent_output"
+        )
+    if not isinstance(raw_units, list):
+        raise AgentInvocationError(
+            "change planner returned invalid work items", code="invalid_agent_output"
+        )
+    if strategy == "single":
+        if raw_units:
+            raise AgentInvocationError(
+                "single change plan must not contain work items", code="invalid_agent_output"
+            )
+        return _ChangePlan("single", summary.strip())
+    if not 2 <= len(raw_units) <= 8:
+        raise AgentInvocationError(
+            "parallel change plan must contain two to eight work items",
+            code="invalid_agent_output",
+        )
+
+    labels: list[str] = []
+    rows: list[dict[str, Any]] = []
+    for raw in raw_units:
+        if not isinstance(raw, dict):
+            raise AgentInvocationError(
+                "change planner returned an invalid work item", code="invalid_agent_output"
+            )
+        label = raw.get("id")
+        if not isinstance(label, str) or not git.valid_id(label):
+            raise AgentInvocationError(
+                "change planner returned an invalid work item id", code="invalid_agent_output"
+            )
+        if label in labels:
+            raise AgentInvocationError(
+                f"change planner returned duplicate work item '{label}'",
+                code="invalid_agent_output",
+            )
+        labels.append(label)
+        rows.append(raw)
+
+    identifiers = {label: f"{change_id}.{label}" for label in labels}
+    units: list[_ChangeUnit] = []
+    for raw, label in zip(rows, labels, strict=True):
+        objective = raw.get("objective")
+        if not isinstance(objective, str) or not objective.strip():
+            raise AgentInvocationError(
+                f"change planner returned no objective for '{label}'",
+                code="invalid_agent_output",
+            )
+        raw_dependencies = _string_tuple(raw.get("dependencies"), f"dependencies for '{label}'")
+        missing = [item for item in raw_dependencies if item not in identifiers]
+        if missing:
+            raise AgentInvocationError(
+                f"change planner made '{label}' depend on missing work item '{missing[0]}'",
+                code="invalid_agent_output",
+            )
+        units.append(
+            _ChangeUnit(
+                identifier=identifiers[label],
+                label=label,
+                objective=objective.strip(),
+                dependencies=tuple(identifiers[item] for item in raw_dependencies),
+                paths=_string_tuple(raw.get("paths"), f"paths for '{label}'"),
+                interfaces=_string_tuple(raw.get("interfaces"), f"interfaces for '{label}'"),
+                governance=_string_tuple(raw.get("governance"), f"governance for '{label}'"),
+                provides=_string_tuple(raw.get("provides"), f"provides for '{label}'"),
+                relies_on=_string_tuple(raw.get("relies_on"), f"relies_on for '{label}'"),
+                verifies=_string_tuple(raw.get("verifies"), f"verifiers for '{label}'"),
+            )
+        )
+    return _ChangePlan("parallel", summary.strip(), tuple(units))
+
+
+def _plan_change(
+    provider: AgentProvider,
+    repo: Path,
+    change_id: str,
+    goal: str,
+    *,
+    model: str | None,
+    timeout: int,
+) -> tuple[_ChangePlan, dict[str, Any]]:
+    try:
+        result = invoke(
+            provider,
+            repo,
+            _change_plan_prompt(repo, goal),
+            _change_plan_schema(),
+            model=model,
+            timeout=timeout,
+        )
+    except AgentInvocationError:
+        raise
+    return _parse_change_plan(change_id, result.response), result.usage
+
+
+def _change_plan_path(repo: Path, change_id: str) -> Path:
+    return receipts.task_root(repo, change_id) / "coordination-plan.yml"
+
+
+def _runtime_plan_path(repo: Path, change_id: str) -> Path:
+    return coordinate.runtime_root(repo) / "plans" / f"{change_id}.yml"
+
+
+def _persist_change_plan(
+    repo: Path,
+    change_id: str,
+    goal: str,
+    plan: _ChangePlan,
+    *,
+    target: str,
+    ground: str,
+    domains: list[str],
+) -> None:
+    receipt = receipts.load(repo, change_id)
+    coordination_state = {
+        "strategy": plan.strategy,
+        "summary": plan.summary,
+        "plan": change_id if plan.parallel else "",
+        "units": [unit.identifier for unit in plan.units],
+    }
+    if not plan.parallel:
+        receipt["coordination"] = coordination_state
+        receipts.save(repo, change_id, receipt)
+        return
+    document = {
+        "version": 1,
+        "id": change_id,
+        "goal": goal.strip(),
+        "summary": plan.summary,
+        "integration_target": target,
+        "integration_ground": ground,
+        "domains": sorted(set(domains)),
+        "governing_digest": governance.digest(repo, domains),
+        "units": [unit.plan_row() for unit in plan.units],
+    }
+    local = _change_plan_path(repo, change_id)
+    runtime = _runtime_plan_path(repo, change_id)
+    local.parent.mkdir(parents=True, exist_ok=True)
+    runtime.parent.mkdir(parents=True, exist_ok=True)
+    dump_yaml(local, document)
+    dump_yaml(runtime, document)
+    try:
+        coordinate.validate_plan(repo, change_id)
+    except InvariantError:
+        local.unlink(missing_ok=True)
+        runtime.unlink(missing_ok=True)
+        raise
+    receipt["coordination"] = coordination_state
+    receipts.save(repo, change_id, receipt)
+
+
+def _load_change_plan(repo: Path, change_id: str) -> _ChangePlan | None:
+    path = _change_plan_path(repo, change_id)
+    if not path.is_file():
+        return None
+    raw = load_yaml(path)
+    if not isinstance(raw, dict) or raw.get("version") != 1:
+        raise InvariantError(
+            f"Invariant: saved parallel plan for '{change_id}' is invalid",
+            code="invalid_plan",
+        )
+    runtime = _runtime_plan_path(repo, change_id)
+    if not runtime.is_file():
+        runtime.parent.mkdir(parents=True, exist_ok=True)
+        dump_yaml(runtime, raw)
+    coordinate.validate_plan(repo, change_id)
+    units: list[_ChangeUnit] = []
+    for row in raw.get("units", []):
+        if not isinstance(row, dict):
+            raise InvariantError(
+                f"Invariant: saved parallel plan for '{change_id}' is invalid",
+                code="invalid_plan",
+            )
+        identifier = str(row.get("id") or "")
+        label = identifier.removeprefix(f"{change_id}.")
+        units.append(
+            _ChangeUnit(
+                identifier=identifier,
+                label=label,
+                objective=str(row.get("objective") or ""),
+                dependencies=_string_tuple(row.get("dependencies", []), f"dependencies for '{label}'"),
+                paths=_string_tuple(row.get("paths", []), f"paths for '{label}'"),
+                interfaces=_string_tuple(row.get("interfaces", []), f"interfaces for '{label}'"),
+                governance=_string_tuple(row.get("governance", []), f"governance for '{label}'"),
+                provides=_string_tuple(row.get("provides", []), f"provides for '{label}'"),
+                relies_on=_string_tuple(row.get("relies_on", []), f"relies_on for '{label}'"),
+                verifies=_string_tuple(row.get("verifies", []), f"verifiers for '{label}'"),
+            )
+        )
+    return _ChangePlan(
+        "parallel",
+        str(raw.get("summary") or "Resumed saved parallel plan."),
+        tuple(units),
+    )
+
+
+def _coordination_state_path(repo: Path, change_id: str) -> Path:
+    return receipts.task_root(repo, change_id) / "coordination-state.yml"
+
+
+def _load_coordination_state(repo: Path, change_id: str) -> dict[str, dict[str, str]]:
+    path = _coordination_state_path(repo, change_id)
+    if not path.is_file():
+        return {}
+    raw = load_yaml(path)
+    rows = raw.get("units", []) if isinstance(raw, dict) else []
+    return {
+        str(row.get("id")): {str(key): str(value) for key, value in row.items()}
+        for row in rows
+        if isinstance(row, dict) and row.get("id")
+    }
+
+
+def _save_coordination_state(
+    repo: Path, change_id: str, state: dict[str, dict[str, str]]
+) -> None:
+    dump_yaml(
+        _coordination_state_path(repo, change_id),
+        {"version": 1, "plan": change_id, "units": list(state.values())},
+    )
+
+
+def _unit_branch(change_id: str, label: str) -> str:
+    return f"invariant/work/{change_id}-{label}-{secrets.token_hex(6)}"
+
+
+def _ensure_unit_worktree(
+    repo: Path,
+    change_id: str,
+    unit: _ChangeUnit,
+    base: str,
+    target: str,
+    state: dict[str, dict[str, str]],
+) -> tuple[str, Path]:
+    saved = state.get(unit.identifier, {})
+    branch = saved.get("branch", "")
+    worktree_value = saved.get("worktree", "")
+    worktree = Path(worktree_value) if worktree_value else None
+    if not branch or not git.branch_exists(repo, branch) or worktree is None or not worktree.is_dir():
+        branch = _unit_branch(change_id, unit.label)
+        worktree = coordinate.ensure_runtime(repo) / "worktrees" / branch.removeprefix("invariant/work/")
+        if git.branch_exists(repo, branch) or worktree.exists():
+            raise InvariantError(
+                f"Invariant: generated work item '{unit.label}' already exists",
+                code="task_worktree_exists",
+            )
+        git.run(
+            ["worktree", "add", "--quiet", "-b", branch, str(worktree), base],
+            cwd=repo,
+        )
+        worktree = worktree.resolve()
+        state[unit.identifier] = {
+            "id": unit.identifier,
+            "label": unit.label,
+            "status": "active",
+            "base": base,
+            "branch": branch,
+            "worktree": str(worktree),
+        }
+        _save_coordination_state(repo, change_id, state)
+    lease = coordinate.runtime_root(repo) / "leases" / f"{unit.identifier}.yml"
+    if lease.is_file():
+        coordinate.renew_lease(repo, unit.identifier)
+    else:
+        coordinate.create_lease(
+            repo,
+            unit.identifier,
+            paths=unit.paths,
+            interfaces=unit.interfaces,
+            governance_claims=unit.governance,
+            branch=branch,
+            worktree=str(worktree),
+            task=change_id,
+            owner=f"change:{change_id}",
+            integration_target=target,
+        )
+    return branch, worktree
+
+
+def _change_unit_prompt(
+    repo: Path, change_id: str, goal: str, unit: _ChangeUnit
+) -> str:
+    dependencies = ", ".join(unit.dependencies) or "none"
+    return (
+        "You are implementing one work item in an Invariant-managed parallel change. Read the "
+        "repository instructions and inspect the converged checkout before editing. Work only in "
+        "the current checkout and only within the owned path prefixes below. Implement the objective "
+        "completely and run its declared verification. Do not invoke Invariant, create commits, push, "
+        "publish, or edit unrelated paths. Dependency providers have already converged into this "
+        "checkout; consume their current contract rather than reconstructing an older assumption. "
+        "Leave completed edits in the working tree and end with a concise summary.\n\n"
+        f"Change ID: {change_id}\nOverall request:\n{goal.strip()}\n\n"
+        f"Work item: {unit.label}\nObjective: {unit.objective}\n"
+        f"Dependencies: {dependencies}\nOwned paths: {', '.join(unit.paths)}\n"
+        f"Interfaces: {', '.join(unit.interfaces) or 'none'}\n"
+        f"Governance: {', '.join(unit.governance) or 'none'}\n"
+        f"Provides: {', '.join(unit.provides) or 'none'}\n"
+        f"Relies on: {', '.join(unit.relies_on) or 'none'}\n"
+        f"Verify: {', '.join(unit.verifies)}\n"
+        f"{_grounding_prompt(repo)}"
+    )
+
+
+def _validate_unit_paths(unit: _ChangeUnit, changed: list[str]) -> None:
+    for path in changed:
+        if not any(governance.paths_related(path, claim) for claim in unit.paths):
+            raise Blocked(
+                f"Invariant: parallel work item '{unit.label}' changed unclaimed path '{path}'",
+                code="parallel_claim_violation",
+                lines=[
+                    f"WORK-ITEM: {unit.label}",
+                    f"CLAIMS: {', '.join(unit.paths)}",
+                    "RECOVERY: work item branch and worktree retained; aggregate candidate unchanged",
+                ],
+            )
+
+
+def _prepare_parallel_unit(
+    provider: AgentProvider,
+    worktree: Path,
+    change_id: str,
+    goal: str,
+    unit: _ChangeUnit,
+    *,
+    model: str | None,
+    timeout: int,
+) -> AgentWriteResult:
+    return invoke_change(
+        provider,
+        worktree,
+        _change_unit_prompt(worktree, change_id, goal, unit),
+        model=model,
+        timeout=timeout,
+    )
+
+
+def _merge_parallel_unit(
+    repo: Path,
+    convergence: Path,
+    change_id: str,
+    unit: _ChangeUnit,
+    branch: str,
+    worktree: Path,
+) -> None:
+    merged = git.run(
+        [
+            "merge",
+            "--no-ff",
+            "-m",
+            f"Invariant work item: {unit.label}",
+            "-m",
+            f"Invariant-Plan: {change_id}\nInvariant-Work-Item: {unit.identifier}",
+            branch,
+        ],
+        cwd=convergence,
+        check=False,
+    )
+    if merged.returncode:
+        git.run(["merge", "--abort"], cwd=convergence, check=False)
+        raise Blocked(
+            f"Invariant: parallel work item '{unit.label}' did not converge cleanly",
+            code="merge_conflict",
+            lines=[
+                f"GIT: {merged.stderr or merged.stdout or 'merge conflict'}",
+                "RECOVERY: work item branch retained; integration target unchanged",
+            ],
+        )
+
+
+def _cleanup_parallel_unit(
+    repo: Path,
+    convergence: Path,
+    unit: _ChangeUnit,
+    branch: str,
+    worktree: Path,
+) -> None:
+    coordinate.release_lease(repo, unit.identifier, missing_ok=True)
+    if worktree.is_dir():
+        git.run(["worktree", "remove", str(worktree)], cwd=repo, check=False)
+    convergence_head = git.resolve(convergence, "HEAD") or ""
+    if (
+        convergence_head
+        and git.branch_exists(repo, branch)
+        and git.is_ancestor(repo, f"refs/heads/{branch}", convergence_head)
+    ):
+        git.run(["branch", "-D", branch], cwd=repo, check=False)
+
+
+def _aggregate_usage(values: list[dict[str, Any]]) -> dict[str, Any]:
+    usage: dict[str, Any] = {}
+    for value in values:
+        for name, item in value.items():
+            prior = usage.get(name)
+            usage[name] = (
+                prior + item
+                if isinstance(prior, (int, float)) and isinstance(item, (int, float))
+                else item
+            )
+    return usage
+
+
+def _run_parallel_change(
+    repo: Path,
+    convergence: Path,
+    change_id: str,
+    goal: str,
+    plan: _ChangePlan,
+    provider: AgentProvider,
+    *,
+    target: str,
+    model: str | None,
+    timeout: int,
+) -> AgentWriteResult:
+    state = _load_coordination_state(repo, change_id)
+    completed = {
+        identifier
+        for identifier, row in state.items()
+        if row.get("status") == "merged"
+    }
+    messages: list[str] = []
+    sessions: list[str] = []
+    usages: list[dict[str, Any]] = []
+    units = {unit.identifier: unit for unit in plan.units}
+    for identifier in completed:
+        row = state[identifier]
+        unit = units.get(identifier)
+        if unit is not None and row.get("branch") and row.get("worktree"):
+            _cleanup_parallel_unit(
+                repo,
+                convergence,
+                unit,
+                row["branch"],
+                Path(row["worktree"]),
+            )
+    while len(completed) < len(units):
+        ready = [
+            unit
+            for unit in plan.units
+            if unit.identifier not in completed
+            and set(unit.dependencies).issubset(completed)
+        ]
+        if not ready:
+            raise InvariantError(
+                f"Invariant: parallel plan '{change_id}' has no dispatchable work item",
+                code="invalid_plan",
+            )
+        base = git.resolve(convergence, "HEAD") or ""
+        prepared: dict[str, tuple[_ChangeUnit, str, Path, AgentWriteResult | None]] = {}
+        to_invoke: list[tuple[_ChangeUnit, str, Path]] = []
+        for unit in ready:
+            branch, worktree = _ensure_unit_worktree(
+                repo, change_id, unit, base, target, state
+            )
+            row = state[unit.identifier]
+            branch_head = git.resolve(worktree, "HEAD") or ""
+            if row.get("status") == "prepared" and branch_head != row.get("base"):
+                prepared[unit.identifier] = (unit, branch, worktree, None)
+            else:
+                to_invoke.append((unit, branch, worktree))
+
+        failures: list[Exception] = []
+        if to_invoke:
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=min(4, len(to_invoke))
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        _prepare_parallel_unit,
+                        provider,
+                        worktree,
+                        change_id,
+                        goal,
+                        unit,
+                        model=model,
+                        timeout=timeout,
+                    ): (unit, branch, worktree)
+                    for unit, branch, worktree in to_invoke
+                }
+                for future in concurrent.futures.as_completed(futures):
+                    unit, branch, worktree = futures[future]
+                    try:
+                        result = future.result()
+                        changed = git.changed_paths(worktree)
+                        _validate_unit_paths(unit, changed)
+                        commit = _commit_candidate(worktree, unit.objective)
+                        state[unit.identifier].update(
+                            {"status": "prepared", "commit": commit, "summary": result.message}
+                        )
+                        _save_coordination_state(repo, change_id, state)
+                        prepared[unit.identifier] = (unit, branch, worktree, result)
+                    except Exception as exc:
+                        failures.append(exc)
+        if failures:
+            raise failures[0]
+
+        for unit in ready:
+            prepared_unit, branch, worktree, result = prepared[unit.identifier]
+            _merge_parallel_unit(
+                repo, convergence, change_id, prepared_unit, branch, worktree
+            )
+            state[unit.identifier]["status"] = "merged"
+            _save_coordination_state(repo, change_id, state)
+            _cleanup_parallel_unit(
+                repo, convergence, prepared_unit, branch, worktree
+            )
+            completed.add(unit.identifier)
+            if result is not None:
+                messages.append(f"{unit.label}: {result.message}")
+                if result.session_id:
+                    sessions.append(result.session_id)
+                usages.append(result.usage)
+    return AgentWriteResult(
+        provider,
+        " ".join(messages),
+        ",".join(sessions),
+        _aggregate_usage(usages),
+    )
+
+
+def _acquire_convergence_lease(
+    repo: Path,
+    change_id: str,
+    convergence: Path,
+    plan: _ChangePlan,
+    *,
+    target: str,
+    base: str,
+    domains: list[str],
+    selected_interfaces: list[str],
+) -> None:
+    paths = sorted({path for unit in plan.units for path in unit.paths})
+    interfaces = sorted(
+        {name for unit in plan.units for name in unit.interfaces}.union(
+            selected_interfaces
+        )
+    )
+    governance_claims = {claim for unit in plan.units for claim in unit.governance}
+    context = governance.context_result(
+        convergence,
+        paths=git.changed_paths(convergence, base),
+        base=base,
+        domains_selected=domains,
+        interfaces=interfaces,
+    )
+    governance_claims.update(
+        f"{item.kind}:{item.identifier}" for item in context.affected
+    )
+    lease = coordinate.runtime_root(repo) / "leases" / f"{change_id}.yml"
+    if lease.is_file():
+        coordinate.release_lease(repo, change_id)
+    coordinate.create_lease(
+        repo,
+        change_id,
+        paths=paths,
+        interfaces=interfaces,
+        governance_claims=sorted(governance_claims),
+        domains=domains,
+        digest=governance.digest(repo, domains) if domains else None,
+        branch=git.current_branch(convergence),
+        worktree=str(convergence),
+        task=change_id,
+        owner=f"change:{change_id}:convergence",
+        integration_target=target,
+    )
+
+
 def _change_prompt(repo: Path, change_id: str, goal: str) -> str:
     return (
         "You are implementing one repository change inside an Invariant-managed isolated "
@@ -1786,8 +2484,12 @@ def _finish_change(
     subject: str,
     model: str | None,
     timeout: int,
+    checks: tuple[str, ...] = (),
 ) -> dict[str, Any]:
-    payload = _core(repo, "task", "finish", change_id, "--subject", subject)
+    arguments = ["task", "finish", change_id, "--subject", subject]
+    for check in checks:
+        arguments.extend(["--check", check])
+    payload = _core(repo, *arguments)
     _resolve_actions(repo, change_id, provider, model=model, timeout=timeout)
     task = _task(repo, change_id)
     if task.get("stage") != "completed":
@@ -1839,24 +2541,98 @@ def _change(args: argparse.Namespace) -> CommandResult:
         for value in values:
             begin.extend([option, value])
     _core(repo, *begin)
+    plan: _ChangePlan | None = None
+    plan_usage: dict[str, Any] = {}
     try:
         with style.activity("Preparing managed change", done="Prepared managed change"):
             _resolve_actions(
                 repo, change_id, provider, model=args.model, timeout=args.timeout
             )
             worktree = _worktree(repo, change_id)
-        with style.activity(
-            f"{_provider_name(provider)} is implementing the change",
-            done=f"{_provider_name(provider)} implemented the change",
-        ):
-            agent = invoke_change(
-                provider,
-                worktree,
-                _change_prompt(worktree, change_id, args.prompt),
-                model=args.model,
-                timeout=args.timeout,
+            task = _task(repo, change_id)
+            integration = task.get("integration")
+            target = (
+                str(integration.get("target") or "")
+                if isinstance(integration, dict)
+                else ""
             )
-        candidate_commit = _commit_candidate(worktree, args.prompt)
+            base = (
+                str(integration.get("base") or "")
+                if isinstance(integration, dict)
+                else ""
+            )
+        plan = _load_change_plan(repo, change_id)
+        if plan is None:
+            with style.activity(
+                "Choosing the smallest safe execution plan",
+                done="Chose the execution plan",
+            ):
+                plan, plan_usage = _plan_change(
+                    provider,
+                    worktree,
+                    change_id,
+                    args.prompt,
+                    model=args.model,
+                    timeout=args.timeout,
+                )
+                _persist_change_plan(
+                    repo,
+                    change_id,
+                    args.prompt,
+                    plan,
+                    target=target,
+                    ground=base,
+                    domains=args.domain,
+                )
+        if plan.parallel:
+            with style.activity(
+                f"{_provider_name(provider)} is implementing {len(plan.units)} coordinated work items",
+                done=f"{_provider_name(provider)} implemented the coordinated work items",
+            ):
+                agent = _run_parallel_change(
+                    repo,
+                    worktree,
+                    change_id,
+                    args.prompt,
+                    plan,
+                    provider,
+                    target=target,
+                    model=args.model,
+                    timeout=args.timeout,
+                )
+            candidate_commit = git.resolve(worktree, "HEAD") or ""
+            if not candidate_commit or candidate_commit == base:
+                raise Blocked(
+                    "Invariant: parallel workers completed without changing the candidate",
+                    code="empty_change",
+                )
+            _acquire_convergence_lease(
+                repo,
+                change_id,
+                worktree,
+                plan,
+                target=target,
+                base=base,
+                domains=args.domain,
+                selected_interfaces=args.interface,
+            )
+            checks = tuple(
+                sorted({check for unit in plan.units for check in unit.verifies})
+            )
+        else:
+            with style.activity(
+                f"{_provider_name(provider)} is implementing the change",
+                done=f"{_provider_name(provider)} implemented the change",
+            ):
+                agent = invoke_change(
+                    provider,
+                    worktree,
+                    _change_prompt(worktree, change_id, args.prompt),
+                    model=args.model,
+                    timeout=args.timeout,
+                )
+            candidate_commit = _commit_candidate(worktree, args.prompt)
+            checks = ()
         subject_text = re.sub(r"\s+", " ", args.prompt).strip()[:64]
         with style.activity(
             "Verifying and landing the exact change", done="Verified and landed the exact change"
@@ -1868,6 +2644,7 @@ def _change(args: argparse.Namespace) -> CommandResult:
                 subject=f"Invariant change: {subject_text}",
                 model=args.model,
                 timeout=args.timeout,
+                checks=checks,
             )
     except AgentInvocationError as exc:
         raise _identify(_agent_error(exc), "CHANGE", change_id) from exc
@@ -1879,6 +2656,11 @@ def _change(args: argparse.Namespace) -> CommandResult:
     lines = [
         f"CHANGE: {change_id}",
         f"AGENT: {provider.value}",
+        (
+            f"PLAN: parallel — {len(plan.units)} work items"
+            if plan and plan.parallel
+            else "PLAN: single"
+        ),
         "STATUS: complete",
         f"COMMIT: {landed or candidate_commit}",
     ]
@@ -1894,8 +2676,13 @@ def _change(args: argparse.Namespace) -> CommandResult:
             "candidate_commit": candidate_commit,
             "commit": landed,
             "session_id": agent.session_id,
-            "usage": agent.usage,
+            "usage": _aggregate_usage([plan_usage, agent.usage]),
             "summary": agent.message,
+            "plan": {
+                "strategy": plan.strategy if plan else "single",
+                "summary": plan.summary if plan else "",
+                "units": [unit.plan_row() for unit in plan.units] if plan else [],
+            },
             **finished,
         },
     )

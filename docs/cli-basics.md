@@ -128,6 +128,12 @@ needs one:
 invariant change --id PROJ-142 "Restore active jobs after restart"
 ```
 
+Before implementation, `change` decides whether the request is one coherent work item or contains
+genuinely independent work. Small changes stay single. Disjoint ready work items run concurrently in
+isolated worktrees. When one work item creates or changes a contract, its consumers wait and then
+start from the converged contract snapshot; unrelated frontend and backend work may still proceed in
+parallel.
+
 Establish or refresh durable repository records:
 
 ```bash

@@ -405,6 +405,13 @@ def complete(repo: Path, task: str, landed_commit: str) -> Path:
         },
         "assurance": receipt.get("assurance", {}),
     }
+    coordination = (
+        receipt.get("coordination")
+        if isinstance(receipt.get("coordination"), dict)
+        else {}
+    )
+    if coordination:
+        summary["coordination"] = coordination
     coordinate.ensure_runtime(repo)
     local_task = task_root(repo, task)
     local_task.mkdir(parents=True, exist_ok=True)
@@ -420,4 +427,9 @@ def complete(repo: Path, task: str, landed_commit: str) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(local_task), str(destination))
     receipt_path(repo, task).unlink(missing_ok=True)
+    plan = str(coordination.get("plan") or "")
+    if plan:
+        (coordinate.runtime_root(repo) / "plans" / f"{plan}.yml").unlink(
+            missing_ok=True
+        )
     return destination

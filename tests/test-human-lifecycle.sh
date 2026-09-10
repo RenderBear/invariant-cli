@@ -53,6 +53,9 @@ request=$(cat)
 printf '%s\n' "$request" >>"$FAKE_AGENT_STDIN"
 if [ "$schema" = true ]; then
   case "$request" in
+    *"Classify one requested repository change"*)
+      printf '%s\n' '{"strategy":"single","summary":"One cohesive fixture edit.","units":[]}' >"$output"
+      ;;
     *"Request kind: governance.audit"*)
       printf '%s\n' '{"version":1,"findings":[]}' >"$output"
       ;;
