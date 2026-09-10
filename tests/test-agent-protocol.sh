@@ -109,7 +109,8 @@ printf '%s\n' "$prepared" | grep -q '".invariant/audits/' || die "assessment pre
 [ -f "$governance/.invariant/runtime/tasks/baseline-governance/prepared-assessment.yml" ] ||
   die "assessment preparation did not save its ignored runtime draft"
 status=$(cd "$governance" && "$cli" status)
-printf '%s\n' "$status" | grep -q '^CHANGE: baseline-governance (implementing)$' || die "top-level status omitted the active change"
+printf '%s\n' "$status" | grep -q '^CHANGE: Repository records — ready to resume$' ||
+  die "top-level status did not translate the resumable repository-record change"
 ok "a governance pass keeps audit and adoption inside one resumable managed session"
 
 deferred="$fixtures/deferred"
@@ -266,9 +267,18 @@ governance: []
 architecture_reviews: []
 checks: [test:checks/verify.sh]
 EOF
-out=$(cd "$automatic" && "$cli" candidate verify "$branch" --assessment "$assessment")
+if ! out=$(cd "$automatic" && VIRTUAL_ENV="$fixtures/foreign-environment" \
+  UV_PROJECT_ENVIRONMENT="$fixtures/also-foreign" \
+  "$cli" candidate verify "$branch" --assessment "$assessment" 2>&1); then
+  printf '%s\n' "$out"
+  die "built-in shell verifier failed under a foreign host environment"
+fi
 printf '%s\n' "$out" | grep -q '^CHECK: passed — test:checks/verify.sh$' ||
   die "built-in shell verifier did not execute"
+automatic_log=$(printf '%s\n' "$out" | sed -n 's/^LOG: //p' | tail -n 1)
+if grep -q 'does not match the project environment path' "$automatic_log"; then
+  die "locked project verifier inherited the host checkout virtualenv"
+fi
 receipt=$(grep -l '^locator: test:checks/verify.sh$' "$automatic"/.invariant/runtime/verifications/*.yml)
 grep -q '^- uv$' "$receipt" || die "verification receipt omitted the resolved uv command"
 grep -q '^- --frozen$' "$receipt" || die "built-in uv verifier was not frozen"

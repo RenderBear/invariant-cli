@@ -477,18 +477,24 @@ the two controls separate: `authority` determines who approves the findings, whi
 determines whether the resulting task branch, verification, and landing advance automatically.
 With agent authority, audit through adoption is one autonomous governance pass. With human authority,
 the saved audit is summarized before the human chooses deeper investigation, adoption of all ready
-findings, adoption of selected findings, or deferral.
+findings, adoption of selected findings, or deferral. The human-facing establishment command owns
+that interaction and the exact-proposal acceptance; the user is never handed task, action,
+worktree, or governance-protocol commands.
 
 A governance pass is exposed as one resumable session while preserving distinct audit, adoption,
 and verification phases. The first pass establishes durable governance; later passes reconcile it
 with the current committed integration state. The managed worktree is opened before audit
 persistence, eliminating an incidental audit-only commit between `audit save` and task creation.
 Under agent authority, saving the audit automatically selects its ready findings and advances the
-session to adoption.
+session to adoption. A bare `invariant establish` resumes the newest compatible unfinished pass;
+human status collapses equivalent attempts and describes persisted resumability separately from
+foreground process activity.
 
 Ordinary `test:` verifier locators require no configuration. The verifier resolves execution from
 the exact candidate: Python tests locate the nearest `pyproject.toml`; shell tests in a locked uv
 project execute through `uv run --frozen`; standalone shell tests execute through POSIX `sh`.
+Candidate uv execution discards host-checkout virtual-environment selection so invoking Invariant
+itself through `uv run` cannot redirect or stall the verifier environment.
 Automatic reuse is enabled only for a locked environment and the same exact candidate tree.
 Resolved commands, working directories, timeouts, environment fingerprints, cache decisions, and
 logs are evidence recorded under ignored runtime state, not governance. Named `runner:` locators

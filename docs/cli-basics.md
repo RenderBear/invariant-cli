@@ -175,9 +175,11 @@ The human surface uses a small vocabulary even though the underlying protocol is
 | Check | A test, schema check, command, or other executable observation. |
 | Land | Atomically apply the checked change to its local landing branch. |
 
-Status uses `planning`, `working`, `waiting`, `checking`, `reviewing`, `needs your decision`,
-`blocked`, and `complete`. Impact is rendered as `routine`, `covered`, `unclear`, `records updated`,
-or `contract change`. Findings remain `open` until they have an attributable resolution.
+Status uses `ready to resume`, `needs retry`, `needs confirmation`, `needs your decision`,
+`needs attention`, and `complete`. These are persisted states, not process states: Invariant has no
+background workers, and model-backed operations run only in the foreground command that invoked
+them. Impact is rendered as `routine`, `covered`, `unclear`, `records updated`, or `contract
+change`. Findings remain `open` until they have an attributable resolution.
 
 Terms such as governance, disposition, reach, boundary, candidate, unit, and lease belong to the
 automation protocol and do not appear in normal human output.
@@ -251,6 +253,16 @@ to reconcile stale or incomplete records:
 ```bash
 invariant establish
 ```
+
+The bare command resumes the latest compatible unfinished establishment; an explicit ID is not
+needed after a stopped run. A failed check reports its terminal state, confirms that no process is
+still running, preserves the proposal, and points back to the same bare command. Equivalent older
+attempts collapse into one `Repository records` item in human-facing status.
+
+With agent authority and automatic execution, the agent owns finding selection and the lifecycle
+owns projection, checking, and landing. With human authority, the same command asks only which
+findings to record and whether to accept the exact proposal; it translates those answers into the
+protocol and continues the mechanics itself.
 
 The equivalent protocol sequence begins with:
 

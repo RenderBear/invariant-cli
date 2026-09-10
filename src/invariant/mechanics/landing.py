@@ -772,6 +772,17 @@ def _verification_paths(repo: Path, key: str) -> tuple[Path, Path]:
     return root / f"{key}.yml", root / f"{key}.log"
 
 
+def _verification_environment(command: tuple[str, ...]) -> dict[str, str]:
+    environment = os.environ.copy()
+    if command[:2] == ("uv", "run"):
+        # A verifier executes from an exact candidate worktree. Reusing the parent command's
+        # project environment can make uv wait on or silently select a different checkout's
+        # environment, especially when Invariant itself was launched through `uv run`.
+        environment.pop("VIRTUAL_ENV", None)
+        environment.pop("UV_PROJECT_ENVIRONMENT", None)
+    return environment
+
+
 def _run_locator(
     repo: Path, locator: str, candidate: Candidate
 ) -> tuple[list[str], bool, dict[str, object]]:
@@ -817,6 +828,7 @@ def _run_locator(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=resolved.timeout or None,
+            env=_verification_environment(resolved.command),
         )
     except subprocess.TimeoutExpired as exc:
         combined = "".join(
@@ -841,7 +853,11 @@ def _run_locator(
         raise Blocked(
             f"Invariant: verifier timed out — {locator}",
             code="verification_failed",
-            lines=[*output, *combined.rstrip("\n").splitlines(), f"LOG: {log_path}"],
+            lines=[
+                f"CHECK: timed out after {resolved.timeout}s — {locator}",
+                *combined.rstrip("\n").splitlines(),
+                f"LOG: {log_path}",
+            ],
         ) from exc
     combined = ""
     if completed.stdout:
@@ -866,7 +882,11 @@ def _run_locator(
         raise Blocked(
             f"Invariant: verifier failed — {locator}",
             code="verification_failed",
-            lines=[*output, *combined.rstrip("\n").splitlines(), f"LOG: {log_path}"],
+            lines=[
+                f"CHECK: failed with exit {completed.returncode} — {locator}",
+                *combined.rstrip("\n").splitlines(),
+                f"LOG: {log_path}",
+            ],
         )
     return [*output, f"CHECK: passed — {locator}", f"LOG: {log_path}"], False, result_payload
 

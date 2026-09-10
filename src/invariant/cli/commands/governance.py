@@ -41,6 +41,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     selection = adopt.add_mutually_exclusive_group(required=True)
     selection.add_argument("--all-ready", action="store_true")
     selection.add_argument("--finding", action="append")
+    selection.add_argument("--none", action="store_true")
     adopt.set_defaults(_handler=_adopt, _command="governance.adopt")
 
     project = commands.add_parser(
@@ -239,6 +240,8 @@ def _adopt(args: argparse.Namespace) -> list[str]:
     selected = (
         sorted(identifier for identifier, disposition in available.items() if disposition == "adoptable")
         if args.all_ready
+        else []
+        if args.none
         else sorted(set(args.finding or []))
     )
     missing = [identifier for identifier in selected if identifier not in available]

@@ -237,7 +237,7 @@ git -C "$failed_worktree" commit -qm "candidate that fails verification"
 if out=$(cd "$fixture" && "$cli" task finish failed-flow --check command:checks/fail.sh 2>&1); then
   die "failed verifier advanced the lifecycle"
 fi
-printf '%s\n' "$out" | grep -q '^CHECK: running — command:checks/fail.sh$' || die "failed verifier output was hidden"
+printf '%s\n' "$out" | grep -q '^CHECK: failed with exit 1 — command:checks/fail.sh$' || die "failed verifier terminal state was hidden"
 printf '%s\n' "$out" | grep -q '^RECOVERY: receipt and task branch retained; integration target unchanged$' ||
   die "failed finish did not explain retained lifecycle state"
 printf '%s\n' "$out" | grep -q "^NEXT: inspect with 'invariant task status failed-flow'" ||

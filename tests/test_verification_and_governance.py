@@ -26,6 +26,9 @@ def test_command_verifiers_inherit_the_repository_time_limit(tmp_path: Path) -> 
     elapsed = time.perf_counter() - started
     assert code == 1 and codes(payload) == ["verification_failed"], payload
     assert "timed out" in payload["diagnostics"][0]["message"]
+    records = payload["result"]["records"]
+    check = next(item["value"] for item in records if item["name"] == "CHECK")
+    assert check.startswith("timed out after 1s — command:checks/hang.sh")
     assert elapsed < 20, f"the hung verifier held the landing for {elapsed:.0f}s"
     assert git(repo, "cat-file", "-e", "main:src/hang.txt", check=False) == ""
 

@@ -217,6 +217,67 @@ grep -q -- '--sandbox read-only' "$agent_log" ||
   die "ask did not preserve its read-only boundary"
 ok "ask uses the selected provider without --using"
 
+resume_goal="Establish or reconcile the repository's durable responsibilities, decisions, contracts, and constraints from grounded evidence."
+(cd "$repo" && "$cli" governance begin establish-older --goal "$resume_goal" >/dev/null)
+(cd "$repo" && "$cli" governance begin establish-current --goal "$resume_goal" >/dev/null)
+resume_findings="$fixtures/resume-findings.yml"
+printf 'version: 1\nfindings: []\n' >"$resume_findings"
+(cd "$repo" && "$cli" governance audit-save establish-current --input "$resume_findings" >/dev/null)
+resume_preview=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" establish --dry-run)
+printf '%s\n' "$resume_preview" | grep -q '^ESTABLISH: establish-current$' ||
+  die "bare establish did not resume the latest compatible repository-record session"
+printf '%s\n' "$resume_preview" | grep -q '^STATUS: resume$' ||
+  die "resumed establishment was presented as a new attempt"
+resume_status=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" status)
+printf '%s\n' "$resume_status" | grep -q '^STATUS: 1 unfinished change$' ||
+  die "status counted equivalent establishment attempts as separate user work"
+printf '%s\n' "$resume_status" | grep -q '^CHANGE: Repository records — ready to resume$' ||
+  die "status exposed the establishment's internal lifecycle stage"
+printf '%s\n' "$resume_status" | grep -q '^ACTIVITY: foreground commands only — no background workers$' ||
+  die "status did not distinguish retained work from a running process"
+resumed_establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  "$cli" establish)
+printf '%s\n' "$resumed_establishment" | grep -q '^ESTABLISH: establish-current$' ||
+  die "bare establish changed identity while resuming"
+printf '%s\n' "$resumed_establishment" | grep -q '^STATUS: complete$' ||
+  die "bare establish did not complete the retained repository-record session"
+resume_complete_status=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" status)
+printf '%s\n' "$resume_complete_status" | grep -q '^STATUS: ready$' ||
+  die "completed establishment left equivalent older attempts as user-visible work"
+(cd "$repo" && "$cli" task invalidate establish-older --discard >/dev/null)
+ok "establishment resumes as one foreground operation without leaking task stages"
+
+(cd "$repo" && "$cli" set authority human >/dev/null)
+(cd "$repo" && "$cli" governance begin human-establishment --goal "$resume_goal" >/dev/null)
+human_findings="$fixtures/human-findings.yml"
+cat >"$human_findings" <<'EOF'
+version: 1
+findings:
+  - id: application-responsibility
+    summary: The application file is the repository's stable implementation surface.
+    evidence: [repo:app.txt]
+    proposed: domain
+    disposition: adoptable
+    authority: user:task:human-establishment#decision
+EOF
+(cd "$repo" && "$cli" governance audit-save human-establishment --input "$human_findings" >/dev/null)
+if human_decision=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  "$cli" establish --id human-establishment 2>&1); then
+  die "non-interactive human authority bypassed the user's opinion"
+fi
+printf '%s\n' "$human_decision" | grep -q '^STATUS: needs-your-decision$' ||
+  die "human authority did not receive a decision state"
+printf '%s\n' "$human_decision" | grep -q '^REQUEST: choose all, none, or selected audited findings$' ||
+  die "human authority did not receive an opinion-sized request"
+printf '%s\n' "$human_decision" | grep -q '^PROCESS: no background worker — the proposal is preserved$' ||
+  die "human decision output implied that implementation was still running"
+printf '%s\n' "$human_decision" | grep -q '^NEXT: rerun invariant establish in an interactive terminal$' ||
+  die "human decision output exposed a protocol continuation"
+(cd "$repo" && "$cli" task invalidate human-establishment --discard >/dev/null)
+(cd "$repo" && "$cli" set authority agent >/dev/null)
+ok "human authority is asked only for an opinion while mechanics remain managed"
+
 establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
   FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
   "$cli" establish --id fixture-establishment)

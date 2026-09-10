@@ -8,6 +8,7 @@ import shlex
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 import traceback
 from dataclasses import dataclass
@@ -33,8 +34,9 @@ from invariant.harness.providers import (
 )
 from invariant.harness import preferences
 from invariant.lifecycle import bootstrap
-from invariant.mechanics import config, git
+from invariant.mechanics import config, git, receipts
 from invariant.mechanics import governance
+from invariant.mechanics.documents import load_yaml
 from invariant.semantics import sources
 from invariant.semantics.namespaces import Locator, parse_source_scope
 
@@ -1352,6 +1354,337 @@ def _identifier(prefix: str, description: str) -> str:
     return f"{prefix}-{stem}-{secrets.token_hex(4)}"
 
 
+def _is_establishment(receipt: dict[str, Any]) -> bool:
+    return isinstance(receipt.get("governance_run"), dict)
+
+
+def _receipt_is_current(repo: Path, receipt: dict[str, Any]) -> bool:
+    target = str(receipt.get("integration_target") or "")
+    if target != config.resolve(repo).integration_branch:
+        return False
+    if receipt.get("repository") != receipts.repository_identity(repo, target):
+        return False
+    if receipt.get("mechanics_digest") != receipts.mechanics_digest():
+        return False
+    base = str(receipt.get("integration_head") or "")
+    current = receipts.integration_head(repo, target)
+    if "unborn" in {base, current}:
+        return base == current
+    return bool(base and git.is_ancestor(repo, base, current))
+
+
+def _active_receipts(repo: Path) -> list[tuple[Path, dict[str, Any]]]:
+    root = receipts.receipt_root(repo)
+    values: list[tuple[Path, dict[str, Any]]] = []
+    for path in sorted(root.glob("*.yml")) if root.is_dir() else []:
+        try:
+            values.append((path, receipts.load(repo, path.stem)))
+        except InvariantError:
+            continue
+    return values
+
+
+def _resumable_establishment(repo: Path, goal: str) -> str | None:
+    goal_digest = git.hash_text(repo, goal)
+    candidates = [
+        (path.stat().st_mtime_ns, str(receipt.get("task") or path.stem))
+        for path, receipt in _active_receipts(repo)
+        if _is_establishment(receipt)
+        and not receipt.get("superseded_by")
+        and receipt.get("goal_digest") == goal_digest
+        and _receipt_is_current(repo, receipt)
+    ]
+    return max(candidates)[1] if candidates else None
+
+
+def _supersede_equivalent_establishments(
+    repo: Path, goal: str, change_id: str
+) -> None:
+    goal_digest = git.hash_text(repo, goal)
+    for _, receipt in _active_receipts(repo):
+        task = str(receipt.get("task") or "")
+        if (
+            task
+            and task != change_id
+            and _is_establishment(receipt)
+            and receipt.get("goal_digest") == goal_digest
+            and not receipt.get("superseded_by")
+        ):
+            receipt["superseded_by"] = change_id
+            receipts.save(repo, task, receipt)
+
+
+def _remember_establishment_failure(
+    repo: Path, change_id: str, error: InvariantError
+) -> None:
+    try:
+        receipt = receipts.load(repo, change_id)
+    except InvariantError:
+        return
+    details: dict[str, str] = {}
+    for line in error.lines:
+        name, separator, value = line.partition(": ")
+        if separator and name in {"CHECK", "LOG"}:
+            details[name.lower()] = value
+    receipt["last_failure"] = {
+        "code": error.code,
+        "message": error.message.removeprefix("Invariant: "),
+        **details,
+    }
+    receipts.save(repo, change_id, receipt)
+
+
+def _clear_establishment_failure(repo: Path, change_id: str) -> None:
+    try:
+        receipt = receipts.load(repo, change_id)
+    except InvariantError:
+        return
+    if "last_failure" in receipt:
+        receipt.pop("last_failure", None)
+        receipts.save(repo, change_id, receipt)
+
+
+def _present_establishment_failure(
+    error: InvariantError,
+    change_id: str,
+    *,
+    show_identifier: bool,
+) -> InvariantError:
+    detail = [
+        line
+        for line in error.lines
+        if line.startswith(("CHECK: ", "LOG: ", "REQUIRES: "))
+    ]
+    error.lines = [
+        *([f"ESTABLISH: {change_id}"] if show_identifier else []),
+        "STATUS: stopped",
+        "PROCESS: none — the command exited",
+        *detail,
+        "PRESERVED: proposed records and candidate work",
+        (
+            f"NEXT: invariant establish --id {change_id}"
+            if show_identifier
+            else "NEXT: invariant establish"
+        ),
+    ]
+    return error
+
+
+def _human_change_state(
+    repo: Path, receipt: dict[str, Any]
+) -> tuple[str, bool, str]:
+    failure = (
+        receipt.get("last_failure")
+        if isinstance(receipt.get("last_failure"), dict)
+        else {}
+    )
+    if failure:
+        detail = str(failure.get("check") or failure.get("message") or "previous attempt failed")
+        return "needs retry", True, detail
+    lifecycle = (
+        receipt.get("lifecycle")
+        if isinstance(receipt.get("lifecycle"), dict)
+        else {}
+    )
+    stage = str(lifecycle.get("stage") or "briefed")
+    if stage == "awaiting-review" and config.resolve(repo).authority == "human":
+        return "needs your decision", True, ""
+    if stage in {"awaiting-branch", "awaiting-landing"}:
+        return "needs confirmation", True, ""
+    if stage == "cleanup-required":
+        return "needs attention", True, ""
+    return "ready to resume", False, ""
+
+
+def _human_active_changes(repo: Path) -> list[dict[str, Any]]:
+    regular: list[tuple[Path, dict[str, Any]]] = []
+    establishments: dict[str, list[tuple[Path, dict[str, Any]]]] = {}
+    for path, receipt in _active_receipts(repo):
+        if receipt.get("superseded_by"):
+            continue
+        if _is_establishment(receipt):
+            key = str(receipt.get("goal_digest") or receipt.get("task") or path.stem)
+            establishments.setdefault(key, []).append((path, receipt))
+        else:
+            regular.append((path, receipt))
+
+    selected = list(regular)
+    for values in establishments.values():
+        selected.append(
+            max(
+                values,
+                key=lambda item: (
+                    _receipt_is_current(repo, item[1]),
+                    item[0].stat().st_mtime_ns,
+                ),
+            )
+        )
+
+    output: list[dict[str, Any]] = []
+    for _, receipt in selected:
+        establishment = _is_establishment(receipt)
+        state_name, attention, detail = _human_change_state(repo, receipt)
+        output.append(
+            {
+                "id": str(receipt.get("task") or "unknown"),
+                "label": (
+                    "Repository records"
+                    if establishment
+                    else str(receipt.get("task") or "change")
+                ),
+                "state": state_name,
+                "attention": attention,
+                "detail": detail,
+                "establishment": establishment,
+            }
+        )
+    return sorted(output, key=lambda item: (not item["establishment"], item["label"]))
+
+
+def _human_decision_blocked(request: str) -> Blocked:
+    return Blocked(
+        "Invariant: your decision is needed before repository records can change",
+        code="authority_required",
+        lines=[
+            "STATUS: needs-your-decision",
+            f"REQUEST: {request}",
+            "PROCESS: no background worker — the proposal is preserved",
+            "NEXT: rerun invariant establish in an interactive terminal",
+        ],
+    )
+
+
+def _human_finding_decision(repo: Path, change_id: str) -> None:
+    receipt = receipts.load(repo, change_id)
+    session = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    audit_id = str(session.get("audit") or "")
+    lifecycle = (
+        receipt.get("lifecycle")
+        if isinstance(receipt.get("lifecycle"), dict)
+        else {}
+    )
+    worktree = Path(str(lifecycle.get("worktree") or repo))
+    raw = load_yaml(worktree / ".invariant" / "audits" / f"{audit_id}.yml")
+    findings = raw.get("findings", []) if isinstance(raw, dict) else []
+    ready = [
+        item
+        for item in findings
+        if isinstance(item, dict)
+        and item.get("id")
+        and item.get("disposition") == "adoptable"
+    ]
+    if not ready:
+        _core(repo, "governance", "adopt", change_id, "--none")
+        return
+    if not sys.stdin.isatty():
+        raise _human_decision_blocked(
+            "choose all, none, or selected audited findings"
+        )
+
+    print(style.wordmark("Your decision"))
+    print()
+    print("  The agent found these recordable architectural facts:")
+    for index, finding in enumerate(ready, start=1):
+        summary = re.sub(r"\s+", " ", str(finding.get("summary") or "")).strip()
+        print(f"  {index}. {summary or finding['id']}")
+    print()
+    prompt = "Record all, none, or selected numbers (for example 1 3)"
+    while True:
+        answer = input(style.prompt("decide") + prompt + ": ").strip().lower()
+        if answer == "all":
+            _core(repo, "governance", "adopt", change_id, "--all-ready")
+            return
+        if answer == "none":
+            _core(repo, "governance", "adopt", change_id, "--none")
+            return
+        try:
+            indexes = sorted({int(value) for value in re.split(r"[ ,]+", answer) if value})
+        except ValueError:
+            indexes = []
+        if indexes and all(1 <= index <= len(ready) for index in indexes):
+            arguments = ["governance", "adopt", change_id]
+            for index in indexes:
+                arguments.extend(["--finding", str(ready[index - 1]["id"])])
+            _core(repo, *arguments)
+            return
+        print("  Choose all, none, or one or more listed numbers.")
+
+
+def _human_candidate_decisions(repo: Path, change_id: str) -> None:
+    for _ in range(12):
+        task = _task(repo, change_id)
+        actions = [
+            item
+            for item in task.get("actions", [])
+            if isinstance(item, dict) and item.get("id")
+        ]
+        if not actions:
+            return
+        if not sys.stdin.isatty():
+            raise _human_decision_blocked(
+                "accept or reject the exact proposed repository records"
+            )
+        action_id = str(actions[0]["id"])
+        action = _result(_core(repo, "task", "action", change_id, action_id), "action")
+        if not isinstance(action, dict) or action.get("kind") != "review_semantics":
+            raise _human_decision_blocked(
+                f"resolve the pending decision '{action_id}'"
+            )
+        context = action.get("context") if isinstance(action.get("context"), dict) else {}
+        references = [
+            str(item)
+            for item in context.get("governance", [])
+            if isinstance(item, str)
+        ]
+        print(style.wordmark("Accept repository records"))
+        print()
+        print(
+            "  The exact proposal is ready"
+            + (f" ({len(references)} durable references)." if references else ".")
+        )
+        accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
+        if accepted not in {"y", "yes"}:
+            raise _human_decision_blocked(
+                "the proposal was not accepted; it remains available for review"
+            )
+        summary = input(style.prompt("decide") + "Reason (optional): ").strip()
+        prepared = load_yaml(receipts.task_root(repo, change_id) / "prepared-assessment.yml")
+        boundary = prepared.get("boundary") if isinstance(prepared, dict) else {}
+        disposition = (
+            str(boundary.get("disposition") or "no-record")
+            if isinstance(boundary, dict)
+            else "no-record"
+        )
+        response = {
+            "version": 1,
+            "review_id": str(context.get("review_id") or ""),
+            "candidate_tree": str(context.get("candidate_tree") or ""),
+            "verdict": "accepted",
+            "summary": summary or "Accepted the exact proposed repository records.",
+            "semantic_effect": disposition,
+            "authority": f"user:task:{change_id}#review",
+            "review_mode": "independent",
+            "candidate_defects": [],
+            "retained_discoveries": [
+                str(item)
+                for item in context.get("retained_discoveries", [])
+                if isinstance(item, str)
+            ],
+        }
+        with tempfile.TemporaryDirectory(prefix="invariant-human-decision.") as directory:
+            source = Path(directory) / "review.json"
+            source.write_text(json.dumps(response), encoding="utf-8")
+            _core(repo, "task", "respond", change_id, action_id, "--input", str(source))
+    raise Blocked(
+        "Invariant: repository records still need a decision",
+        code="action_limit_reached",
+    )
+
+
 def _task(repo: Path, change_id: str) -> dict[str, Any]:
     value = _result(_core(repo, "task", "status", change_id), "task")
     if not isinstance(value, dict):
@@ -1574,13 +1907,15 @@ def _establish(args: argparse.Namespace) -> CommandResult:
         "Establish or reconcile the repository's durable responsibilities, decisions, "
         "contracts, and constraints from grounded evidence."
     )
-    change_id = args.change_id or _identifier("establish", goal)
+    resumed_id = None if args.change_id else _resumable_establishment(repo, goal)
+    change_id = args.change_id or resumed_id or _identifier("establish", goal)
     preview = {
         "id": change_id,
         "provider": provider.value,
         "operation": "establish",
         "mode": "read-only-audit-then-managed-write",
         "invoked": False,
+        "resumed": resumed_id is not None,
     }
     if args.dry_run:
         return CommandResult(
@@ -1588,7 +1923,7 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                 f"ESTABLISH: {change_id}",
                 f"AGENT: {provider.value}",
                 "MODE: inspect-then-establish",
-                "STATUS: preview",
+                f"STATUS: {'resume' if resumed_id else 'preview'}",
             ],
             preview,
         )
@@ -1603,14 +1938,16 @@ def _establish(args: argparse.Namespace) -> CommandResult:
     final: dict[str, Any] = {}
     try:
         existing: dict[str, Any] | None = None
-        if args.change_id:
-            try:
-                existing = _core(repo, "governance", "status", change_id)
-            except Blocked as exc:
-                if exc.code != "missing_task":
-                    raise
+        try:
+            existing = _core(repo, "governance", "status", change_id)
+        except Blocked as exc:
+            if exc.code != "missing_task":
+                raise
         if existing is None:
             _core(repo, "governance", "begin", change_id, "--goal", goal)
+        if not args.change_id:
+            _supersede_equivalent_establishments(repo, goal, change_id)
+        _clear_establishment_failure(repo, change_id)
 
         task = _task(repo, change_id)
         if task.get("stage") != "completed":
@@ -1639,15 +1976,15 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                 phase = values.get("GOVERNANCE-PHASE", "audit")
 
             if config.resolve(repo).authority == "human" and phase == "decision":
-                raise Blocked(
-                    "Invariant: the repository records are ready for your decision",
-                    code="authority_required",
-                    lines=[
-                        f"ESTABLISH: {change_id}",
-                        "STATUS: needs-your-decision",
-                        f"NEXT: invariant status {change_id}",
-                    ],
-                )
+                _human_finding_decision(repo, change_id)
+                governance_status = _core(repo, "governance", "status", change_id)
+                status_records = _result(governance_status, "records")
+                values = {
+                    str(item.get("name")): str(item.get("value") or "")
+                    for item in status_records or []
+                    if isinstance(item, dict) and item.get("name")
+                }
+                phase = values.get("GOVERNANCE-PHASE", "decision")
 
             if phase in {"decision", "adopt"}:
                 selected = values.get("SELECTED-FINDINGS", "")
@@ -1682,33 +2019,38 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                         "--subject",
                         "Establish repository records",
                     )
-            with style.activity(
-                f"{_provider_name(provider)} is reviewing the result",
-                done=f"{_provider_name(provider)} reviewed the result",
-            ):
-                _resolve_actions(
-                    repo, change_id, provider, model=args.model, timeout=args.timeout
-                )
+            if config.resolve(repo).authority == "human":
+                _human_candidate_decisions(repo, change_id)
+            else:
+                with style.activity(
+                    f"{_provider_name(provider)} is reviewing the result",
+                    done=f"{_provider_name(provider)} reviewed the result",
+                ):
+                    _resolve_actions(
+                        repo, change_id, provider, model=args.model, timeout=args.timeout
+                    )
         task = _task(repo, change_id)
     except AgentInvocationError as exc:
-        error = _identify(_agent_error(exc), "ESTABLISH", change_id)
-        error.lines = [
-            line for line in error.lines if not line.startswith("NEXT:")
-        ]
-        error.lines.append(f"NEXT: invariant establish --id {change_id}")
-        raise error from exc
+        error = _agent_error(exc)
+        _remember_establishment_failure(repo, change_id, error)
+        raise _present_establishment_failure(
+            error,
+            change_id,
+            show_identifier=bool(args.change_id or args.verbose),
+        ) from exc
     except InvariantError as exc:
-        error = _identify(exc, "ESTABLISH", change_id)
-        if exc.code != "authority_required":
-            error.lines = [
-                line for line in error.lines if not line.startswith("NEXT:")
-            ]
-            if exc.code == "initialization_not_committed":
-                error.lines.append(
-                    "REQUIRES: commit the initialization on the integration branch"
-                )
-            error.lines.append(f"NEXT: invariant establish --id {change_id}")
-        raise error
+        if exc.code == "authority_required":
+            raise
+        if exc.code == "initialization_not_committed":
+            exc.lines.append(
+                "REQUIRES: commit the initialization on the integration branch"
+            )
+        _remember_establishment_failure(repo, change_id, exc)
+        raise _present_establishment_failure(
+            exc,
+            change_id,
+            show_identifier=bool(args.change_id or args.verbose),
+        )
     if task.get("stage") != "completed":
         raise Blocked(
             f"Invariant: establishment '{change_id}' still needs input",
@@ -1754,8 +2096,8 @@ def _status(args: argparse.Namespace) -> CommandResult:
             "briefed": "planning",
             "briefing": "planning",
             "awaiting-branch": "waiting",
-            "implementing": "working",
-            "implementing-unborn": "working",
+            "implementing": "ready to resume",
+            "implementing-unborn": "ready to resume",
             "awaiting-review": "reviewing",
             "awaiting-landing": "checking",
             "cleanup-required": "blocked",
@@ -1766,7 +2108,38 @@ def _status(args: argparse.Namespace) -> CommandResult:
             "recorded": "records updated",
             "unresolved": "unclear",
         }
-        if isinstance(task, dict):
+        try:
+            active_receipt = receipts.load(repo, args.change_id)
+        except InvariantError:
+            active_receipt = None
+        if active_receipt is not None:
+            lifecycle = (
+                active_receipt.get("lifecycle")
+                if isinstance(active_receipt.get("lifecycle"), dict)
+                else {}
+            )
+            worktree = str(lifecycle.get("worktree") or "none")
+            classification = (
+                active_receipt.get("change_classification")
+                if isinstance(active_receipt.get("change_classification"), dict)
+                else {}
+            )
+            stage, _, failure_detail = _human_change_state(repo, active_receipt)
+            establishment = _is_establishment(active_receipt)
+            lines = [
+                f"CHANGE: {args.change_id}",
+                f"STATUS: {stage}",
+                f"IMPACT: {impact_names.get(str(classification.get('boundary') or ''), 'covered')}",
+                "COMMIT: not landed",
+                "ACTIVITY: persisted state — no background worker",
+            ]
+            if failure_detail:
+                lines.append(f"FAILED: {failure_detail}")
+            if establishment:
+                lines.append("NEXT: invariant establish")
+            if args.verbose:
+                lines.append(f"WORKTREE: {worktree}")
+        elif isinstance(task, dict):
             work = task.get("work") if isinstance(task.get("work"), dict) else {}
             completion = (
                 task.get("completion") if isinstance(task.get("completion"), dict) else {}
@@ -1780,6 +2153,8 @@ def _status(args: argparse.Namespace) -> CommandResult:
                 f"IMPACT: {impact}",
                 f"COMMIT: {completion.get('commit') or 'not landed'}",
             ]
+            if raw_stage != "completed":
+                lines.append("ACTIVITY: persisted state — no background worker")
             if args.verbose:
                 lines.append(f"WORKTREE: {work.get('worktree') or 'none'}")
         else:
@@ -1810,16 +2185,19 @@ def _status(args: argparse.Namespace) -> CommandResult:
             if isinstance(item, dict) and item.get("name")
         }
         valid = raw_values.get("STATE") == "valid"
-        try:
-            active_count = int(raw_values.get("ACTIVE-TASKS", "0"))
-        except ValueError:
-            active_count = 0
+        changes = _human_active_changes(repo)
+        active_count = len(changes)
+        attention = any(bool(item["attention"]) for item in changes)
         status = (
             "needs attention"
             if not valid
-            else f"{active_count} active changes"
+            else f"{active_count} changes need attention"
+            if active_count != 1 and attention
+            else "1 change needs attention"
+            if attention
+            else f"{active_count} unfinished changes"
             if active_count != 1 and active_count
-            else "1 active change"
+            else "1 unfinished change"
             if active_count == 1
             else "ready"
         )
@@ -1849,7 +2227,19 @@ def _status(args: argparse.Namespace) -> CommandResult:
             )
         if resolved.adapters.is_enabled("intent_brief"):
             add_ons.append("intent review")
-        next_operation = raw_values.get("NEXT", "")
+        if not valid:
+            next_operation = "invariant state validate"
+        elif changes:
+            first = next(
+                (item for item in changes if item["attention"]), changes[0]
+            )
+            next_operation = (
+                "invariant establish"
+                if first["establishment"]
+                else f"invariant status {first['id']}"
+            )
+        else:
+            next_operation = 'invariant change "Describe the change"'
         lines = [f"STATUS: {status}"]
         if next_operation:
             lines.append(f"NEXT: {next_operation}")
@@ -1857,13 +2247,15 @@ def _status(args: argparse.Namespace) -> CommandResult:
             [
                 f"BRANCH: {branch_summary}",
                 f"AGENT: {agent_summary}",
-                f"CHANGES: {active_count if active_count else 'none'}",
+                f"CHANGES: {f'{active_count} unfinished' if active_count else 'none'}",
+                "ACTIVITY: foreground commands only — no background workers",
                 f"ADD-ONS: {', '.join(add_ons) if add_ons else 'none'}",
             ]
         )
-        for item in records or []:
-            if isinstance(item, dict) and item.get("name") == "TASK":
-                lines.append(f"CHANGE: {item.get('value')}")
+        for item in changes:
+            lines.append(f"CHANGE: {item['label']} — {item['state']}")
+            if item["detail"]:
+                lines.append(f"FAILED: {item['label']} — {item['detail']}")
         if args.verbose:
             lines.extend(
                 [
