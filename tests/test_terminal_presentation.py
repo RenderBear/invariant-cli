@@ -163,3 +163,25 @@ def test_status_keeps_repository_information_boxed(tmp_path: Path) -> None:
     assert "Status" in output
     assert output.count("╭") == output.count("╰") == 1
     assert output.index("╭") < output.index("Status") < output.index("╰")
+
+
+def test_session_panel_leaves_space_before_the_next_prompt(tmp_path: Path) -> None:
+    repo = repository(tmp_path / "repo")
+    fake = _fake_codex(tmp_path)
+    code, output = _tty(
+        repo,
+        ["start", "--using", "codex"],
+        environment={
+            "INVARIANT_CODEX": str(fake),
+            "INVARIANT_HOME": str(tmp_path / "invariant-home"),
+        },
+        input_steps=[
+            ("conversation", ":status\n"),
+            ('invariant change "Describe the change"', "\x04"),
+        ],
+    )
+
+    assert code == 0, output
+    assert re.search(
+        r'invariant change "Describe the change"\n\n\(ask\) ›', output
+    ), output

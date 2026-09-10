@@ -1032,7 +1032,8 @@ def _start(args: argparse.Namespace) -> CommandResult:
                 print(style.turn_separator())
     except (EOFError, KeyboardInterrupt):
         pass
-    print(f"\n{style.session_outro()}")
+    outro = style.session_outro()
+    print(f"\n{outro}\n" if style.interactive() else outro)
     return CommandResult(
         [],
         {
@@ -1047,6 +1048,8 @@ def _show_session_error(exc: InvariantError) -> None:
     if exc.lines:
         _show("Stopped", exc.lines, critical=True)
     print(style.error(exc.message), file=sys.stderr)
+    if sys.stdin.isatty() and sys.stdout.isatty():
+        print(file=sys.stderr)
 
 
 def _parse_session_source(value: str) -> argparse.Namespace:

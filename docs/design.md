@@ -189,6 +189,9 @@ Unit:
 - One box per information unit. A box is as wide as its widest line plus margins, at least 24 and
   at most 100 columns, never wider than the terminal minus two. The conversation itself uses turn
   dividers instead of putting either speaker inside a box.
+- Every interactive information unit owns one blank line before and after itself. Nested session
+  panels omit the repeated wordmark but retain those boundaries, so a closing callout never touches
+  the next conversation prompt.
 - Unit tones: Muted at rest, Ok for a success (`Change landed`, `Repository ready`), Warn for
   a decision the human must make.
 - Long values wrap under their own column; a line that still does not fit is cut with `…`.
@@ -266,7 +269,7 @@ Conversation:
   rule.
 - Block letters and boxes are reserved for system state; agent prose never receives them.
 - Ending a conversation prints one quiet `Session ended` line without a wordmark, box, or session
-  count.
+  count, with the same blank-line boundary before the shell resumes.
 
 ## Terminal motion
 

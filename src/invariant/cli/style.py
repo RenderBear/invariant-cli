@@ -516,7 +516,8 @@ def panel(
         for label, value in callouts:
             call_tone, glyph = _CALLOUTS[label]
             output.append(f"  {paint(call_tone, glyph)} {value}")
-    return "\n".join(output)
+    # `print(panel(...))` then leaves one empty line before the next unit or prompt.
+    return "\n".join([*output, ""])
 
 
 def decision(title: str, lines: Sequence[str]) -> str:
