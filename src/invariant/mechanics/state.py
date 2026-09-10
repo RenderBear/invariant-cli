@@ -27,7 +27,15 @@ def _markdown_anchor(path: Path, anchor: str) -> bool:
 
     for line in path.read_text(encoding="utf-8").splitlines():
         match = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line)
-        if match and _heading_slug(match.group(1)) == anchor:
+        if not match:
+            continue
+        heading = match.group(1)
+        explicit = re.search(r"\{#([A-Za-z0-9][A-Za-z0-9._-]*)\}\s*$", heading)
+        if explicit:
+            if explicit.group(1) == anchor:
+                return True
+            heading = heading[: explicit.start()].rstrip()
+        if _heading_slug(heading) == anchor:
             return True
     return False
 

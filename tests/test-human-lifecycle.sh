@@ -59,10 +59,18 @@ if [ "$schema" = true ]; then
     *"Request kind: governance.audit"*)
       printf '%s\n' '{"version":1,"findings":[]}' >"$output"
       ;;
+    *"Request kind: governance.author"*)
+      task=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"task": "\([^"]*\)",*$/\1/p' | head -n 1)
+      printf '%s\n' "{\"version\":1,\"mappings\":[{\"findings\":[\"application-ownership\"],\"records\":[{\"kind\":\"domain\",\"value\":{\"id\":\"application\",\"responsibility\":\"Owns the application file.\",\"authority\":\"user:task:$task#audit\",\"parent\":null,\"architecture\":[],\"contracts\":[]}}]}]}" >"$output"
+      ;;
     *"Request kind: task.respond"*)
       review_id=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"review_id": "\([^"]*\)",*$/\1/p' | head -n 1)
       candidate_tree=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"candidate_tree": "\([^"]*\)",*$/\1/p' | head -n 1)
-      printf '%s\n' "{\"version\":1,\"review_id\":\"$review_id\",\"candidate_tree\":\"$candidate_tree\",\"verdict\":\"accepted\",\"summary\":\"The exact candidate preserves the affected repository constraint.\",\"semantic_effect\":\"no-record\",\"authority\":\"agent:codex\",\"review_mode\":\"independent\",\"candidate_defects\":[],\"retained_discoveries\":[]}" >"$output"
+      effect=no-record
+      case "$request" in
+        *'".invariant/DOMAINS.yml"'*|*'".invariant/CONTRACTS.yml"'*) effect=recorded ;;
+      esac
+      printf '%s\n' "{\"version\":1,\"review_id\":\"$review_id\",\"candidate_tree\":\"$candidate_tree\",\"verdict\":\"accepted\",\"summary\":\"The exact candidate preserves the affected repository constraint.\",\"semantic_effect\":\"$effect\",\"authority\":\"agent:codex\",\"review_mode\":\"independent\",\"candidate_defects\":[],\"retained_discoveries\":[]}" >"$output"
       ;;
     *"Session mode: change"*)
       printf '%s\n' '{"action":"answer","message":"Hello from the persistent Invariant session."}' >"$output"
@@ -331,7 +339,105 @@ resumed=$(cd "$repo" && PATH="$fake_bin:$PATH" \
   "$cli" establish --id resumable-establishment)
 printf '%s\n' "$resumed" | grep -q '^STATUS: complete$' ||
   die "establishment did not resume from deferred candidate review"
+printf '%s\n' "$resumed" | grep -q '^RECORDS: none recorded' ||
+  die "a deferred establishment claimed to have recorded something"
 ok "audit deferral uses semantic review and resumes through the public command"
+
+authored_findings="$fixtures/authored-findings.yml"
+cat >"$authored_findings" <<'EOF'
+version: 1
+findings:
+  - id: application-ownership
+    summary: The application file is the repository's stable implementation surface.
+    evidence: [repo:app.txt]
+    proposed: domain
+    disposition: adoptable
+    authority: user:task:authored-establishment#audit
+EOF
+(cd "$repo" && "$cli" governance begin authored-establishment --goal "Record application ownership" >/dev/null)
+(cd "$repo" && "$cli" governance audit-save authored-establishment --input "$authored_findings" >/dev/null)
+authored=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  "$cli" establish --id authored-establishment)
+printf '%s\n' "$authored" | grep -q '^STATUS: complete$' ||
+  die "establish did not complete a finding that carried no record projection"
+printf '%s\n' "$authored" | grep -q '^RECORDS: domain:application$' ||
+  die "establish did not report the authored record"
+grep -q 'Request kind: governance.author' "$agent_stdin" ||
+  die "establish did not ask the agent to author the missing projection"
+grep -q '^  - id: application$\|^- id: application$' "$repo/.invariant/DOMAINS.yml" ||
+  die "the authored domain was not landed"
+ok "establish authors record projections the audit left open"
+
+broken_findings="$fixtures/broken-findings.yml"
+cat >"$broken_findings" <<'EOF'
+version: 1
+findings:
+  - id: broken-pointer
+    summary: A finding whose projection points at prose that does not exist.
+    evidence: [repo:app.txt]
+    proposed: domain
+    disposition: adoptable
+    authority: user:task:broken-establishment#audit
+    records:
+      - kind: domain
+        value:
+          id: broken
+          responsibility: Points at missing architecture prose.
+          authority: user:task:broken-establishment#audit
+          parent: null
+          architecture: [architecture:docs/missing.md#nowhere]
+          contracts: []
+EOF
+(cd "$repo" && "$cli" governance begin broken-establishment --goal "Record a broken pointer" >/dev/null)
+(cd "$repo" && "$cli" governance audit-save broken-establishment --input "$broken_findings" >/dev/null)
+if broken=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  "$cli" establish --id broken-establishment 2>&1); then
+  die "establish landed a projection that does not resolve"
+fi
+printf '%s\n' "$broken" | grep -q "^INVALID: .*architecture 'docs/missing.md' does not exist" ||
+  die "establish hid why the projection was rejected"
+printf '%s\n' "$broken" | grep -q '^NEXT: invariant establish --id broken-establishment --discard' ||
+  die "establish did not offer a way out of a preserved proposal"
+discarded=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" establish --id broken-establishment --discard)
+printf '%s\n' "$discarded" | grep -q '^STATUS: discarded$' ||
+  die "establish --discard did not drop the preserved proposal"
+if (cd "$repo" && PATH="$fake_bin:$PATH" "$cli" status) | grep -q 'needs retry'; then
+  die "a discarded establishment still shows as retained work"
+fi
+ok "a rejected projection explains itself and can be discarded from the public command"
+
+refresh_findings="$fixtures/refresh-findings.yml"
+cat >"$refresh_findings" <<'EOF'
+version: 1
+findings:
+  - id: lifecycle-refresh
+    summary: The lifecycle domain now also owns landing.
+    evidence: [repo:app.txt]
+    proposed: domain
+    disposition: adoptable
+    authority: user:task:refresh-establishment#audit
+    records:
+      - kind: domain
+        value:
+          id: lifecycle
+          responsibility: Owns the managed repository lifecycle and its landing.
+          authority: user:task:refresh-establishment#audit
+          parent: null
+          architecture: []
+          contracts: []
+EOF
+(cd "$repo" && "$cli" governance begin refresh-establishment --goal "Refresh the lifecycle domain" >/dev/null)
+(cd "$repo" && "$cli" governance audit-save refresh-establishment --input "$refresh_findings" >/dev/null)
+refreshed=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  "$cli" establish --id refresh-establishment)
+printf '%s\n' "$refreshed" | grep -q '^STATUS: complete$' ||
+  die "establish could not re-record a domain that already existed"
+grep -q 'and its landing' "$repo/.invariant/DOMAINS.yml" ||
+  die "the refreshed domain definition was not landed"
+ok "establish reconciles domains that already exist at the integration head"
 
 onboarded="$fixtures/onboarded"
 mkdir -p "$onboarded"
@@ -398,4 +504,4 @@ printf '%s\n' "$paused" | grep -q '^STATUS: awaiting-branch$' ||
 (cd "$repo" && "$cli" set execution auto >/dev/null)
 ok "assisted execution pauses before any provider write"
 
-echo "10 human lifecycle checks passed"
+echo "13 human lifecycle checks passed"

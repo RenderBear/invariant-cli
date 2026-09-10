@@ -10,6 +10,7 @@ from invariant.cli.output import CommandResult
 from invariant.errors import Blocked, InvariantError
 from invariant.lifecycle import tasks
 from invariant.mechanics import audit, config, git, receipts, state
+from invariant.mechanics import governance as mechanics_governance
 from invariant.mechanics.documents import dump_yaml, load_yaml
 from invariant.protocol import TaskStage
 from invariant.semantics.adoption import AdoptionManifest, example, schema
@@ -136,6 +137,14 @@ def _candidate_repo(repo: Path, receipt: dict[str, object]) -> Path:
 
 def _begin(args: argparse.Namespace) -> list[str]:
     repo = git.root()
+    # Establishment reconciles the whole repository, so it reserves every domain that already
+    # exists at the integration head; re-recording one is its purpose, not a scope expansion.
+    head = receipts.integration_head(repo, config.resolve(repo).integration_branch)
+    existing = (
+        sorted(mechanics_governance.domain_index(repo, head).identifiers)
+        if head != "unborn"
+        else []
+    )
     lines = tasks.begin(
         repo,
         args.task_id,
@@ -143,7 +152,7 @@ def _begin(args: argparse.Namespace) -> list[str]:
         boundary="unresolved",
         paths=[],
         interfaces=[],
-        domains=[],
+        domains=existing,
         adapter_overrides={"intent_brief": False},
     )
     receipt = receipts.load(repo, args.task_id)
@@ -488,7 +497,11 @@ def _project(args: argparse.Namespace) -> CommandResult:
             raise InvariantError(
                 "Invariant: projected governance is not structurally valid",
                 code="invalid_adoption_projection",
-                lines=validation,
+                lines=[
+                    f"INVALID: {line.removeprefix('FAIL ')}"
+                    for line in validation
+                    if line.startswith("FAIL ")
+                ],
             )
     except Exception:
         for path, content in backups.items():

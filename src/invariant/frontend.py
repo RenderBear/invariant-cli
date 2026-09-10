@@ -164,6 +164,11 @@ def build_parser() -> argparse.ArgumentParser:
     establish.add_argument(
         "--dry-run", action="store_true", help="preview without creating state"
     )
+    establish.add_argument(
+        "--discard",
+        action="store_true",
+        help="drop the preserved establishment and its proposal without starting another",
+    )
     establish.set_defaults(handler=_establish)
 
     status_parser = commands.add_parser(
@@ -199,9 +204,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _invocation_arguments(parser: argparse.ArgumentParser, *, timeout: int) -> None:
-    parser.add_argument("--using", type=_provider, metavar="codex|claude")
-    parser.add_argument("--model")
-    parser.add_argument("--timeout", type=int, default=timeout)
+    parser.add_argument(
+        "--using",
+        type=_provider,
+        metavar="codex|claude",
+        help="coding agent for this operation; overrides the repository preference",
+    )
+    parser.add_argument("--model", help="provider model name; omit for the provider default")
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=timeout,
+        help=f"seconds to wait for one agent turn (default {timeout})",
+    )
 
 
 def _source_add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -596,6 +611,8 @@ def _init(args: argparse.Namespace) -> CommandResult:
                 change_id=None,
                 goal=None,
                 dry_run=False,
+                discard=False,
+                verbose=False,
             )
         )
         lines.extend(established.lines)
@@ -1351,8 +1368,10 @@ def _source_add(args: argparse.Namespace) -> CommandResult:
 
 
 def _identifier(prefix: str, description: str) -> str:
-    words = re.findall(r"[a-z0-9]+", description.lower())[:5]
-    stem = "-".join(words) or prefix
+    words = re.findall(r"[a-z0-9]+", re.sub(r"'s\b", "", description.lower()))
+    if words and words[0] == prefix:
+        words = words[1:]
+    stem = "-".join(words[:5]) or prefix
     stem = stem[:42].rstrip("-")
     return f"{prefix}-{stem}-{secrets.token_hex(4)}"
 
@@ -1437,14 +1456,16 @@ def _remember_establishment_failure(
     receipts.save(repo, change_id, receipt)
 
 
-def _clear_establishment_failure(repo: Path, change_id: str) -> None:
+def _clear_establishment_failure(repo: Path, change_id: str) -> bool:
     try:
         receipt = receipts.load(repo, change_id)
     except InvariantError:
-        return
-    if "last_failure" in receipt:
-        receipt.pop("last_failure", None)
-        receipts.save(repo, change_id, receipt)
+        return False
+    if "last_failure" not in receipt:
+        return False
+    receipt.pop("last_failure", None)
+    receipts.save(repo, change_id, receipt)
+    return True
 
 
 def _present_establishment_failure(
@@ -1453,24 +1474,61 @@ def _present_establishment_failure(
     *,
     show_identifier: bool,
 ) -> InvariantError:
-    detail = [
-        line
-        for line in error.lines
-        if line.startswith(("CHECK: ", "LOG: ", "REQUIRES: "))
-    ]
+    detail = [line for line in error.lines if line.startswith(_FAILURE_DETAIL)]
+    resume = f"invariant establish --id {change_id}" if show_identifier else "invariant establish"
     error.lines = [
         *([f"ESTABLISH: {change_id}"] if show_identifier else []),
         "STATUS: stopped",
         "PROCESS: none — the command exited",
         *detail,
         "PRESERVED: proposed records and candidate work",
-        (
-            f"NEXT: invariant establish --id {change_id}"
-            if show_identifier
-            else "NEXT: invariant establish"
-        ),
+        f"NEXT: {resume}",
+        f"NEXT: {resume} --discard — drop the preserved proposal instead",
     ]
     return error
+
+
+_FAILURE_DETAIL = ("CHECK: ", "LOG: ", "REQUIRES: ", "INVALID: ", "UNCOVERED: ", "WARNING: ")
+
+
+class _ProposalDeclined(Exception):
+    """The human read the exact proposal and chose not to accept it."""
+
+
+def _latest_establishment(repo: Path) -> str | None:
+    candidates = [
+        (path.stat().st_mtime_ns, str(receipt.get("task") or path.stem))
+        for path, receipt in _active_receipts(repo)
+        if _is_establishment(receipt) and not receipt.get("superseded_by")
+    ]
+    return max(candidates)[1] if candidates else None
+
+
+def _discard_establishment(repo: Path, change_id: str | None) -> CommandResult:
+    target = change_id or _latest_establishment(repo)
+    if target is None:
+        return CommandResult(
+            ["STATUS: nothing to discard", "NEXT: invariant establish"],
+            {"operation": "establish", "discarded": None},
+        )
+    _core(repo, "task", "invalidate", target, "--discard")
+    return CommandResult(
+        [
+            "STATUS: discarded",
+            "REMOVED: the preserved proposal and its candidate work",
+            "NEXT: invariant establish",
+        ],
+        {"operation": "establish", "discarded": target},
+    )
+
+
+def _governance_values(repo: Path, change_id: str) -> dict[str, str]:
+    status_records = _result(_core(repo, "governance", "status", change_id), "records")
+    return {
+        str(item.get("name")): str(item.get("value") or "")
+        for item in status_records or []
+        if isinstance(item, dict) and item.get("name")
+    }
 
 
 def _human_change_state(
@@ -1641,20 +1699,20 @@ def _human_candidate_decisions(repo: Path, change_id: str) -> None:
             for item in context.get("governance", [])
             if isinstance(item, str)
         ]
-        print(
-            style.decision(
-                "Accept repository records",
-                [
-                    "The exact proposal is ready"
-                    + (f" ({len(references)} durable references)." if references else ".")
-                ],
-            )
-        )
+        changed = [
+            str(item)
+            for item in context.get("changed_paths", [])
+            if isinstance(item, str)
+        ]
+        proposal = ["The exact proposal is ready."]
+        if references:
+            proposal.extend(["", "Records", *[f"  {item}" for item in references]])
+        if changed:
+            proposal.extend(["", "Files", *[f"  {item}" for item in changed]])
+        print(style.decision("Accept repository records", proposal))
         accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
         if accepted not in {"y", "yes"}:
-            raise _human_decision_blocked(
-                "the proposal was not accepted; it remains available for review"
-            )
+            raise _ProposalDeclined()
         summary = input(style.prompt("decide") + "Reason (optional): ").strip()
         prepared = load_yaml(receipts.task_root(repo, change_id) / "prepared-assessment.yml")
         boundary = prepared.get("boundary") if isinstance(prepared, dict) else {}
@@ -2691,6 +2749,8 @@ def _change(args: argparse.Namespace) -> CommandResult:
 
 def _establish(args: argparse.Namespace) -> CommandResult:
     repo = git.root()
+    if args.discard:
+        return _discard_establishment(repo, args.change_id)
     provider = _resolve_provider(repo, args.using)
     goal = args.goal or (
         "Establish or reconcile the repository's durable responsibilities, decisions, "
@@ -2736,17 +2796,11 @@ def _establish(args: argparse.Namespace) -> CommandResult:
             _core(repo, "governance", "begin", change_id, "--goal", goal)
         if not args.change_id:
             _supersede_equivalent_establishments(repo, goal, change_id)
-        _clear_establishment_failure(repo, change_id)
+        had_failure = _clear_establishment_failure(repo, change_id)
 
         task = _task(repo, change_id)
         if task.get("stage") != "completed":
-            governance_status = _core(repo, "governance", "status", change_id)
-            status_records = _result(governance_status, "records")
-            values = {
-                str(item.get("name")): str(item.get("value") or "")
-                for item in status_records or []
-                if isinstance(item, dict) and item.get("name")
-            }
+            values = _governance_values(repo, change_id)
             phase = values.get("GOVERNANCE-PHASE", "audit")
 
             if phase == "audit":
@@ -2755,24 +2809,15 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                     done=f"{_provider_name(provider)} inspected the repository",
                 ):
                     audit_result = harness_cli._governance_audit(namespace)
-                governance_status = _core(repo, "governance", "status", change_id)
-                status_records = _result(governance_status, "records")
-                values = {
-                    str(item.get("name")): str(item.get("value") or "")
-                    for item in status_records or []
-                    if isinstance(item, dict) and item.get("name")
-                }
+                values = _governance_values(repo, change_id)
                 phase = values.get("GOVERNANCE-PHASE", "audit")
 
-            if config.resolve(repo).authority == "human" and phase == "decision":
+            # A human whose last selection could not be projected gets to choose again.
+            if config.resolve(repo).authority == "human" and (
+                phase == "decision" or (phase == "adopt" and had_failure)
+            ):
                 _human_finding_decision(repo, change_id)
-                governance_status = _core(repo, "governance", "status", change_id)
-                status_records = _result(governance_status, "records")
-                values = {
-                    str(item.get("name")): str(item.get("value") or "")
-                    for item in status_records or []
-                    if isinstance(item, dict) and item.get("name")
-                }
+                values = _governance_values(repo, change_id)
                 phase = values.get("GOVERNANCE-PHASE", "decision")
 
             if phase in {"decision", "adopt"}:
@@ -2781,11 +2826,24 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                     final = _core(repo, "governance", "defer", change_id)
                     phase = "deferred"
                 else:
+                    needs_authoring = False
                     with style.activity(
                         "Preparing durable repository records",
                         done="Prepared durable repository records",
-                    ):
-                        _core(repo, "governance", "project", change_id)
+                    ) as step:
+                        try:
+                            _core(repo, "governance", "project", change_id)
+                        except Blocked as exc:
+                            if exc.code != "incomplete_adoption_coverage":
+                                raise
+                            needs_authoring = True
+                            step.done = "Prepared the projected records — some findings still need authoring"
+                    if needs_authoring:
+                        with style.activity(
+                            f"{_provider_name(provider)} is authoring the remaining records",
+                            done=f"{_provider_name(provider)} authored the remaining records",
+                        ):
+                            harness_cli._governance_author(namespace)
                     phase = "authoring"
 
             task = _task(repo, change_id)
@@ -2797,9 +2855,9 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                 if git.changed_paths(worktree):
                     _commit_candidate(worktree, "Establish repository records")
                 with style.activity(
-                    "Verifying and landing repository records",
-                    done="Verified and landed repository records",
-                ):
+                    "Verifying repository records",
+                    done="Verified repository records — review pending",
+                ) as step:
                     final = _core(
                         repo,
                         "task",
@@ -2808,6 +2866,9 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                         "--subject",
                         "Establish repository records",
                     )
+                    finished = final.get("result")
+                    if isinstance(finished, dict) and finished.get("stage") == "completed":
+                        step.done = "Verified and landed repository records"
             if config.resolve(repo).authority == "human":
                 _human_candidate_decisions(repo, change_id)
             else:
@@ -2819,6 +2880,17 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                         repo, change_id, provider, model=args.model, timeout=args.timeout
                     )
         task = _task(repo, change_id)
+    except _ProposalDeclined:
+        return CommandResult(
+            [
+                *([f"ESTABLISH: {change_id}"] if args.change_id or args.verbose else []),
+                "STATUS: not accepted",
+                "PRESERVED: the exact proposal, ready for another look",
+                "NEXT: invariant establish — decide again",
+                "NEXT: invariant establish --discard — drop the proposal",
+            ],
+            {**preview, "invoked": True, "status": "not accepted", "audit": audit_result},
+        )
     except AgentInvocationError as exc:
         error = _agent_error(exc)
         _remember_establishment_failure(repo, change_id, error)
@@ -2848,11 +2920,21 @@ def _establish(args: argparse.Namespace) -> CommandResult:
         )
     completion = task.get("completion")
     commit = str(completion.get("commit") or "") if isinstance(completion, dict) else ""
+    try:
+        projected = _governance_values(repo, change_id).get("PROJECTED", "")
+    except InvariantError:
+        projected = ""
+    records = (
+        f"RECORDS: {projected}"
+        if projected and projected != "none"
+        else "RECORDS: none recorded — the audit is kept as evidence"
+    )
     return CommandResult(
         [
             f"ESTABLISH: {change_id}",
             f"AGENT: {provider.value}",
             "STATUS: complete",
+            records,
             f"COMMIT: {commit}",
         ],
         {

@@ -525,8 +525,19 @@ def decision(title: str, lines: Sequence[str]) -> str:
 
     if not interactive():
         return "\n".join(lines)
+    inner = max(MIN_BOX, min(MAX_BOX, columns() - 2)) - 2 - BOX_MARGIN * 2
+    wrapped: list[str] = []
+    for line in lines:
+        if visible(line) <= inner:
+            wrapped.append(line)
+            continue
+        lead = re.match(r"^(\s*(?:\d+\.\s+)?)", line)
+        indent = " " * len(lead.group(1)) if lead else ""
+        wrapped.extend(
+            textwrap.wrap(line, width=inner, subsequent_indent=indent, break_long_words=True)
+        )
     return "\n".join(
-        ["", f"  {paint(WARN_TEXT, title)}", "", box(list(lines), tone=WARN_TEXT), ""]
+        ["", f"  {paint(WARN_TEXT, title)}", "", box(wrapped, tone=WARN_TEXT), ""]
     )
 
 
@@ -540,6 +551,8 @@ def render(command: str, lines: Sequence[str], *, branded: bool = False) -> str:
         title = "Change"
     if command == "establish" and not any(line == "STATUS: complete" for line in lines):
         title = "Repository records"
+    elif command == "establish" and any(line.startswith("RECORDS: none") for line in lines):
+        title = "Audit recorded"
     return panel(
         title,
         lines,

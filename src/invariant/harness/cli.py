@@ -19,7 +19,10 @@ from invariant.harness.providers import (
     invoke,
     status,
 )
+from invariant.mechanics import receipts
+from invariant.mechanics.documents import load_yaml
 from invariant.semantics import sources
+from invariant.semantics.adoption import authoring_schema, projected_record_schema
 
 
 class Parser(argparse.ArgumentParser):
@@ -83,6 +86,12 @@ def build_parser() -> argparse.ArgumentParser:
     _agent_arguments(audit)
     audit.add_argument("task_id")
     audit.set_defaults(handler=_governance_audit, command_name="agent.governance.audit")
+    author = governance_commands.add_parser(
+        "author", help="Complete the unresolved record projections of an adoption draft"
+    )
+    _agent_arguments(author)
+    author.add_argument("task_id")
+    author.set_defaults(handler=_governance_author, command_name="agent.governance.author")
 
     task = commands.add_parser("task", help="Use an agent for pending lifecycle actions")
     task_commands = task.add_subparsers(
@@ -438,6 +447,133 @@ def _governance_audit(args: argparse.Namespace) -> dict[str, Any]:
             semantic_retries=2,
         ),
     }
+
+
+_AUTHORING_RETRY_CODES = {
+    "invalid_adoption",
+    "invalid_adoption_projection",
+    "incomplete_adoption_coverage",
+    "usage",
+}
+
+
+def _governance_author(args: argparse.Namespace) -> dict[str, Any]:
+    repo = _repo()
+    cwd = _task_worktree(repo, args.task_id)
+    draft_path = receipts.task_root(repo, args.task_id) / "governance-adoption.draft.yml"
+    if not draft_path.is_file():
+        raise AgentInvocationError(
+            f"task '{args.task_id}' has no adoption draft to author",
+            code="missing_adoption_draft",
+        )
+    draft = load_yaml(draft_path)
+    if not isinstance(draft, dict):
+        raise AgentInvocationError(
+            "Invariant wrote an invalid adoption draft", code="invalid_invariant_output"
+        )
+    audit_id = str(draft.get("audit") or "")
+    mappings = [item for item in draft.get("mappings", []) if isinstance(item, dict)]
+    resolved = [item for item in mappings if not item.get("unresolved")]
+    unresolved = sorted(
+        {
+            str(finding)
+            for item in mappings
+            if item.get("unresolved")
+            for finding in item.get("findings", [])
+        }
+    )
+    audit_raw = load_yaml(cwd / ".invariant" / "audits" / f"{audit_id}.yml")
+    findings = [
+        item
+        for item in (audit_raw.get("findings", []) if isinstance(audit_raw, dict) else [])
+        if isinstance(item, dict) and str(item.get("id")) in unresolved
+    ]
+    request = {
+        "task": args.task_id,
+        "authority": f"agent:{args.using.value}",
+        "audit": audit_id,
+        "findings": findings,
+        "already_projected": resolved,
+        "record_shapes": projected_record_schema(),
+        "instructions": (
+            "Each listed finding was selected for recording but carries no complete record "
+            "projection. For each one, either author complete domain, contract, constraint, "
+            "or semantic records grounded in its evidence and the repository, or defer it with "
+            "the reason it cannot be recorded yet. Use only existing files and Markdown heading "
+            "anchors for architecture and authority locators. Do not restate mappings that are "
+            "already projected."
+        ),
+    }
+    prompt = _prompt("governance.author", request)
+    preview = _preview(
+        args.using,
+        args.task_id,
+        "governance.author",
+        cwd,
+        "invariant://schemas/governance-authoring/v1",
+        prompt,
+    )
+    if not args.apply:
+        return preview
+    if not unresolved:
+        with tempfile.TemporaryDirectory(prefix="invariant-agent-response.") as directory:
+            manifest = Path(directory) / "manifest.json"
+            manifest.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+            invariant = _invariant(
+                repo, "governance", "project", args.task_id, "--input", str(manifest)
+            )
+        return {**preview, "applied": True, "usage": {}, "invariant": invariant}
+    if args.timeout <= 0:
+        raise AgentInvocationError("timeout must be greater than zero", code="invalid_invocation")
+    current_prompt = prompt
+    usage: dict[str, Any] = {}
+    retries = 2
+    for attempt in range(retries + 1):
+        agent = invoke(
+            args.using, cwd, current_prompt, authoring_schema(), model=args.model, timeout=args.timeout
+        )
+        for name, value in agent.usage.items():
+            prior = usage.get(name)
+            usage[name] = (
+                prior + value
+                if isinstance(prior, (int, float)) and isinstance(value, (int, float))
+                else value
+            )
+        authored = [
+            {name: value for name, value in item.items() if value not in (None, [], "")}
+            for item in agent.response.get("mappings", [])
+            if isinstance(item, dict)
+            and any(str(finding) in unresolved for finding in item.get("findings", []))
+        ]
+        manifest_value = {"version": 1, "audit": audit_id, "mappings": [*resolved, *authored]}
+        with tempfile.TemporaryDirectory(prefix="invariant-agent-response.") as directory:
+            manifest = Path(directory) / "manifest.json"
+            manifest.write_text(json.dumps(manifest_value, ensure_ascii=False), encoding="utf-8")
+            try:
+                invariant = _invariant(
+                    repo, "governance", "project", args.task_id, "--input", str(manifest)
+                )
+            except AgentInvocationError as exc:
+                if attempt >= retries or exc.code not in _AUTHORING_RETRY_CODES:
+                    raise
+                prior_response = json.dumps(
+                    agent.response, sort_keys=True, indent=2, ensure_ascii=False
+                )
+                current_prompt = (
+                    f"{prompt}\n\n"
+                    "<invariant-validation-retry>\n"
+                    "Invariant rejected the previous structured response. Correct only the "
+                    "reported defect, then return the complete JSON object again. Cover every "
+                    "listed finding; do not weaken, omit, or invent evidence.\n"
+                    f"Rejection: {exc.message}\n"
+                    f"Previous response:\n{prior_response}\n"
+                    "</invariant-validation-retry>\n"
+                )
+                continue
+        return {**preview, "applied": True, "usage": usage, "invariant": invariant}
+    raise AgentInvocationError(
+        "the agent did not complete the adoption draft", code="invalid_adoption"
+    )
 
 
 def _bound_action_schema(

@@ -150,6 +150,12 @@ invariant change --dry-run "Restore active jobs after restart"
 invariant establish --dry-run
 ```
 
+Drop a preserved establishment and its proposal without starting another:
+
+```bash
+invariant establish --discard
+```
+
 `--using codex|claude` overrides the repository provider for one operation. `--id` supplies a stable
 change or establishment identity for automation. If a contract decision is required or the run mode
 asks for confirmation, the operation stops with its generated ID and a concrete continuation.
@@ -261,14 +267,28 @@ invariant establish
 ```
 
 The bare command resumes the latest compatible unfinished establishment; an explicit ID is not
-needed after a stopped run. A failed check reports its terminal state, confirms that no process is
-still running, preserves the proposal, and points back to the same bare command. Equivalent older
-attempts collapse into one `Repository records` item in human-facing status.
+needed after a stopped run. A failed step reports its terminal state, confirms that no process is
+still running, shows the specific rejection (an unresolved architecture anchor, a failed check, an
+uncovered finding), preserves the proposal, and offers two continuations: the same bare command to
+retry, or `--discard` to drop the preserved proposal. Equivalent older attempts collapse into one
+`Repository records` item in human-facing status.
+
+Selected findings that carry complete record projections are projected directly. When a selected
+finding has none, the command asks the agent to author the missing domain, contract, constraint, or
+semantic records from that finding's evidence, or to defer it with a reason, before verification.
+Establishment reserves every domain that already exists on the integration branch, so a later pass
+may re-record one; that is reconciliation, not a scope expansion.
 
 With agent authority and automatic execution, the agent owns finding selection and the lifecycle
 owns projection, checking, and landing. With human authority, the same command asks only which
-findings to record and whether to accept the exact proposal; it translates those answers into the
-protocol and continues the mechanics itself.
+findings to record and whether to accept the exact proposal, which it lists by record and file
+before asking; it translates those answers into the protocol and continues the mechanics itself. A
+selection whose projection is rejected reopens the finding choice on the next run. Declining the
+proposal is an ordinary outcome, not an error: the exact proposal stays available for another
+look or for `--discard`.
+
+The completion panel names the records that landed. When the audit produced nothing to record,
+the panel is titled `Audit recorded` and says so; the audit itself still lands as evidence.
 
 The equivalent protocol sequence begins with:
 

@@ -481,6 +481,53 @@ def schema() -> dict[str, Any]:
     }
 
 
+def authoring_schema() -> dict[str, Any]:
+    """Closed response shape for an agent completing the unresolved mappings of a draft."""
+
+    string_list = {
+        "type": "array",
+        "minItems": 1,
+        "uniqueItems": True,
+        "items": {"type": "string", "minLength": 1},
+    }
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "$id": "invariant://schemas/governance-authoring/v1",
+        "title": "Invariant governance authoring response",
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["version", "mappings"],
+        "properties": {
+            "version": {"const": 1},
+            "mappings": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["findings"],
+                    "properties": {
+                        "findings": string_list,
+                        "records": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": projected_record_schema(),
+                        },
+                        "deferred": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": (
+                                "Why this finding cannot be recorded from grounded evidence yet; "
+                                "give exactly one of records or deferred."
+                            ),
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
 def example() -> dict[str, Any]:
     return {
         "version": 1,

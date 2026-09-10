@@ -495,7 +495,26 @@ persistence, eliminating an incidental audit-only commit between `audit save` an
 Under agent authority, saving the audit automatically selects its ready findings and advances the
 session to adoption. A bare `invariant establish` resumes the newest compatible unfinished pass;
 human status collapses equivalent attempts and describes persisted resumability separately from
-foreground process activity.
+foreground process activity. `invariant establish --discard` invalidates the preserved pass and its
+candidate work without starting another; it is the only public way out of a proposal that cannot
+be projected or was not accepted.
+
+Projection uses the record projections carried by selected findings. When a selected finding
+carries none, `governance project` writes the adoption draft and reports incomplete coverage; the
+establishment command then runs one authoring pass (`invariant-agent governance author`) in which
+the agent completes only the unresolved mappings with complete records or an explicit deferral,
+and the host merges those into the draft and projects again. Audit-authored projections are never
+overridden by that pass. A projection that fails structural validation reports each violation as an
+`INVALID:` record so the human-facing failure can show it.
+
+`governance begin` reserves every domain that exists at the integration head, because a governance
+pass reconciles the whole repository; re-recording an existing domain is therefore inside scope
+rather than a stale receipt. Under human authority a projection failure reopens the finding choice
+on the next run, the exact-proposal question lists the projected records and changed files, and a
+declined proposal is a successful command outcome (`STATUS: not accepted`) that preserves the
+proposal. The verification activity reports landing only when the task actually completed;
+otherwise it reports that review is pending. The completion result carries a `RECORDS:` line, and a
+pass that recorded nothing is presented as `Audit recorded`.
 
 Ordinary `test:` verifier locators require no configuration. The verifier resolves execution from
 the exact candidate: Python tests locate the nearest `pyproject.toml`; shell tests in a locked uv
@@ -739,7 +758,7 @@ GLOBAL  invariant connect [codex|claude] [--default <codex|claude>]
 LOCAL   invariant ask [--using <provider>] [--dry-run] <prompt>
 LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [<prompt>]
 LOCAL   invariant change [--using <provider>] [--id <change-id>] [--dry-run] <prompt>
-LOCAL   invariant establish [--using <provider>] [--id <establishment-id>] [--dry-run]
+LOCAL   invariant establish [--using <provider>] [--id <establishment-id>] [--goal <focus>] [--dry-run | --discard]
 LOCAL   invariant status [<change-id>]
 LOCAL   invariant settings
 LOCAL   invariant set <key> <value>

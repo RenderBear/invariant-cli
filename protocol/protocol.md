@@ -96,9 +96,11 @@ Every cross-reference in tracked state is a typed locator:
 | `test:<path>` | a test file resolved and run from the candidate tree |
 | `runner:<name>` | a configured named runner |
 
-An implementation validates that every locator resolves in the tree it is evaluated against. A
-record whose `architecture:` anchor no longer exists in its document is invalid state, and invalid
-state blocks every landing until it is repaired.
+An implementation validates that every locator resolves in the tree it is evaluated against. An
+`architecture:` anchor resolves to a Markdown heading either by an explicit `{#anchor}` suffix on
+the heading or, absent one, by the heading's slug. A record whose `architecture:` anchor no longer
+exists in its document is invalid state, and invalid state blocks every landing until it is
+repaired.
 
 ---
 
