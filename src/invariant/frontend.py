@@ -496,7 +496,9 @@ def _init(args: argparse.Namespace) -> CommandResult:
             )
     existing_changes = git.changed_paths(repo)
     settings = initialize_command.settings(
-        repo, defaults=args.defaults, show_logo=not replacing
+        repo,
+        defaults=args.defaults,
+        show_logo=not replacing and args.format == "text",
     )
     # The provider choice is a fact about this clone and machine, so it never enters the
     # tracked configuration that the setup commit records.

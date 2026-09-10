@@ -149,8 +149,9 @@ output that is not a terminal is emitted as the plain `NAME: value` records.
 - Two rows of half-block letters, 33 columns, in Accent. The unit title follows the baseline
   row after three spaces, in the unit's tone.
 - Under 35 columns the wordmark falls back to the word `Invariant` in Accent on one line.
-- It opens each top-level command or conversation once. Nested results and the conversation ending
-  never repeat it; nothing else is set in block letters.
+- It appears only for the `init` welcome and the `start` conversation header. Status, settings,
+  changes, decisions, nested results, and conversation endings use compact titles; nothing else is
+  set in block letters.
 
 ## Terminal glyphs
 
@@ -171,8 +172,7 @@ output that is not a terminal is emitted as the plain `NAME: value` records.
 Unit:
 
 ```text
-█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
-█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    Repository        wordmark, title in the unit tone
+  Repository                                           compact title in the unit tone
 
 ╭──────────────────────────────────────────╮           border in the unit tone
 │                                          │           one padding row
@@ -202,13 +202,12 @@ Unit:
   the box. `Next`, `Request`, and `Command` glyphs are Accent; `Warning` is Warn; `Error` and
   `Invalid` are Bad.
 - Non-record lines pass through unchanged inside the box and reset label folding.
-- Trail lines from the steps that produced the unit stand above the wordmark.
+- Trail lines from the steps that produced the unit stand above its compact title.
 
 Decision:
 
 ```text
-█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
-█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    Your decision     title and border in Warn
+  Your decision                                        compact title and border in Warn
 
 ╭────────────────────────────────────────────────╮
 │                                                │

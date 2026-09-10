@@ -462,7 +462,7 @@ def panel(
     *,
     success: bool = False,
     tone: str | None = None,
-    branded: bool = True,
+    branded: bool = False,
 ) -> str:
     """Render records under one optional wordmark, with one box per information unit."""
 
@@ -521,14 +521,16 @@ def panel(
 
 
 def decision(title: str, lines: Sequence[str]) -> str:
-    """A unit that waits on the human: the wordmark and an amber box around the question."""
+    """A compact amber unit that waits on the human."""
 
     if not interactive():
         return "\n".join(lines)
-    return "\n".join(["", wordmark(title, tone=WARN_TEXT), "", box(list(lines), tone=WARN_TEXT), ""])
+    return "\n".join(
+        ["", f"  {paint(WARN_TEXT, title)}", "", box(list(lines), tone=WARN_TEXT), ""]
+    )
 
 
-def render(command: str, lines: Sequence[str], *, branded: bool = True) -> str:
+def render(command: str, lines: Sequence[str], *, branded: bool = False) -> str:
     if not lines:
         return ""
     title = _TITLES.get(command)

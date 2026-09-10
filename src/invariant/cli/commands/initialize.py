@@ -271,11 +271,7 @@ def _values(lines: list[str], name: str) -> list[str]:
     return [line.removeprefix(prefix) for line in lines if line.startswith(prefix)]
 
 
-def _summary(
-    lines: list[str], *, show_logo: bool, show_recommendation: bool = True
-) -> None:
-    if show_logo:
-        _logo()
+def _summary(lines: list[str], *, show_recommendation: bool = True) -> None:
     value = lambda name: (_values(lines, name) or [""])[0]
     authority = "Ask me" if value("AUTHORITY") == "human" else "Agent within granted limits"
     execution = "Automatic" if value("EXECUTION") == "auto" else "Confirm first"
@@ -300,7 +296,7 @@ def _summary(
         ("Landing", f"{branch} · {publication}"),
         ("Add-ons", task_adapter if task_adapter == "Intent brief" else "None"),
     )
-    print(f"\n{style.wordmark('Repository ready', tone=style.OK_TEXT)}\n")
+    print(f"\n{_color(style.OK_TEXT, '  Repository ready')}\n")
     print(
         style.box(
             [f"{_color(style.MUTED, f'{label:<8}')}  {setting}" for label, setting in rows],
@@ -370,6 +366,8 @@ def settings(
 ) -> bootstrap.BootstrapSettings:
     if not defaults:
         return _interactive(repo, show_logo=show_logo)
+    if show_logo:
+        _logo()
     return bootstrap.BootstrapSettings()
 
 
@@ -377,12 +375,13 @@ def _initialize(args: argparse.Namespace) -> list[str]:
     repo = git.root()
     if not args.defaults and args.format == "json":
         raise UsageError("Invariant: JSON initialization requires --defaults")
-    selected = settings(repo, defaults=args.defaults)
+    selected = settings(
+        repo, defaults=args.defaults, show_logo=args.format == "text"
+    )
     lines = bootstrap.initialize(repo, selected)
     if args.format == "text" and getattr(args, "show_summary", True):
         _summary(
             lines,
-            show_logo=args.defaults,
             show_recommendation=getattr(args, "show_recommendation", True),
         )
         return []

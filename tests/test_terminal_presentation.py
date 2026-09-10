@@ -11,7 +11,7 @@ import subprocess
 import time
 from pathlib import Path
 
-from lifecycle_support import CLI, repository
+from lifecycle_support import CLI, git, repository
 
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -114,7 +114,7 @@ def _tty(
                 break
         else:
             process.kill()
-            raise AssertionError("terminal command did not finish")
+            raise AssertionError(f"terminal command did not finish:\n{current}")
     finally:
         os.close(master)
     output = b"".join(chunks).decode("utf-8", errors="replace")
@@ -158,11 +158,38 @@ def test_status_keeps_repository_information_boxed(tmp_path: Path) -> None:
     code, output = _tty(repo, ["status"])
 
     assert code == 0, output
-    assert output.count(_WORDMARK_TOP) == 1
+    assert output.count(_WORDMARK_TOP) == 0
     assert "Repository" in output
     assert "Status" in output
     assert output.count("╭") == output.count("╰") == 1
     assert output.index("╭") < output.index("Status") < output.index("╰")
+
+
+def test_init_is_the_only_branded_result_command(tmp_path: Path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-qb", "main")
+    git(repo, "config", "user.name", "test")
+    git(repo, "config", "user.email", "test@example.com")
+    git(repo, "config", "commit.gpgsign", "false")
+    (repo / "app.txt").write_text("seed\n")
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "seed")
+    fake = _fake_codex(tmp_path)
+
+    code, output = _tty(
+        repo,
+        ["init", "--defaults", "--agent", "codex"],
+        environment={
+            "INVARIANT_CODEX": str(fake),
+            "INVARIANT_HOME": str(tmp_path / "invariant-home"),
+        },
+        input_steps=[("○ No", "j\r")],
+    )
+
+    assert code == 0, output
+    assert output.count(_WORDMARK_TOP) == 1
+    assert "Repository ready" in output
 
 
 def test_session_panel_leaves_space_before_the_next_prompt(tmp_path: Path) -> None:
