@@ -1,10 +1,10 @@
 """Terminal presentation for the human-facing command surface.
 
-One accent, and it belongs to the wordmark: `Invariant` is the only bold, coloured thing in a
-result block, so it reads a size larger than everything around it. Titles, labels, rules, and
-hints are dim; values are plain; state words carry one of three tones. Structure comes from
-alignment and whitespace, never from borders or banners. Everything degrades to the plain
-`NAME: value` records when output is not a terminal.
+One accent, and it belongs to the wordmark: a two-line block-letter `INVARIANT` opens every
+block, so the name is the largest thing on screen without a banner. Everything that follows is
+one rounded box per unit, padded inside and separated by blank lines; the border colour carries
+the state of the unit. Labels are dim, values plain, state words toned. Everything degrades to the
+plain `NAME: value` records when output is not a terminal.
 """
 
 from __future__ import annotations
@@ -30,6 +30,7 @@ WARN_TEXT = "33"
 BAD = "1;31"
 
 # Glyphs — each one is reserved for a single meaning.
+BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_H, BOX_V = "╭", "╮", "╰", "╯", "─", "│"
 CHECK = "✓"
 CROSS = "×"
 CAUTION = "!"
@@ -104,13 +105,59 @@ def columns(stream: TextIO | None = None) -> int:
     return width if width >= 24 else 80
 
 
-def wordmark(subtitle: str | None = None, *, tone: str = MUTED) -> str:
-    """`Invariant` in the accent, then the context in a quiet tone two spaces to the right."""
+# The wordmark: INVARIANT in two rows of half-block letters, 33 columns wide.
+WORDMARK_ROWS = (
+    "█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀",
+    "█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █ ",
+)
+WORDMARK_WIDTH = len(WORDMARK_ROWS[0])
+BOX_MARGIN = 2
+MIN_BOX = 24
+MAX_BOX = 100
 
-    mark = paint(ACCENT, "Invariant")
+
+def wordmark(subtitle: str | None = None, *, tone: str = MUTED) -> str:
+    """The two-line wordmark; a subtitle sits on the baseline row in a quiet tone."""
+
+    if columns() < WORDMARK_WIDTH + 2:
+        mark = paint(ACCENT, "Invariant")
+        return f"{mark}  {paint(tone, subtitle)}" if subtitle else mark
+    first, second = (paint(ACCENT, row) for row in WORDMARK_ROWS)
     if not subtitle:
-        return mark
-    return f"{mark}  {paint(tone, subtitle)}"
+        return f"{first}\n{second}"
+    return f"{first}\n{second}   {paint(tone, subtitle)}"
+
+
+_ESCAPES = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def visible(text: str) -> int:
+    return len(_ESCAPES.sub("", text))
+
+
+def box(lines: Sequence[str], *, tone: str = MUTED, stream: TextIO | None = None) -> str:
+    """One rounded box: a padding row above and below, two spaces of margin at each side.
+
+    Lines keep their own colour; the border takes the unit's tone. A line wider than the box
+    is cut with an ellipsis, so callers wrap what they want kept.
+    """
+
+    inner_limit = max(MIN_BOX, min(MAX_BOX, columns(stream) - 2)) - 2 - BOX_MARGIN * 2
+    inner = min(inner_limit, max((visible(line) for line in lines), default=0))
+    inner = max(inner, MIN_BOX - 2 - BOX_MARGIN * 2)
+    edge = paint(tone, BOX_V, stream=stream)
+    margin = " " * BOX_MARGIN
+    rows = [paint(tone, f"{BOX_TL}{BOX_H * (inner + BOX_MARGIN * 2)}{BOX_TR}", stream=stream)]
+    rows.append(f"{edge}{' ' * (inner + BOX_MARGIN * 2)}{edge}")
+    for line in lines:
+        shown = line
+        if visible(line) > inner:
+            plain = _ESCAPES.sub("", line)
+            shown = plain[: max(1, inner - 1)].rstrip() + "…"
+        rows.append(f"{edge}{margin}{shown}{' ' * (inner - visible(shown))}{margin}{edge}")
+    rows.append(f"{edge}{' ' * (inner + BOX_MARGIN * 2)}{edge}")
+    rows.append(paint(tone, f"{BOX_BL}{BOX_H * (inner + BOX_MARGIN * 2)}{BOX_BR}", stream=stream))
+    return "\n".join(rows)
 
 
 def prompt(mode: str = "ask") -> str:
@@ -248,6 +295,7 @@ def session_intro(name: str, mode: str, identifier: int) -> str:
     return "\n".join(
         [
             wordmark("conversation"),
+            "",
             f"  {context}",
             paint(MUTED, f"  :help for commands  {DOT}  Ctrl-C to leave"),
             "",
@@ -406,8 +454,14 @@ def _state(value: str) -> str:
     return value
 
 
-def panel(title: str | None, lines: Sequence[str], *, success: bool = False) -> str:
-    """Render records as an aligned block: wordmark line, fields, then closing callouts."""
+def panel(
+    title: str | None,
+    lines: Sequence[str],
+    *,
+    success: bool = False,
+    tone: str | None = None,
+) -> str:
+    """Render records as one unit: the wordmark, a boxed field table, then closing callouts."""
 
     values = list(lines)
     if not interactive():
@@ -428,26 +482,44 @@ def panel(title: str | None, lines: Sequence[str], *, success: bool = False) -> 
         width = max(width, len(label))
         fields.append((label, match.group(2)))
 
-    output = [wordmark(title, tone=OK_TEXT if success else MUTED)]
+    unit_tone = tone or (OK_TEXT if success else MUTED)
+    # A unit begins with breathing room so it stands apart from trail lines or a prompt.
+    output = ["", wordmark(title, tone=unit_tone)]
+    body: list[str] = []
+    value_width = max(MIN_BOX, min(MAX_BOX, columns() - 2)) - 2 - BOX_MARGIN * 2 - width - 2
     previous = ""
     for field in fields:
         if isinstance(field, str):
-            output.append(field)
+            body.append(field)
             previous = ""
             continue
         label, value = field
-        if label in {"Status"}:
-            value = _state(value)
-        shown = "" if label == previous else label
-        output.append(f"  {paint(MUTED, f'{shown:<{width}}')}  {value}")
+        toned = label in {"Status"}
+        pieces = [value] if toned or len(value) <= value_width else (
+            textwrap.wrap(value, width=value_width, break_long_words=True) or [""]
+        )
+        for index, piece in enumerate(pieces):
+            shown = "" if (label == previous or index) else label
+            text = _state(piece) if toned else piece
+            body.append(f"{paint(MUTED, f'{shown:<{width}}')}  {text}")
         previous = label
+    if body:
+        output.append("")
+        output.append(box(body, tone=unit_tone))
     if callouts:
-        if fields:
-            output.append("")
+        output.append("")
         for label, value in callouts:
-            tone, glyph = _CALLOUTS[label]
-            output.append(f"  {paint(tone, glyph)} {value}")
+            call_tone, glyph = _CALLOUTS[label]
+            output.append(f"  {paint(call_tone, glyph)} {value}")
     return "\n".join(output)
+
+
+def decision(title: str, lines: Sequence[str]) -> str:
+    """A unit that waits on the human: the wordmark and an amber box around the question."""
+
+    if not interactive():
+        return "\n".join(lines)
+    return "\n".join(["", wordmark(title, tone=WARN_TEXT), "", box(list(lines), tone=WARN_TEXT), ""])
 
 
 def render(command: str, lines: Sequence[str]) -> str:

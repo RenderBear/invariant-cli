@@ -125,19 +125,31 @@ SVG figures under `.github/assets/` follow the document palette with one additio
 
 Colour is expressed as ANSI attributes so the user's terminal theme supplies the actual hues.
 Every attribute has exactly one role. The wordmark is the only bold, coloured element in a
-result block; nothing else competes with it.
+unit; a box border takes the unit's state tone.
 
 | Token | Attribute | Role |
 | --- | --- | --- |
-| Accent | `1;36` bold cyan | The `Invariant` wordmark, the connected agent's name and glyph, the user prompt, the next-action arrow and command callouts |
+| Accent | `1;36` bold cyan | The wordmark, the connected agent's name and glyph, the user prompt, the next-action arrow and command callouts |
 | Strong | `1` bold | The active option in a questionnaire, emphasis inside agent prose |
-| Muted | `2` dim | Block titles, field labels, the turn rule, the spinner line, durations, hints |
-| Ok | `32` green | Success block titles and trail marks; completed, ready, valid, landed states |
-| Warn | `1;33` bold amber / `33` amber | Warnings, recommended options; waiting and in-progress states |
+| Muted | `2` dim | Unit titles, box borders at rest, field labels, the turn rule, the spinner line, durations, hints |
+| Ok | `32` green | Success titles and borders, trail marks; completed, ready, valid, landed states |
+| Warn | `33` amber / `1;33` bold amber | Decision titles and borders, warnings, recommended options; waiting and in-progress states |
 | Bad | `1;31` bold red | Failure marks; failed, invalid, stale, absent states |
 
 Plain text is the default; nothing else is coloured. `NO_COLOR` disables every attribute, and
 output that is not a terminal is emitted as the plain `NAME: value` records.
+
+## Terminal wordmark
+
+```text
+█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
+█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    Repository
+```
+
+- Two rows of half-block letters, 33 columns, in Accent. The unit title follows the baseline
+  row after three spaces, in the unit's tone.
+- Under 35 columns the wordmark falls back to the word `Invariant` in Accent on one line.
+- It opens every unit and the conversation; nothing else is set in block letters.
 
 ## Terminal glyphs
 
@@ -148,51 +160,78 @@ output that is not a terminal is emitted as the plain `NAME: value` records.
 | `!` | A warning |
 | `→` | The single next action |
 | `›` | Speech: after `(mode)` for the user, after `(provider)` for the agent; also a command to run |
+| `╭ ╮ ╰ ╯ │ ─` | The box around one unit |
 | `─` | The turn rule between conversation turns |
 | `·` | A separator between short facts on one line |
 | `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` | Activity in progress |
 
 ## Terminal layout
 
-Result block:
+Unit:
 
 ```text
-Invariant  Repository                  accent wordmark, two spaces, muted title
-  Status     needs attention           muted label column, value; state words toned
-  Branch     main
-  Change     cfB (implementing)        a repeated label is shown once
-             driftA (awaiting-review)
+█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
+█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    Repository        wordmark, title in the unit tone
 
-  → invariant state validate           callouts close the block after a blank line
+╭──────────────────────────────────────────╮           border in the unit tone
+│                                          │           one padding row
+│  Status    needs attention               │           two-space margin; muted label, value
+│  Branch    main                          │
+│  Change    cfB (implementing)            │           a repeated label is shown once
+│            driftA (awaiting-review)      │
+│                                          │
+╰──────────────────────────────────────────╯
+
+  → invariant state validate                           callouts close the unit after a blank line
 ```
 
-- The wordmark line is the only heading. There is no rule, banner, or box.
-- A success block keeps the wordmark and sets the title in Ok: `Invariant  Change landed`.
+- One box per unit. The box is as wide as its widest line plus margins, at least 24 and at
+  most 100 columns, never wider than the terminal minus two.
+- Unit tones: Muted at rest, Ok for a success (`Change landed`, `Repository ready`), Warn for
+  a decision the human must make.
+- Long values wrap under their own column; a line that still does not fit is cut with `…`.
 - Labels are the record names in sentence case, right-padded to the widest label.
 - `Status` values are toned by state; other values are plain.
 - `Next`, `Warning`, `Error`, `Invalid`, `Request`, and `Command` records are callouts. They
-  are removed from their record position and rendered last, in order, one per line. `Next`,
-  `Request`, and `Command` glyphs are Accent; `Warning` is Warn; `Error` and `Invalid` are Bad.
-- Non-record lines pass through unchanged and reset label folding.
+  are removed from their record position and rendered last, in order, one per line, outside
+  the box. `Next`, `Request`, and `Command` glyphs are Accent; `Warning` is Warn; `Error` and
+  `Invalid` are Bad.
+- Non-record lines pass through unchanged inside the box and reset label folding.
+- Trail lines from the steps that produced the unit stand above the wordmark.
+
+Decision:
+
+```text
+█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
+█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    Your decision     title and border in Warn
+
+╭────────────────────────────────────────────────╮
+│                                                │
+│  The agent found these recordable facts:       │
+│                                                │
+│  1. The scheduler owns recovery after restart  │
+│  2. Persisted records use the JSON envelope    │
+│                                                │
+╰────────────────────────────────────────────────╯
+
+(decide) › Record all, none, or selected numbers: _
+```
 
 Failure:
 
 ```text
 × no coding agent is connected; run 'invariant connect codex'   bad mark, plain message
-Invariant  Change
-  Change     add-div
-  Status     needs attention
-
-  → invariant connect codex
 ```
 
 The message goes to standard error with its `Invariant:` prefix removed; retained-state
-records follow on standard output as an ordinary block.
+records follow on standard output as an ordinary unit.
 
 Conversation:
 
 ```text
-Invariant  conversation
+█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
+█ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    conversation
+
   codex  ·  ask mode  ·  session 1
   :help for commands  ·  Ctrl-C to leave
 
@@ -222,7 +261,7 @@ Invariant  conversation
   markers removed; fenced code blocks are kept verbatim and unwrapped, indented four spaces.
 - Each turn ends with the turn rule. One-shot `ask` prints the question line, one blank line,
   and the agent's line and prose, with no rule.
-- Invariant headings are reserved for system state.
+- Block letters and boxes are reserved for system state; agent prose never receives them.
 
 ## Terminal motion
 

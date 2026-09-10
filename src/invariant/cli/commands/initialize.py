@@ -294,15 +294,19 @@ def _summary(
         "claude": "Claude Code",
     }.get(value("AGENT"), value("AGENT"))
 
-    print(f"\n{style.wordmark('Repository ready', tone=style.OK_TEXT)}")
     rows = (
         *([("Agent", agent)] if agent else []),
         ("Autonomy", f"{authority} · {execution}"),
         ("Landing", f"{branch} · {publication}"),
         ("Add-ons", task_adapter if task_adapter == "Intent brief" else "None"),
     )
-    for label, setting in rows:
-        print(f"  {_color(style.MUTED, f'{label:<14}')}{setting}")
+    print(f"\n{style.wordmark('Repository ready', tone=style.OK_TEXT)}\n")
+    print(
+        style.box(
+            [f"{_color(style.MUTED, f'{label:<8}')}  {setting}" for label, setting in rows],
+            tone=style.OK_TEXT,
+        )
+    )
 
     if show_recommendation:
         print(f"\n{_color(style.WARN, f'{style.NEXT} Next')}\n")

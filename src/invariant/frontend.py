@@ -1585,13 +1585,11 @@ def _human_finding_decision(repo: Path, change_id: str) -> None:
             "choose all, none, or selected audited findings"
         )
 
-    print(style.wordmark("Your decision"))
-    print()
-    print("  The agent found these recordable architectural facts:")
+    facts = ["The agent found these recordable architectural facts:", ""]
     for index, finding in enumerate(ready, start=1):
         summary = re.sub(r"\s+", " ", str(finding.get("summary") or "")).strip()
-        print(f"  {index}. {summary or finding['id']}")
-    print()
+        facts.append(f"{index}. {summary or finding['id']}")
+    print(style.decision("Your decision", facts))
     prompt = "Record all, none, or selected numbers (for example 1 3)"
     while True:
         answer = input(style.prompt("decide") + prompt + ": ").strip().lower()
@@ -1640,11 +1638,14 @@ def _human_candidate_decisions(repo: Path, change_id: str) -> None:
             for item in context.get("governance", [])
             if isinstance(item, str)
         ]
-        print(style.wordmark("Accept repository records"))
-        print()
         print(
-            "  The exact proposal is ready"
-            + (f" ({len(references)} durable references)." if references else ".")
+            style.decision(
+                "Accept repository records",
+                [
+                    "The exact proposal is ready"
+                    + (f" ({len(references)} durable references)." if references else ".")
+                ],
+            )
         )
         accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
         if accepted not in {"y", "yes"}:
