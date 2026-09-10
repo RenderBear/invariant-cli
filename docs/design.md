@@ -124,8 +124,8 @@ SVG figures under `.github/assets/` follow the document palette with one additio
 ## Terminal palette
 
 Colour is expressed as ANSI attributes so the user's terminal theme supplies the actual hues.
-Every attribute has exactly one role. The wordmark is the only bold, coloured element in a
-unit; a box border takes the unit's state tone.
+Every attribute has exactly one role. The wordmark is the only bold, coloured brand element in a
+command; a box border takes the unit's state tone.
 
 | Token | Attribute | Role |
 | --- | --- | --- |
@@ -149,7 +149,8 @@ output that is not a terminal is emitted as the plain `NAME: value` records.
 - Two rows of half-block letters, 33 columns, in Accent. The unit title follows the baseline
   row after three spaces, in the unit's tone.
 - Under 35 columns the wordmark falls back to the word `Invariant` in Accent on one line.
-- It opens every unit and the conversation; nothing else is set in block letters.
+- It opens each top-level command or conversation once. Nested results and the conversation ending
+  never repeat it; nothing else is set in block letters.
 
 ## Terminal glyphs
 
@@ -185,8 +186,9 @@ Unit:
   → invariant state validate                           callouts close the unit after a blank line
 ```
 
-- One box per unit. The box is as wide as its widest line plus margins, at least 24 and at
-  most 100 columns, never wider than the terminal minus two.
+- One box per information unit. A box is as wide as its widest line plus margins, at least 24 and
+  at most 100 columns, never wider than the terminal minus two. The conversation itself uses turn
+  dividers instead of putting either speaker inside a box.
 - Unit tones: Muted at rest, Ok for a success (`Change landed`, `Repository ready`), Warn for
   a decision the human must make.
 - Long values wrap under their own column; a line that still does not fit is cut with `…`.
@@ -237,12 +239,11 @@ Conversation:
 
 (ask) › what owns job recovery?         muted mode, accent ›, plain question (redrawn after Enter)
 
-(codex) › thinking ⠹ · 4s               the agent's line while it works, muted detail
 (codex) › 4.2s                          the same line once settled: muted duration only
   The job runner owns recovery. Restart re-queues every non-terminal
   job once …
 
-  ────────────────────────              turn rule: 24 columns, muted, indented, blank line each side
+  ──────────────────────────────────… full available terminal width, muted, blank line each side
 
 (ask) › next question
 ```
@@ -259,9 +260,13 @@ Conversation:
   four, indented two spaces, with list items hanging under their marker.
 - Markdown headings, `**strong**` spans, and `` `code` `` spans render in Strong with their
   markers removed; fenced code blocks are kept verbatim and unwrapped, indented four spaces.
-- Each turn ends with the turn rule. One-shot `ask` prints the question line, one blank line,
-  and the agent's line and prose, with no rule.
+- Each complete question-and-answer turn ends with a rule spanning the available terminal width.
+  The rule separates one Q&A set from the next rather than dividing either speaker's content.
+  One-shot `ask` prints the question line, one blank line, and the agent's line and prose with no
+  rule.
 - Block letters and boxes are reserved for system state; agent prose never receives them.
+- Ending a conversation prints one quiet `Session ended` line without a wordmark, box, or session
+  count.
 
 ## Terminal motion
 

@@ -759,8 +759,13 @@ def _session_prompt(repo: Path, mode: str, message: str) -> str:
     )
 
 
-def _show(title: str, lines: list[str]) -> None:
-    rendered = style.panel(title, lines)
+def _show(title: str, lines: list[str], *, critical: bool = False) -> None:
+    rendered = style.panel(
+        title,
+        lines,
+        tone=style.BAD if critical else None,
+        branded=False,
+    )
     if rendered:
         print(rendered)
 
@@ -838,7 +843,7 @@ def _session_turn(
             prompt=response.strip(),
         )
     )
-    rendered = style.render("change", changed.lines)
+    rendered = style.render("change", changed.lines, branded=False)
     if rendered:
         print(rendered)
 
@@ -965,7 +970,7 @@ def _start(args: argparse.Namespace) -> CommandResult:
                         result = _status(
                             argparse.Namespace(change_id=None, verbose=False)
                         )
-                        rendered = style.render("status", result.lines)
+                        rendered = style.render("status", result.lines, branded=False)
                         if rendered:
                             print(rendered)
                     except InvariantError as exc:
@@ -977,7 +982,7 @@ def _start(args: argparse.Namespace) -> CommandResult:
                         continue
                     try:
                         result = _settings(argparse.Namespace())
-                        rendered = style.render("settings", result.lines)
+                        rendered = style.render("settings", result.lines, branded=False)
                         if rendered:
                             print(rendered)
                     except InvariantError as exc:
@@ -998,7 +1003,7 @@ def _start(args: argparse.Namespace) -> CommandResult:
                         )
                         if values[0] == "mode":
                             active.mode = values[1]
-                        rendered = style.render("set", result.lines)
+                        rendered = style.render("set", result.lines, branded=False)
                         if rendered:
                             print(rendered)
                     except InvariantError as exc:
@@ -1011,7 +1016,7 @@ def _start(args: argparse.Namespace) -> CommandResult:
                         source_args.model = args.model
                         source_args.timeout = args.timeout
                         result = _source_add(source_args)
-                        rendered = style.render("source", result.lines)
+                        rendered = style.render("source", result.lines, branded=False)
                         if rendered:
                             print(rendered)
                     except InvariantError as exc:
@@ -1030,13 +1035,13 @@ def _start(args: argparse.Namespace) -> CommandResult:
                 )
             except InvariantError as exc:
                 if exc.lines:
-                    _show("Stopped", exc.lines)
+                    _show("Stopped", exc.lines, critical=True)
                 print(style.error(exc.message), file=sys.stderr)
             if sys.stdin.isatty() and sys.stdout.isatty():
                 print(style.turn_separator())
     except (EOFError, KeyboardInterrupt):
         pass
-    _show("Session ended", [f"SESSIONS: {len(sessions)}"])
+    print(f"\n{style.session_outro()}")
     return CommandResult(
         [],
         {
@@ -1049,7 +1054,7 @@ def _start(args: argparse.Namespace) -> CommandResult:
 
 def _show_session_error(exc: InvariantError) -> None:
     if exc.lines:
-        _show("Stopped", exc.lines)
+        _show("Stopped", exc.lines, critical=True)
     print(style.error(exc.message), file=sys.stderr)
 
 

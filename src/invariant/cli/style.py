@@ -1,9 +1,8 @@
 """Terminal presentation for the human-facing command surface.
 
-One accent, and it belongs to the wordmark: a two-line block-letter `INVARIANT` opens every
-block, so the name is the largest thing on screen without a banner. Everything that follows is
-one rounded box per unit, padded inside and separated by blank lines; the border colour carries
-the state of the unit. Labels are dim, values plain, state words toned. Everything degrades to the
+One accent, and it belongs to the wordmark: a two-line block-letter `INVARIANT` opens each command
+or conversation once. Record units remain boxed while conversation turns stay open and use a
+full-width divider. Labels are dim, values plain, state words toned. Everything degrades to the
 plain `NAME: value` records when output is not a terminal.
 """
 
@@ -182,7 +181,6 @@ def elapsed(seconds: float) -> str:
 
 
 PROSE_MEASURE = 88
-TURN_RULE_WIDTH = 24
 
 _INLINE_STRONG = re.compile(r"\*\*(.+?)\*\*|`([^`]+)`")
 _LIST_INDENT = re.compile(r"^(\s*(?:[-*+]|\d+[.)])\s+)")
@@ -249,8 +247,9 @@ def redraw_user_line(
 
 
 def turn_separator() -> str:
-    # The agent block already ends with a blank line; the rule adds only its own trailing one.
-    return f"  {paint(MUTED, RULE * TURN_RULE_WIDTH)}\n"
+    # The rule closes the complete Q&A set and spans the available terminal width.
+    width = max(1, columns() - 4)
+    return f"  {paint(MUTED, RULE * width)}\n"
 
 
 def agent_message(
@@ -294,6 +293,7 @@ def session_intro(name: str, mode: str, identifier: int) -> str:
     )
     return "\n".join(
         [
+            "",
             wordmark("conversation"),
             "",
             f"  {context}",
@@ -301,6 +301,12 @@ def session_intro(name: str, mode: str, identifier: int) -> str:
             "",
         ]
     )
+
+
+def session_outro() -> str:
+    """Close a conversation quietly; its wordmark and session identity are already visible."""
+
+    return paint(MUTED, "  Session ended") if interactive() else "SESSION: ended"
 
 
 def animation_enabled(stream: TextIO | None = None) -> bool:
@@ -460,8 +466,9 @@ def panel(
     *,
     success: bool = False,
     tone: str | None = None,
+    branded: bool = True,
 ) -> str:
-    """Render records as one unit: the wordmark, a boxed field table, then closing callouts."""
+    """Render records under one optional wordmark, with one box per information unit."""
 
     values = list(lines)
     if not interactive():
@@ -483,8 +490,10 @@ def panel(
         fields.append((label, match.group(2)))
 
     unit_tone = tone or (OK_TEXT if success else MUTED)
-    # A unit begins with breathing room so it stands apart from trail lines or a prompt.
-    output = ["", wordmark(title, tone=unit_tone)]
+    # A top-level command begins with breathing room; nested conversation results stay subordinate.
+    output = ["", wordmark(title, tone=unit_tone)] if branded else []
+    if not branded and title:
+        output.extend(["", f"  {paint(unit_tone, title)}"])
     body: list[str] = []
     value_width = max(MIN_BOX, min(MAX_BOX, columns() - 2)) - 2 - BOX_MARGIN * 2 - width - 2
     previous = ""
@@ -522,7 +531,7 @@ def decision(title: str, lines: Sequence[str]) -> str:
     return "\n".join(["", wordmark(title, tone=WARN_TEXT), "", box(list(lines), tone=WARN_TEXT), ""])
 
 
-def render(command: str, lines: Sequence[str]) -> str:
+def render(command: str, lines: Sequence[str], *, branded: bool = True) -> str:
     if not lines:
         return ""
     title = _TITLES.get(command)
@@ -536,6 +545,7 @@ def render(command: str, lines: Sequence[str]) -> str:
         title,
         lines,
         success=command in _SUCCESS_COMMANDS and title in _TITLES.values(),
+        branded=branded,
     )
 
 
