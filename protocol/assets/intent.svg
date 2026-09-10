@@ -131,9 +131,9 @@
     <g transform="translate(410,260)">
       <rect width="168" height="140" class="card"/>
       <use href="#record" x="60" y="14" width="48" height="48"/>
-      <text x="84" y="88" text-anchor="middle" class="ink title">Records</text>
-      <text x="84" y="106" text-anchor="middle" class="muted body">decisions bound to prose,</text>
-      <text x="84" y="122" text-anchor="middle" class="muted body">revisited when premises change</text>
+      <text x="84" y="88" text-anchor="middle" class="ink title">Decisions</text>
+      <text x="84" y="106" text-anchor="middle" class="muted body">semantic records bound to prose,</text>
+      <text x="84" y="122" text-anchor="middle" class="muted body">reopened when premises change</text>
     </g>
 
     <!-- Checkpoints -->

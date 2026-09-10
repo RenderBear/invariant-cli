@@ -3,40 +3,26 @@
 Agents rarely break architecture in one dramatic change. It drifts through individually reasonable
 changes made from partial context.
 
-## The write side of intent
+Invariant is the write side of intent. The decisions, responsibilities, contracts, and sources a
+team has accepted live in the repository as records, versioned with the code, and every
+consequential change passes checkpoints that read them before it lands. The agent reasons freely;
+the checkpoints give it something exact to reason against, and the landing attests back into the
+same memory. The [protocol](protocol/README.md) defines that memory and its guarantees; this CLI
+runs the lifecycle.
 
-Most tooling helps an agent read a codebase better. Invariant stabilizes what an agent is allowed
-to write back. The decisions, responsibilities, contracts, and sources a team has accepted live in
-the repository, versioned with the code, and every consequential change passes critical checkpoints
-that read them before it lands. The agent reasons freely; the checkpoints give it something exact to
-reason against, and the landing writes its attestation back into the same memory.
+## What a change goes through
 
-![A human accepts promises into repository memory made of domains, contracts, sources, and records; an agent's change passes reach, review, verify, and land checkpoints that read that memory before landing and attest back into it.](.github/assets/intent.svg)
+![Durable memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, with many changes running it in parallel in one clone.](.github/assets/lifecycle.svg)
 
-- **Domains** name stable responsibilities and point at the architecture prose that explains them.
-- **Contracts** are executable promises between responsibilities, witnessed on the exact tree.
-- **Sources** bring attributable external evidence into scope without ever becoming authority.
-- **Records** bind decisions to canonical prose and reopen when their premises change.
-
-## Core philosophy
-
-1. free-form agent reasoning for accuracy;
-2. deterministic, inspectable state where reasoning becomes consequential;
-3. near-zero user ceremony for routine work; and
-4. hard authority boundaries when an accepted promise is genuinely at risk.
-
-## True value
-
-- **Bounded autonomy.** Agents move fast because the rules are written down and enforced: routine
-  changes land in two commands, and touching a recorded decision pauses the lifecycle until an agent
+- **Bounded autonomy.** `invariant change` plans and implements in an isolated worktree, commits an
+  exact candidate, checks it against accepted records, and lands it on the local branch, so routine
+  changes land in two commands. Touching a recorded decision pauses the lifecycle until an agent
   — or you, when it lacks the authority — resolves it.
 - **Scaled coordination.** Several changes run in one clone without stepping on each other, because
   each owns its worktree, receipt, and evidence, and landings serialize atomically on the integration
   branch.
 - **Planning.** Plans and reserved work keep concurrent agents out of each other's way, and a moved
   branch means a clean re-verification, not a clobbered landing.
-
-![Durable memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, with many changes running it in parallel in one clone.](.github/assets/lifecycle.svg)
 
 Architecture can evolve. It cannot drift silently.
 
@@ -78,9 +64,7 @@ invariant change "Job recovery breaks after restart; fix it"
 invariant status
 ```
 
-`change` plans and implements in an isolated worktree, commits an exact candidate, checks it against
-accepted records, resolves affected promises within configured authority, and lands it on the local
-branch. Publishing is off by default.
+`change` runs the lifecycle above and lands on the local branch. Publishing is off by default.
 
 ## Bring your agent. Add only what you need.
 
@@ -129,12 +113,12 @@ candidate protocol remains available to automation and recovery tooling through
 └── runtime/         self-ignored task state, worktrees, receipts, and archives
 ```
 
-Ordinary Markdown remains the source of truth. The YAML is a thin, deterministic envelope for retrieval,
-authority, and verification. Invariant always resolves the Git root and rejects ambiguous nested state;
-linked worktrees share one logical kernel while preserving isolated candidates.
+The YAML is a thin envelope; the Markdown it points at stays canonical. Runtime layout, Git-root
+resolution, and worktree mechanics are in [SPEC.md](docs/SPEC.md).
 
 ## Read further
 
+- [Protocol overview](protocol/README.md) — the memory model, its four registries, and the operating philosophy.
 - [Explanatory model](protocol/model.html) — the architecture, authority model, and guarantees.
 - [Protocol](protocol/protocol.md) — the implementation-independent contract: state, lifecycle, landing, and the JSON envelope.
 - [CLI basics](docs/cli-basics.md) — complete commands and a task walkthrough.
