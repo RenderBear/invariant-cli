@@ -3,8 +3,28 @@ from __future__ import annotations
 import json
 import re
 import sys
+from dataclasses import dataclass
+from typing import Any
 
 from invariant.errors import InvariantError
+from invariant.protocol import CommandOutcome
+
+
+@dataclass(frozen=True)
+class CommandResult:
+    lines: list[str]
+    data: dict[str, Any] | list[Any]
+    outcome: CommandOutcome = CommandOutcome.COMPLETED
+
+
+def internal_error(exc: BaseException) -> InvariantError:
+    """Wrap an unexpected exception so callers still receive the error envelope and exit 2."""
+
+    detail = str(exc).strip()
+    return InvariantError(
+        f"Invariant: internal failure — {type(exc).__name__}{': ' + detail if detail else ''}",
+        code="internal_error",
+    )
 
 
 def _records(lines: list[str]) -> list[dict[str, str]]:
@@ -16,15 +36,31 @@ def _records(lines: list[str]) -> list[dict[str, str]]:
     return result
 
 
-def emit_success(command: str, lines: list[str], format_name: str) -> int:
+def emit_success(
+    command: str,
+    result: list[str] | CommandResult,
+    format_name: str,
+    *,
+    verbose: bool = False,
+) -> int:
+    lines = result.lines if isinstance(result, CommandResult) else result
     if format_name == "json":
+        payload: dict[str, Any] | list[Any]
+        payload = result.data if isinstance(result, CommandResult) else {"records": _records(lines)}
+        if verbose and isinstance(payload, dict):
+            payload = {**payload, "output": "\n".join(lines) + ("\n" if lines else "")}
         print(
             json.dumps(
                 {
-                    "protocol": 1,
+                    "protocol": 2,
                     "command": command,
                     "status": "ok",
-                    "result": {"records": _records(lines), "output": "\n".join(lines) + ("\n" if lines else "")},
+                    "outcome": (
+                        result.outcome.value
+                        if isinstance(result, CommandResult)
+                        else CommandOutcome.COMPLETED.value
+                    ),
+                    "result": payload,
                     "diagnostics": [],
                 },
                 separators=(",", ":"),
@@ -35,17 +71,29 @@ def emit_success(command: str, lines: list[str], format_name: str) -> int:
     return 0
 
 
-def emit_error(command: str, error: InvariantError, format_name: str) -> int:
+def emit_error(
+    command: str, error: InvariantError, format_name: str, *, verbose: bool = False
+) -> int:
     lines = list(error.lines)
     if format_name == "json":
         status = "blocked" if error.exit_code == 1 else "error"
+        result: dict[str, Any] = error.data or {"records": _records(lines)}
+        if error.data is not None and lines:
+            result = {**result, "records": _records(lines)}
+        if verbose:
+            result["output"] = "\n".join(lines) + ("\n" if lines else "")
         print(
             json.dumps(
                 {
-                    "protocol": 1,
+                    "protocol": 2,
                     "command": command,
                     "status": status,
-                    "result": {"records": _records(lines), "output": "\n".join(lines) + ("\n" if lines else "")},
+                    "outcome": (
+                        CommandOutcome.BLOCKED.value
+                        if status == "blocked"
+                        else CommandOutcome.FAILED.value
+                    ),
+                    "result": result,
                     "diagnostics": [{"code": error.code, "message": error.message}],
                 },
                 separators=(",", ":"),
@@ -56,4 +104,3 @@ def emit_error(command: str, error: InvariantError, format_name: str) -> int:
             print("\n".join(lines))
         print(error.message, file=sys.stderr)
     return error.exit_code
-

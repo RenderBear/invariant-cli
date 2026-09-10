@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
-from invariant.mechanics import config, git
+from invariant.errors import UsageError
+from invariant.mechanics import config, git, governance
 from invariant.mechanics.documents import load_yaml
 from invariant.mechanics.governance import architecture_refs, refs
+from invariant.semantics.adoption import ProjectedRecord
 from invariant.semantics.discovery import Discovery, validate_shape
+from invariant.semantics.domains import Domain, DomainIndex
+from invariant.semantics.records import SemanticRecord, parse_document
+from invariant.semantics import sources
 
 
 def _valid_id(value: Any) -> bool:
@@ -70,21 +76,62 @@ def _surface(repo: Path, value: str, label: str) -> list[str]:
     return [f"{label} surface '{value}' must use repo: or interface:"]
 
 
+def _revisit_coordinate(value: str, label: str) -> list[str]:
+    """Validate a future invalidation trigger; the named path may not exist yet."""
+
+    if value.startswith("repo:"):
+        path = value.removeprefix("repo:").split("#", 1)[0]
+        relative = Path(path)
+        if path and not relative.is_absolute() and ".." not in relative.parts:
+            return []
+    elif value.startswith("interface:") and value != "interface:":
+        return []
+    return [f"{label} revisit coordinate '{value}' must use a safe repo: or interface: locator"]
+
+
 def _verifier(repo: Path, value: str, label: str) -> list[str]:
+    def repository_path(path: str) -> tuple[Path, list[str]]:
+        relative = Path(path)
+        if not path or relative.is_absolute() or ".." in relative.parts:
+            return repo / relative, [f"{label} verifier '{path}' must stay inside the repository"]
+        candidate = repo / relative
+        try:
+            candidate.resolve().relative_to(repo.resolve())
+        except (OSError, ValueError):
+            return candidate, [f"{label} verifier '{path}' escapes the repository"]
+        return candidate, []
+
     if value.startswith("command:"):
         path = value.removeprefix("command:")
-        candidate = repo / path
+        candidate, failures = repository_path(path)
+        if failures:
+            return failures
         result = [] if candidate.is_file() else [f"{label} verifier '{path}' does not exist"]
         if candidate.is_file() and not candidate.stat().st_mode & 0o111:
             result.append(f"{label} command verifier '{path}' is not executable")
         return result
     if value.startswith("test:"):
         path = value.removeprefix("test:").split("::", 1)[0]
-        return [] if (repo / path).is_file() else [f"{label} verifier '{path}' does not exist"]
+        candidate, failures = repository_path(path)
+        if failures:
+            return failures
+        return [] if candidate.is_file() else [f"{label} verifier '{path}' does not exist"]
     if value.startswith("schema:"):
         path = value.removeprefix("schema:").split("#", 1)[0]
-        return [] if (repo / path).is_file() else [f"{label} verifier '{path}' does not exist"]
-    return [f"{label} verifier '{value}' must use command:, test:, or schema:"]
+        candidate, failures = repository_path(path)
+        if failures:
+            return failures
+        return [] if candidate.is_file() else [f"{label} verifier '{path}' does not exist"]
+    if value.startswith("runner:"):
+        runner, separator, target = value.removeprefix("runner:").partition("#")
+        if not separator or not git.valid_id(runner) or not target:
+            return [f"{label} verifier '{value}' must use runner:<name>#<target>"]
+        try:
+            registered = config.resolve(repo).verification.named(runner)
+        except InvariantError as exc:
+            return [f"{label} verifier '{value}' cannot resolve configuration: {exc.message}"]
+        return [] if registered else [f"{label} verifier runner '{runner}' is not registered"]
+    return [f"{label} verifier '{value}' must use command:, test:, schema:, or runner:"]
 
 
 def _evidence(repo: Path, value: str, label: str, at: str | None) -> list[str]:
@@ -103,35 +150,165 @@ def _evidence(repo: Path, value: str, label: str, at: str | None) -> list[str]:
     return [f"{label} evidence '{value}' must use repo:, commit:, interface:, task:, or url:"]
 
 
+def validate_audit(repo: Path, path: Path, raw: dict[str, Any], domain_ids: Iterable[str]) -> list[str]:
+    """Validate one persisted audit record without requiring it to be written first."""
+    failures: list[str] = []
+    relative = path.relative_to(repo).as_posix() if repo in path.parents else path.as_posix()
+    identifier = raw.get("id")
+    if raw.get("version") != 1:
+        failures.append(f"{relative} must declare version: 1")
+    if not _valid_id(identifier):
+        failures.append(f"{relative} invalid audit id '{identifier}'")
+    if path.stem != identifier:
+        failures.append(f"{relative} filename must be {identifier}.yml")
+    created_at = raw.get("created_at")
+    if not isinstance(created_at, str):
+        failures.append(f"{relative} missing created_at timestamp")
+    else:
+        try:
+            datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            failures.append(f"{relative} created_at must be a UTC RFC 3339 timestamp")
+    if raw.get("mode") not in {"scope", "full"}:
+        failures.append(f"{relative} invalid audit mode '{raw.get('mode')}'")
+    if "findings" not in raw or not isinstance(raw.get("findings"), list):
+        failures.append(f"{relative} missing findings")
+    ground, tree = raw.get("ground"), raw.get("tree")
+    if not ground:
+        failures.append(f"{relative} missing ground")
+    elif ground != "unborn" and not git.resolve(repo, str(ground)):
+        failures.append(f"{relative} ground '{ground}' does not resolve")
+    if not tree:
+        failures.append(f"{relative} missing tree")
+    elif tree != "empty" and git.resolve(repo, str(tree), "tree") is None:
+        failures.append(f"{relative} tree '{tree}' does not resolve")
+    known_domains = set(domain_ids)
+    for domain in refs(raw.get("domains")):
+        if domain not in known_domains:
+            failures.append(f"{relative} references missing domain '{domain}'")
+    paths = refs(raw.get("paths"))
+    if raw.get("mode") == "scope" and not paths:
+        failures.append(f"{relative} scoped audit requires at least one path")
+    for audit_path in paths:
+        if audit_path.startswith("/") or ".." in Path(audit_path).parts:
+            failures.append(f"{relative} has invalid audit path '{audit_path}'")
+        elif tree and tree != "empty" and git.run(
+            ["cat-file", "-e", f"{tree}:{audit_path}"], cwd=repo, check=False
+        ).returncode:
+            failures.append(f"{relative} audit path '{audit_path}' does not exist in tree {tree}")
+    finding_ids: list[str] = []
+    for finding in raw.get("findings", []):
+        if not isinstance(finding, dict):
+            failures.append(f"{relative} finding must be a mapping")
+            continue
+        finding_unknown = sorted(
+            set(finding)
+            - {
+                "id",
+                "summary",
+                "evidence",
+                "proposed",
+                "disposition",
+                "authority",
+                "records",
+            }
+        )
+        if finding_unknown:
+            failures.append(f"{relative} finding has unknown field '{finding_unknown[0]}'")
+        fid = finding.get("id")
+        flabel = f"{relative}:{fid}"
+        if not _valid_id(fid):
+            failures.append(f"{relative} invalid finding id '{fid}'")
+        else:
+            finding_ids.append(str(fid))
+        if not finding.get("summary"):
+            failures.append(f"{flabel} missing summary")
+        evidence = refs(finding.get("evidence"))
+        if not evidence:
+            failures.append(f"{flabel} requires evidence")
+        for locator in evidence:
+            failures.extend(_evidence(repo, locator, flabel, str(tree) if tree else None))
+        if finding.get("proposed") not in {
+            "semantic",
+            "domain",
+            "contract",
+            "architecture",
+            "discovery",
+            "none",
+            "constraint",
+            "observation",
+        }:
+            failures.append(f"{flabel} invalid proposed value '{finding.get('proposed')}'")
+        if finding.get("disposition") not in {
+            "adoptable", "needs-authority", "needs-verifier", "discovery-only", "no-action", "observation-only"
+        }:
+            failures.append(f"{flabel} invalid disposition '{finding.get('disposition')}'")
+        if finding.get("authority"):
+            failures.extend(_authority(repo, finding.get("authority"), flabel))
+        projected = finding.get("records", [])
+        if projected and not isinstance(projected, list):
+            failures.append(f"{flabel} records must be a list")
+        elif isinstance(projected, list):
+            for index, record in enumerate(projected):
+                try:
+                    ProjectedRecord.parse(record, f"{flabel}.records[{index}]")
+                except UsageError as exc:
+                    failures.append(str(exc))
+    if len(finding_ids) != len(set(finding_ids)):
+        failures.append(f"{relative} finding ids must be unique")
+    return failures
+
+
 def _yaml_files(repo: Path, named: Iterable[str] = ()) -> list[Path]:
     output = git.run(
         ["ls-files", "--cached", "--others", "--exclude-standard", "--", ".invariant/"],
         cwd=repo,
         check=False,
     ).stdout
-    values = {repo / item for item in output.splitlines() if item.endswith((".yml", ".yaml"))}
+    values = {
+        repo / item
+        for item in output.splitlines()
+        if item.endswith((".yml", ".yaml"))
+        and not item.startswith(".invariant/sources/")
+    }
     values.update((repo / item if not Path(item).is_absolute() else Path(item)) for item in named)
     return sorted(values)
 
 
 def _landing_history(repo: Path) -> list[str]:
     errors: list[str] = []
-    commits = git.run(["rev-list", "--first-parent", "--reverse", "HEAD"], cwd=repo, check=False)
-    if commits.returncode:
+    if git.resolve(repo, "HEAD") is None:
+        return ["landing history HEAD does not resolve"]
+    # History before the first attested landing can never carry lifecycle trailers, so the
+    # walk starts at the oldest commit whose message names the boundary key at all.
+    mentions = git.commits_mentioning(repo, "HEAD", "Invariant-Boundary")
+    if not mentions:
+        return errors
+    oldest = mentions[-1]
+    parent = git.resolve(repo, f"{oldest}^1")
+    history = git.trailer_history(
+        repo,
+        "HEAD",
+        ("Invariant-Boundary", "Invariant-Governance", "Invariant-Semantic", "Invariant-Covers"),
+        after=parent,
+    )
+    if history is None:
         return ["landing history HEAD does not resolve"]
     adopted = False
     last = ""
     gap = False
     gap_tip = ""
-    for commit in commits.stdout.splitlines():
-        boundary = git.trailers(repo, commit, "Intent-Boundary")
-        governance = git.trailers(repo, commit, "Intent-Governance")
-        covers = git.trailers(repo, commit, "Intent-Covers")
+    for entry in history:
+        commit = entry.commit
+        boundary = list(entry.trailers["Invariant-Boundary"])
+        governance_refs = list(entry.trailers["Invariant-Governance"])
+        semantic_attestations = list(entry.trailers["Invariant-Semantic"])
+        covers = list(entry.trailers["Invariant-Covers"])
         label = f"landing history commit {commit[:12]}"
         if not adopted and boundary:
             adopted = True
             if covers:
-                errors.append(f"{label} has unexpected Intent-Covers")
+                errors.append(f"{label} has unexpected Invariant-Covers")
         if not adopted:
             continue
         if not boundary:
@@ -139,40 +316,77 @@ def _landing_history(repo: Path) -> list[str]:
             gap_tip = commit
             continue
         if len(boundary) > 1:
-            errors.append(f"{label} has multiple Intent-Boundary trailers")
+            errors.append(f"{label} has multiple Invariant-Boundary trailers")
             continue
         value = boundary[0]
         if value not in {"no-record", "recorded"} and not re.fullmatch(r"audit:[A-Za-z0-9._-]+", value):
-            errors.append(f"{label} has an invalid Intent-Boundary disposition")
+            errors.append(f"{label} has an invalid Invariant-Boundary disposition")
             continue
-        if value == "recorded" and not governance:
-            errors.append(f"{label} uses Intent-Boundary recorded without Intent-Governance")
+        if value == "recorded" and not governance_refs:
+            errors.append(f"{label} uses Invariant-Boundary recorded without Invariant-Governance")
+        semantic_refs = {
+            reference.removeprefix("semantic:")
+            for reference in governance_refs
+            if reference.startswith("semantic:")
+        }
+        parsed_attestations: dict[str, str] = {}
+        for attestation in semantic_attestations:
+            identifier, separator, digest = attestation.partition("@")
+            if (
+                not separator
+                or not git.valid_id(identifier)
+                or not re.fullmatch(r"[0-9a-f]{64}", digest)
+            ):
+                errors.append(f"{label} has invalid Invariant-Semantic attestation '{attestation}'")
+                continue
+            if identifier in parsed_attestations:
+                errors.append(f"{label} attests semantic record '{identifier}' more than once")
+            parsed_attestations[identifier] = digest
+        for identifier in sorted(semantic_refs):
+            if identifier not in parsed_attestations:
+                errors.append(f"{label} does not bind semantic:{identifier} to canonical prose")
+                continue
+            try:
+                expected_digest = governance.semantic_record_digest(repo, identifier, commit)
+            except InvariantError as exc:
+                errors.append(f"{label} {exc.message.removeprefix('Invariant: ')}")
+                continue
+            if parsed_attestations[identifier] != expected_digest:
+                errors.append(f"{label} has stale semantic attestation for '{identifier}'")
+        for identifier in sorted(set(parsed_attestations) - semantic_refs):
+            errors.append(
+                f"{label} attests semantic record '{identifier}' without Invariant-Governance"
+            )
         if last:
             if gap:
-                parent = git.resolve(repo, f"{commit}^1") or ""
+                parent = entry.parents[0] if entry.parents else ""
                 expected = f"{last}..{parent}"
                 if not covers:
                     errors.append(f"{label} must cover unattested range {expected}")
                 elif len(covers) > 1:
-                    errors.append(f"{label} has multiple Intent-Covers trailers")
+                    errors.append(f"{label} has multiple Invariant-Covers trailers")
                 elif covers[0] != expected:
                     errors.append(f"{label} covers {covers[0]} but expected {expected}")
             elif covers:
-                errors.append(f"{label} has Intent-Covers without an unattested range")
+                errors.append(f"{label} has Invariant-Covers without an unattested range")
         last = commit
         gap = False
     if adopted and gap:
-        errors.append(f"unattested integration range {last}..{gap_tip} requires the next landing to carry Intent-Covers")
+        errors.append(f"unattested integration range {last}..{gap_tip} requires the next landing to carry Invariant-Covers")
     return errors
 
 
 def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) -> list[str]:
     failures = _landing_history(repo) if landing else []
+    failures.extend(
+        f"nested Invariant state '{path}' is not allowed; this Git repository uses .invariant at its root"
+        for path in git.tracked_nested_invariant_paths(repo)
+    )
     files = _yaml_files(repo, named)
     if not files:
         if failures:
-            return [*(f"FAIL {item}" for item in failures), f"{len(failures)} intent state violation(s)"]
-        return ["no intent state — nothing to validate"]
+            return [*(f"FAIL {item}" for item in failures), f"{len(failures)} Invariant state violation(s)"]
+        return ["no Invariant state — nothing to validate"]
 
     parsed: dict[Path, dict[str, Any]] = {}
     for path in files:
@@ -192,12 +406,14 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
         if raw.get("version") != 1:
             failures.append(f"{relative} must declare version: 1")
 
-    domain_rows: list[dict[str, Any]] = []
+    domain_rows: list[Domain] = []
     contract_rows: list[dict[str, Any]] = []
     constraint_rows: list[dict[str, Any]] = []
     discovery_rows: list[tuple[Path, Discovery, dict[str, Any]]] = []
     audit_rows: list[tuple[Path, dict[str, Any]]] = []
     observation_rows: list[tuple[Path, dict[str, Any]]] = []
+    semantic_rows: list[SemanticRecord] = []
+    source_documents: list[dict[str, Any]] = []
 
     for path, raw in parsed.items():
         relative = path.relative_to(repo).as_posix() if repo in path.parents else path.as_posix()
@@ -206,12 +422,18 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
                 config.resolve(repo)
             except Exception as exc:
                 failures.append(f"{relative} {str(exc).removeprefix('Invariant: ')}")
+        elif relative == ".invariant/SEMANTICS.yml":
+            try:
+                semantic_rows.extend(parse_document(raw))
+            except InvariantError as exc:
+                failures.append(f"{relative} {exc.message.removeprefix('Invariant: ')}")
         elif relative == ".invariant/DOMAINS.yml":
-            values = raw.get("domains")
-            if not isinstance(values, list) or not values:
-                failures.append(f"{relative} contains no domains; remove it")
-            else:
-                domain_rows.extend(item for item in values if isinstance(item, dict))
+            try:
+                domain_rows.extend(DomainIndex.parse_document(raw))
+            except UsageError as exc:
+                failures.append(
+                    f"{relative} {exc.message.removeprefix('Invariant: ')}"
+                )
         elif relative == ".invariant/CONTRACTS.yml":
             values = raw.get("contracts")
             if not isinstance(values, list) or not values:
@@ -224,6 +446,8 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
                 failures.append(f"{relative} contains no constraints; remove it")
             else:
                 constraint_rows.extend(item for item in values if isinstance(item, dict))
+        elif relative == sources.INDEX_PATH.as_posix():
+            source_documents.append(raw)
         elif relative.startswith(".invariant/audits/"):
             audit_rows.append((path, raw))
         elif relative.startswith(".invariant/discoveries/"):
@@ -233,50 +457,83 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
             observation_rows.append((path, raw))
         else:
             failures.append(
-                f"{relative} is not a version-1 config, domain, contract, legacy constraint, audit, discovery, or observation file"
+                f"{relative} is not a version-1 config, source index, semantic record, domain, contract, legacy constraint, audit, discovery, or observation file"
             )
 
-    domain_ids = [str(row.get("id", "")) for row in domain_rows]
+    domain_ids = [domain.identifier for domain in domain_rows]
     contract_ids = [str(row.get("id", "")) for row in contract_rows]
     constraint_ids = [str(row.get("id", "")) for row in constraint_rows]
     discovery_ids = [row.identifier for _, row, _ in discovery_rows]
-    for name, values in (("domain", domain_ids), ("contract", contract_ids), ("constraint", constraint_ids), ("discovery", discovery_ids)):
+    semantic_ids = [row.identifier for row in semantic_rows]
+    for name, values in (("contract", contract_ids), ("constraint", constraint_ids), ("discovery", discovery_ids)):
         for value in sorted({item for item in values if values.count(item) > 1}):
             failures.append(f"duplicate {name} '{value}'")
 
-    parents: dict[str, str] = {}
-    for row in domain_rows:
-        identifier = row.get("id")
-        label = f".invariant/DOMAINS.yml:{identifier}"
-        if not _valid_id(identifier):
-            failures.append(f".invariant/DOMAINS.yml invalid domain id '{identifier}'")
-        if not row.get("responsibility") and not row.get("description"):
-            failures.append(f"{label} missing responsibility")
-        failures.extend(_authority(repo, row.get("authority"), label))
-        parent = row.get("parent")
-        if parent:
-            if parent not in domain_ids:
-                failures.append(f"{label} references missing parent '{parent}'")
+    semantic_by_id = {row.identifier: row for row in semantic_rows}
+    for raw in source_documents:
+        failures.extend(
+            sources.validate(
+                repo,
+                raw,
+                domain_ids=domain_ids,
+                contract_ids=contract_ids,
+            )
+        )
+    for row in semantic_rows:
+        label = f".invariant/SEMANTICS.yml:{row.identifier}"
+        failures.extend(_authority(repo, row.authority, label))
+        failures.extend(_architecture(repo, row.document, label))
+        if not row.applies_to and not row.revisit_on:
+            failures.append(f"{label} requires applies_to or revisit_on coordinates")
+        for locator in row.applies_to:
+            if locator.startswith("domain:"):
+                domain = locator.removeprefix("domain:")
+                if domain not in domain_ids:
+                    failures.append(f"{label} references missing domain '{domain}'")
+            elif locator.startswith(("repo:", "interface:")):
+                failures.extend(_surface(repo, locator, label))
             else:
-                parents[str(identifier)] = str(parent)
-        if row.get("architecture") and row.get("material"):
-            failures.append(f"{label} use architecture, not both architecture and legacy material")
-        for locator in architecture_refs(row.get("architecture")):
+                failures.append(
+                    f"{label} applicability '{locator}' must use repo:, interface:, or domain:"
+                )
+        for locator in row.revisit_on:
+            if locator.startswith("semantic:"):
+                target = locator.removeprefix("semantic:")
+                if target not in semantic_ids:
+                    failures.append(f"{label} revisits missing semantic record '{target}'")
+            elif locator.startswith(("repo:", "interface:")):
+                failures.extend(_revisit_coordinate(locator, label))
+            else:
+                failures.append(
+                    f"{label} revisit coordinate '{locator}' must use repo:, interface:, or semantic:"
+                )
+        for locator in row.verifies:
+            failures.extend(_verifier(repo, locator, label))
+        for target in row.supersedes:
+            if target == row.identifier:
+                failures.append(f"{label} cannot supersede itself")
+            elif target not in semantic_by_id:
+                failures.append(f"{label} supersedes missing semantic record '{target}'")
+            elif semantic_by_id[target].status != "superseded":
+                failures.append(
+                    f"{label} supersedes '{target}', but that record is not marked superseded"
+                )
+        for relation, targets in row.relations.items():
+            for target in targets:
+                semantic = target.removeprefix("semantic:")
+                if target.startswith("semantic:") and semantic not in semantic_by_id:
+                    failures.append(
+                        f"{label} relation '{relation}' references missing semantic record '{semantic}'"
+                    )
+
+    for domain in domain_rows:
+        label = f".invariant/DOMAINS.yml:{domain.identifier}"
+        failures.extend(_authority(repo, domain.authority, label))
+        for locator in domain.architecture:
             failures.extend(_architecture(repo, locator, label))
-        for locator in refs(row.get("material")):
-            failures.extend(_material(repo, locator, label))
-        for contract in refs(row.get("contracts")):
+        for contract in domain.contracts:
             if contract not in contract_ids:
                 failures.append(f"{label} references missing contract '{contract}'")
-    for identifier in parents:
-        seen: set[str] = set()
-        current = identifier
-        while current in parents:
-            if current in seen:
-                failures.append("domain parent graph contains a cycle")
-                break
-            seen.add(current)
-            current = parents[current]
 
     for row in contract_rows:
         identifier = row.get("id")
@@ -335,59 +592,7 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
             failures.extend(_verifier(repo, locator, label))
 
     for path, raw in audit_rows:
-        relative = path.relative_to(repo).as_posix()
-        identifier = raw.get("id")
-        if not _valid_id(identifier):
-            failures.append(f"{relative} invalid audit id '{identifier}'")
-        if path.stem != identifier:
-            failures.append(f"{relative} filename must be {identifier}.yml")
-        if raw.get("mode") not in {"scope", "full"}:
-            failures.append(f"{relative} invalid audit mode '{raw.get('mode')}'")
-        if "findings" not in raw or not isinstance(raw.get("findings"), list):
-            failures.append(f"{relative} missing findings")
-        ground, tree = raw.get("ground"), raw.get("tree")
-        if not ground:
-            failures.append(f"{relative} missing ground")
-        elif ground != "unborn" and not git.resolve(repo, str(ground)):
-            failures.append(f"{relative} ground '{ground}' does not resolve")
-        if not tree:
-            failures.append(f"{relative} missing tree")
-        elif tree != "empty" and git.resolve(repo, str(tree), "tree") is None:
-            failures.append(f"{relative} tree '{tree}' does not resolve")
-        for domain in refs(raw.get("domains")):
-            if domain not in domain_ids:
-                failures.append(f"{relative} references missing domain '{domain}'")
-        paths = refs(raw.get("paths"))
-        if raw.get("mode") == "scope" and not paths:
-            failures.append(f"{relative} scoped audit requires at least one path")
-        for audit_path in paths:
-            if audit_path.startswith("/") or ".." in Path(audit_path).parts:
-                failures.append(f"{relative} has invalid audit path '{audit_path}'")
-            elif tree and tree != "empty" and git.run(
-                ["cat-file", "-e", f"{tree}:{audit_path}"], cwd=repo, check=False
-            ).returncode:
-                failures.append(f"{relative} audit path '{audit_path}' does not exist in tree {tree}")
-        for finding in raw.get("findings", []):
-            if not isinstance(finding, dict):
-                failures.append(f"{relative} finding must be a mapping")
-                continue
-            fid = finding.get("id")
-            flabel = f"{relative}:{fid}"
-            if not _valid_id(fid):
-                failures.append(f"{relative} invalid finding id '{fid}'")
-            if not finding.get("summary"):
-                failures.append(f"{flabel} missing summary")
-            evidence = refs(finding.get("evidence"))
-            if not evidence:
-                failures.append(f"{flabel} requires evidence")
-            for locator in evidence:
-                failures.extend(_evidence(repo, locator, flabel, str(tree) if tree else None))
-            if finding.get("proposed") not in {"domain", "contract", "architecture", "discovery", "none", "constraint", "observation"}:
-                failures.append(f"{flabel} invalid proposed value '{finding.get('proposed')}'")
-            if finding.get("disposition") not in {"adoptable", "needs-authority", "needs-verifier", "discovery-only", "no-action", "observation-only"}:
-                failures.append(f"{flabel} invalid disposition '{finding.get('disposition')}'")
-            if finding.get("authority"):
-                failures.extend(_authority(repo, finding.get("authority"), flabel))
+        failures.extend(validate_audit(repo, path, raw, domain_ids))
 
     for path, discovery, raw in discovery_rows:
         relative = path.relative_to(repo).as_posix()
@@ -439,5 +644,5 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
             failures.extend(_evidence(repo, locator, label, str(ground) if ground else None))
 
     if failures:
-        return [*(f"FAIL {item}" for item in failures), f"{len(failures)} intent state violation(s)"]
-    return ["intent state valid"]
+        return [*(f"FAIL {item}" for item in failures), f"{len(failures)} Invariant state violation(s)"]
+    return ["Invariant state valid"]

@@ -1,6 +1,5 @@
-from invariant.cli.app import main
+from invariant.entry import main
 
 
 if __name__ == "__main__":
     main()
-

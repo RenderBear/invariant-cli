@@ -1,9 +1,9 @@
 #!/bin/sh
-# Verify read-only authority and integration-target resolution.
+# Verify read-only semantic authority and integration-target resolution.
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-resolver="$root/skills/intent-brief/scripts/resolve-config.sh"
+cli="$root/bin/invariant"
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/invariant-config-test.XXXXXX")
 cleanup() { rm -rf "$fixture"; }
 trap cleanup EXIT HUP INT TERM
@@ -15,63 +15,100 @@ echo x >"$fixture/f"
 git -C "$fixture" add f
 git -C "$fixture" commit -qm seed
 
-default=$(cd "$fixture" && sh "$resolver")
-[ "$default" = "resolution: assisted
-execution: auto
-integration_branch: trunk
-source: default
-integration_branch_resolved: trunk
-branch_source: current" ]
-[ ! -e "$fixture/.invariant" ]
+if default=$(cd "$fixture" && "$cli" config show 2>&1); then
+  echo "not ok - configuration was inferred before initialization"
+  exit 1
+fi
+printf '%s\n' "$default" | grep -q "initialize this repository"
+(cd "$fixture" && "$cli" config init >/dev/null)
+default=$(cd "$fixture" && "$cli" config show)
+printf '%s\n' "$default" | grep -q '^authority: agent$'
+printf '%s\n' "$default" | grep -q '^execution: auto$'
+printf '%s\n' "$default" | grep -q '^integration_branch: auto$'
+printf '%s\n' "$default" | grep -q '^integration_branch_resolved: trunk$'
+printf '%s\n' "$default" | grep -q '^source: .invariant/config.yml$'
+printf '%s\n' "$default" | grep -q '^branch_source: current$'
 
 unborn="$fixture/unborn"
 git init -qb fresh "$unborn"
-unborn_out=$(cd "$unborn" && sh "$resolver")
-printf '%s\n' "$unborn_out" | grep -q '^integration_branch: fresh$'
+(cd "$unborn" && "$cli" config init >/dev/null)
+unborn_out=$(cd "$unborn" && "$cli" config show)
+printf '%s\n' "$unborn_out" | grep -q '^integration_branch_resolved: fresh$'
 printf '%s\n' "$unborn_out" | grep -q '^integration_branch_unborn: true$'
 
-mkdir -p "$fixture/.invariant"
 cat >"$fixture/.invariant/config.yml" <<EOF
 version: 1
-resolution: auto
+authority: agent
 execution: assisted
 integration_branch: trunk
+push_remote: off
 EOF
 
-explicit=$(cd "$fixture" && sh "$resolver")
-[ "$explicit" = "resolution: auto
-execution: assisted
-integration_branch: trunk
-source: .invariant/config.yml
-integration_branch_resolved: trunk
-branch_source: config" ]
-
-cat >"$fixture/.invariant/config.yml" <<EOF
-version: 1
-EOF
-omitted=$(cd "$fixture" && sh "$resolver")
-[ "$omitted" = "resolution: assisted
-execution: auto
-integration_branch: trunk
-source: .invariant/config.yml
-integration_branch_resolved: trunk
-branch_source: current" ]
+explicit=$(cd "$fixture" && "$cli" config show)
+printf '%s\n' "$explicit" | grep -q '^authority: agent$'
+printf '%s\n' "$explicit" | grep -q '^execution: assisted$'
+printf '%s\n' "$explicit" | grep -q '^integration_branch: trunk$'
+printf '%s\n' "$explicit" | grep -q '^source: .invariant/config.yml$'
+printf '%s\n' "$explicit" | grep -q '^integration_branch_resolved: trunk$'
+printf '%s\n' "$explicit" | grep -q '^branch_source: config$'
 
 cat >"$fixture/.invariant/config.yml" <<EOF
 version: 1
-resolution: deferred
 EOF
-if (cd "$fixture" && sh "$resolver" >/dev/null 2>&1); then
-  echo "not ok - invalid resolution value was accepted"
+omitted=$(cd "$fixture" && "$cli" config show)
+printf '%s\n' "$omitted" | grep -q '^authority: agent$'
+printf '%s\n' "$omitted" | grep -q '^execution: auto$'
+printf '%s\n' "$omitted" | grep -q '^integration_branch: auto$'
+printf '%s\n' "$omitted" | grep -q '^source: .invariant/config.yml$'
+printf '%s\n' "$omitted" | grep -q '^integration_branch_resolved: trunk$'
+printf '%s\n' "$omitted" | grep -q '^branch_source: current$'
+
+cat >"$fixture/.invariant/config.yml" <<EOF
+version: 1
+authority: committee
+EOF
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
+  echo "not ok - invalid authority value was accepted"
   exit 1
 fi
 
 cat >"$fixture/.invariant/config.yml" <<EOF
 version: 1
+agent: auto
+EOF
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
+  echo "not ok - a committed agent key was accepted; provider choice is clone-local"
+  exit 1
+fi
+
+cat >"$fixture/.invariant/config.yml" <<EOF
+version: 1
+resolution: auto
+EOF
+if out=$(cd "$fixture" && "$cli" config show 2>&1); then
+  echo "not ok - removed resolution field was accepted"
+  exit 1
+fi
+printf '%s\n' "$out" | grep -q "unknown field 'resolution'" || {
+  echo "not ok - removed resolution field was not rejected as unknown"
+  exit 1
+}
+
+cat >"$fixture/.invariant/config.yml" <<EOF
+version: 1
 execution: deferred
 EOF
-if (cd "$fixture" && sh "$resolver" >/dev/null 2>&1); then
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
   echo "not ok - invalid execution value was accepted"
+  exit 1
+fi
+
+cat >"$fixture/.invariant/config.yml" <<EOF
+version: 1
+push_remote: maybe
+EOF
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
+  echo "not ok - invalid push_remote value was accepted"
   exit 1
 fi
 
@@ -79,7 +116,7 @@ cat >"$fixture/.invariant/config.yml" <<EOF
 version: 1
 workers: subagent
 EOF
-if (cd "$fixture" && sh "$resolver" >/dev/null 2>&1); then
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
   echo "not ok - removed workers field was accepted"
   exit 1
 fi
@@ -88,20 +125,21 @@ cat >"$fixture/.invariant/config.yml" <<EOF
 version: 1
 integration_branch: missing
 EOF
-if (cd "$fixture" && sh "$resolver" >/dev/null 2>&1); then
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
   echo "not ok - missing configured branch silently fell back"
   exit 1
 fi
 
 rm -f "$fixture/.invariant/config.yml"
 git -C "$fixture" checkout -q --detach
-if (cd "$fixture" && sh "$resolver" >/dev/null 2>&1); then
+if (cd "$fixture" && "$cli" config show >/dev/null 2>&1); then
   echo "not ok - detached HEAD without an explicit target was accepted"
   exit 1
 fi
 
-captured=$(cd "$fixture" && GIT_INTENT_INTEGRATION_TARGET=trunk sh "$resolver")
-printf '%s\n' "$captured" | grep -q '^integration_branch: trunk$'
+(cd "$fixture" && INVARIANT_INTEGRATION_TARGET=trunk "$cli" config init >/dev/null)
+captured=$(cd "$fixture" && INVARIANT_INTEGRATION_TARGET=trunk "$cli" config show)
+printf '%s\n' "$captured" | grep -q '^integration_branch_resolved: trunk$'
 printf '%s\n' "$captured" | grep -q '^branch_source: captured$'
 
-echo "10 config resolution checks passed"
+echo "13 configuration resolution checks passed"

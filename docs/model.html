@@ -1,0 +1,1008 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="A human-facing explanation of Invariant's Record, Evidence, and Change model and its Git-grounded guarantees.">
+  <title>Invariant — explanatory model</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #171717;
+      --muted: #626262;
+      --line: #b8b8b8;
+      --soft: #eeeeec;
+      --paper: #ffffff;
+    }
+
+    * { box-sizing: border-box; }
+
+    html {
+      color: var(--ink);
+      background: var(--paper);
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.58;
+    }
+
+    main {
+      width: min(1120px, calc(100% - 40px));
+      margin: 0 auto;
+      padding: 42px 0 72px;
+    }
+
+    header {
+      padding-bottom: 30px;
+      border-bottom: 3px solid var(--ink);
+    }
+
+    .meta,
+    .label,
+    th,
+    .node-kicker,
+    .connector-label {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px 20px;
+      margin: 0 0 14px;
+      color: var(--muted);
+    }
+
+    h1 {
+      max-width: 800px;
+      margin: 0;
+      font-size: 34px;
+      font-weight: 650;
+      letter-spacing: -0.025em;
+      line-height: 1.14;
+    }
+
+    .scope {
+      max-width: 780px;
+      margin: 14px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    h2 {
+      margin: 0 0 24px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--ink);
+      font-size: 24px;
+      font-weight: 650;
+      letter-spacing: -0.018em;
+      line-height: 1.25;
+    }
+
+    h3 {
+      margin: 30px 0 10px;
+      font-size: 18px;
+      font-weight: 650;
+      line-height: 1.32;
+    }
+
+    h4 {
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    p { max-width: 780px; margin: 0 0 14px; }
+    p:last-child { margin-bottom: 0; }
+
+    section { margin-top: 64px; }
+    a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
+    strong { font-weight: 700; }
+
+    code,
+    pre {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    }
+
+    code {
+      padding: 0.06em 0.24em;
+      background: var(--soft);
+      font-size: 0.9em;
+    }
+
+    pre {
+      margin: 16px 0 0;
+      padding: 15px 17px;
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      background: var(--soft);
+      color: var(--ink);
+      font-size: 13px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    pre code { padding: 0; background: transparent; font-size: inherit; }
+
+    .toc {
+      margin-top: 28px;
+      padding: 18px 20px;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .toc .label { display: block; margin-bottom: 9px; color: var(--muted); }
+
+    .toc ol {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px 34px;
+      margin: 0;
+      padding-left: 20px;
+    }
+
+    .toc li { padding-left: 3px; }
+
+    .callout {
+      max-width: 880px;
+      margin: 24px 0;
+      padding: 16px 18px;
+      border: 2px solid var(--ink);
+      background: var(--paper);
+    }
+
+    .callout .label { display: block; margin-bottom: 5px; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 22px;
+    }
+
+    .card,
+    .node,
+    .plane,
+    .decision,
+    .guarantee {
+      min-width: 0;
+      border: 1px solid var(--line);
+      background: var(--paper);
+    }
+
+    .card {
+      min-height: 170px;
+      padding: 16px;
+    }
+
+    .card.primary,
+    .node.primary,
+    .guarantee.primary { border: 2px solid var(--ink); }
+
+    .card h3 { margin: 0 0 7px; font-size: 17px; }
+    .card p { color: var(--muted); }
+
+    .card dl { margin: 14px 0 0; }
+    .card dt { font-weight: 700; }
+    .card dd { margin: 1px 0 8px; color: var(--muted); }
+
+    figure {
+      margin: 28px 0;
+      break-inside: avoid;
+    }
+
+    figcaption {
+      max-width: 780px;
+      margin-top: 10px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .object-flow {
+      display: grid;
+      grid-template-columns: minmax(210px, 1fr) 54px minmax(210px, 1fr) 54px minmax(210px, 1fr);
+      align-items: stretch;
+      min-width: 780px;
+    }
+
+    .node { padding: 15px; }
+
+    .node h3 { margin: 0 0 6px; font-size: 16px; }
+    .node p { color: var(--muted); font-size: 14px; }
+
+    .node.derived {
+      border-style: dashed;
+      background: var(--soft);
+    }
+
+    .node-kicker { display: block; margin-bottom: 6px; color: var(--muted); }
+
+    .connector {
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      padding: 4px;
+      text-align: center;
+    }
+
+    .connector-label { color: var(--muted); line-height: 1.25; }
+    .connector-arrow { font-size: 23px; line-height: 1; }
+
+    .return-flow {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 54px minmax(0, 1fr);
+      max-width: 680px;
+      margin-top: 14px;
+    }
+
+    .table-wrap {
+      width: 100%;
+      overflow-x: auto;
+      margin-top: 20px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 720px;
+      border-collapse: collapse;
+      font-size: 14px;
+    }
+
+    th,
+    td {
+      padding: 10px 12px;
+      border: 1px solid var(--line);
+      vertical-align: top;
+      text-align: left;
+    }
+
+    th { background: var(--soft); font-weight: 700; }
+    td p { margin: 0; }
+
+    .lifecycle {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(118px, 1fr));
+      min-width: 1000px;
+      border: 2px solid var(--ink);
+    }
+
+    .lifecycle .node {
+      position: relative;
+      min-height: 128px;
+      border: 0;
+      border-right: 1px solid var(--line);
+    }
+
+    .lifecycle .node:last-child { border-right: 0; }
+
+    .lifecycle .node:not(:last-child)::after {
+      position: absolute;
+      top: 50%;
+      right: -8px;
+      z-index: 1;
+      padding: 0 2px;
+      background: var(--paper);
+      content: "→";
+      font-size: 17px;
+      transform: translateY(-50%);
+    }
+
+    .decision-stack {
+      display: grid;
+      gap: 12px;
+      max-width: 920px;
+    }
+
+    .decision {
+      display: grid;
+      grid-template-columns: minmax(240px, 1.3fr) 86px minmax(260px, 1fr);
+      min-height: 86px;
+    }
+
+    .decision-question,
+    .decision-condition,
+    .decision-result { padding: 13px 15px; }
+
+    .decision-question { font-weight: 700; }
+
+    .decision-condition {
+      display: grid;
+      place-items: center;
+      border-right: 1px solid var(--line);
+      border-left: 1px solid var(--line);
+      background: var(--soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.055em;
+      text-transform: uppercase;
+    }
+
+    .decision-result { color: var(--muted); }
+    .decision.recommended { border: 2px solid var(--ink); }
+
+    .parallel-plane {
+      min-width: 850px;
+      padding: 16px;
+      border: 1px solid var(--ink);
+    }
+
+    .parallel-grid {
+      display: grid;
+      grid-template-columns: 180px 42px repeat(3, minmax(150px, 1fr));
+      align-items: stretch;
+      margin-top: 10px;
+    }
+
+    .parallel-grid .node { min-height: 116px; }
+
+    .convergence {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+
+    .guarantees {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .guarantee { padding: 14px 16px; break-inside: avoid; }
+    .guarantee h3 { margin: 0 0 5px; font-size: 16px; }
+    .guarantee p { color: var(--muted); font-size: 14px; }
+
+    .planes {
+      margin-top: 20px;
+      border: 2px solid var(--ink);
+    }
+
+    .plane {
+      display: grid;
+      grid-template-columns: 150px minmax(0, 1fr);
+      border: 0;
+      border-bottom: 1px solid var(--line);
+    }
+
+    .plane:last-child { border-bottom: 0; }
+
+    .plane-name {
+      padding: 14px;
+      border-right: 1px solid var(--line);
+      background: var(--soft);
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 12px;
+      font-weight: 700;
+      text-transform: uppercase;
+    }
+
+    .plane-body { padding: 14px 16px; }
+    .plane-body p { max-width: 820px; color: var(--muted); }
+
+    .document-map {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 20px;
+    }
+
+    .document-map article { padding: 15px; border: 1px solid var(--line); }
+    .document-map article:nth-child(2) { border: 2px solid var(--ink); }
+    .document-map h3 { margin: 0 0 7px; font-size: 16px; }
+    .document-map p { color: var(--muted); font-size: 14px; }
+
+    footer {
+      margin-top: 64px;
+      padding-top: 18px;
+      border-top: 3px solid var(--ink);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .scroll-frame { width: 100%; overflow-x: auto; }
+
+    @media (max-width: 760px) {
+      main { width: min(100% - 28px, 1120px); padding-top: 28px; }
+      .toc ol,
+      .cards,
+      .guarantees,
+      .document-map { grid-template-columns: 1fr; }
+      .card { min-height: auto; }
+      .decision { grid-template-columns: 1fr; }
+      .decision-condition {
+        place-items: start;
+        border: 0;
+        border-top: 1px solid var(--line);
+        border-bottom: 1px solid var(--line);
+      }
+      .plane { grid-template-columns: 112px minmax(0, 1fr); }
+    }
+
+    @media print {
+      @page { margin: 16mm; }
+      html { scroll-behavior: auto; }
+      body { font-size: 10.5pt; }
+      main { width: 100%; padding: 0; }
+      a { text-decoration: none; }
+      section { margin-top: 34px; }
+      .toc,
+      .card,
+      .callout,
+      .node,
+      .decision,
+      .guarantee,
+      .plane,
+      pre,
+      table,
+      figure { break-inside: avoid; }
+      .scroll-frame,
+      .table-wrap { overflow: visible; }
+      .object-flow,
+      .lifecycle,
+      .parallel-plane,
+      table { min-width: 0; }
+      .lifecycle { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+      .lifecycle .node:nth-child(4) { border-right: 0; }
+      .lifecycle .node:nth-child(-n+4) { border-bottom: 1px solid var(--line); }
+      .lifecycle .node:nth-child(4)::after { content: ""; }
+      .parallel-grid { grid-template-columns: 125px 28px repeat(3, minmax(0, 1fr)); }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="meta">
+        <span>Status: explanatory design</span>
+        <span>Audience: engineering · security · operations · leadership</span>
+        <span>Revision: September 2026</span>
+      </p>
+      <h1>Invariant: accepted meaning, grounded evidence, managed changes</h1>
+      <p class="scope">A human-facing account of how Invariant gives coding agents room to work while preserving repository decisions and verifying the exact Git snapshot that will land.</p>
+
+      <nav class="toc" aria-label="Table of contents">
+        <span class="label">Contents</span>
+        <ol>
+          <li><a href="#promise">The promise</a></li>
+          <li><a href="#objects">Three public objects</a></li>
+          <li><a href="#authority">Evidence and authority</a></li>
+          <li><a href="#lifecycle">The task lifecycle</a></li>
+          <li><a href="#decision">The semantic decision</a></li>
+          <li><a href="#parallel">Parallel tasks</a></li>
+          <li><a href="#guarantees">Guarantees retained</a></li>
+          <li><a href="#machinery">Where the machinery goes</a></li>
+          <li><a href="#documents">Document hierarchy</a></li>
+        </ol>
+      </nav>
+    </header>
+
+    <section id="promise" aria-labelledby="promise-title">
+      <h2 id="promise-title">1. The promise</h2>
+      <p>Invariant is a repository-native memory and gate for agent-driven change. The memory preserves decisions that future work must know. The gate prevents a proposed change from landing until the relevant decisions have been considered and the exact prospective Git tree has been checked.</p>
+
+      <aside class="callout">
+        <span class="label">Design rule</span>
+        <p><strong>Meaning remains prose.</strong> Invariant types identity, provenance, applicability, causal ground, authority, verification, and revision. It does not reduce an architectural argument to a closed taxonomy.</p>
+      </aside>
+
+      <p><strong>The operating philosophy:</strong> free-form agent reasoning for accuracy; deterministic, inspectable state where reasoning becomes consequential; near-zero user ceremony for routine work; and hard authority boundaries when an accepted promise is genuinely at risk.</p>
+
+      <p>Invariant is deliberately narrow. It is not a general knowledge graph, policy language, workflow framework, or model host. It manages changes made by agents inside Git repositories.</p>
+    </section>
+
+    <section id="objects" aria-labelledby="objects-title">
+      <h2 id="objects-title">2. Three public objects</h2>
+      <p>The public model has three nouns. Everything else is either a specialization, a derived view, or change-local machinery.</p>
+
+      <div class="cards">
+        <article class="card primary">
+          <span class="node-kicker">Authoritative</span>
+          <h3>Record</h3>
+          <p>Accepted meaning that may govern future work: a responsibility, architectural decision, relied-on promise, or durable constraint.</p>
+          <dl>
+            <dt>Power</dt>
+            <dd>May constrain a Change.</dd>
+            <dt>Form</dt>
+            <dd>Thin typed envelope around canonical prose.</dd>
+          </dl>
+        </article>
+        <article class="card">
+          <span class="node-kicker">Non-authoritative</span>
+          <h3>Evidence</h3>
+          <p>A grounded observation: repository behavior, external guidance, an audit finding, a test result, or a review.</p>
+          <dl>
+            <dt>Power</dt>
+            <dd>May support or challenge a Record.</dd>
+            <dt>Form</dt>
+            <dd>Attributable content bound to source and ground.</dd>
+          </dl>
+        </article>
+        <article class="card">
+          <span class="node-kicker">Causal process</span>
+          <h3>Change</h3>
+          <p>One managed repository change, from a human request through isolated work, evidence collection, verification, and landing.</p>
+          <dl>
+            <dt>Power</dt>
+            <dd>May produce Evidence and propose Record changes.</dd>
+            <dt>Form</dt>
+            <dd>Strict internal state around one goal and Git ground.</dd>
+          </dl>
+        </article>
+      </div>
+
+      <figure>
+        <div class="scroll-frame">
+          <div class="object-flow" aria-label="Relationship among Records, Changes, and Evidence">
+            <article class="node primary">
+              <span class="node-kicker">Record</span>
+              <h3>Accepted meaning</h3>
+              <p>Selected because it applies to the requested change.</p>
+            </article>
+            <div class="connector" aria-hidden="true">
+              <span class="connector-label">constrains</span>
+              <span class="connector-arrow">→</span>
+            </div>
+            <article class="node">
+              <span class="node-kicker">Change</span>
+              <h3>Managed change</h3>
+              <p>Works from a captured integration state toward an exact proposed change.</p>
+            </article>
+            <div class="connector" aria-hidden="true">
+              <span class="connector-label">produces</span>
+              <span class="connector-arrow">→</span>
+            </div>
+            <article class="node">
+              <span class="node-kicker">Evidence</span>
+              <h3>Grounded observations</h3>
+              <p>Tests, reviews, searches, findings, and causal repository facts.</p>
+            </article>
+          </div>
+        </div>
+        <div class="return-flow" aria-label="Authorized adoption path from evidence to records">
+          <article class="node derived">
+            <span class="node-kicker">Decision point</span>
+            <h3>Authorized adoption</h3>
+            <p>Evidence is interpreted in the repository's context.</p>
+          </article>
+          <div class="connector" aria-hidden="true">
+            <span class="connector-label">may create</span>
+            <span class="connector-arrow">→</span>
+          </div>
+          <article class="node primary">
+            <span class="node-kicker">Record</span>
+            <h3>New or superseding meaning</h3>
+            <p>The accepted result becomes available to later Changes.</p>
+          </article>
+        </div>
+        <figcaption>The authority boundary is explicit: Evidence never becomes a Record merely because a source is persuasive or a model produced it.</figcaption>
+      </figure>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Property</th>
+              <th>Record</th>
+              <th>Evidence</th>
+              <th>Change</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Standing</td>
+              <td>Accepted and governing</td>
+              <td>Observed and non-governing</td>
+              <td>Active or completed work</td>
+            </tr>
+            <tr>
+              <td>Causal identity</td>
+              <td>Repository history and canonical prose digest</td>
+              <td>Source plus commit, tree, or external retrieval time</td>
+              <td>Request, captured base, work tip, and proposed tree</td>
+            </tr>
+            <tr>
+              <td>Revision</td>
+              <td>Superseded; never silently overwritten</td>
+              <td>Retained as observed; later Evidence may challenge it</td>
+              <td>Resumed, rebuilt, completed, or invalidated</td>
+            </tr>
+            <tr>
+              <td>Human question</td>
+              <td>What must future work preserve?</td>
+              <td>What was observed, where, and how strongly?</td>
+              <td>What change is being attempted and what remains?</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="authority" aria-labelledby="authority-title">
+      <h2 id="authority-title">3. Evidence and authority</h2>
+      <p>Invariant expects meaning to be discovered from many places: source code, tests, history, production behavior, standards, searches, security guidance, and established best practices. Those inputs have different reliability, but they share one standing when first introduced: Evidence.</p>
+
+      <div class="planes" aria-label="External meaning adoption planes">
+        <div class="plane">
+          <div class="plane-name">Sources</div>
+          <div class="plane-body">
+            <p>Repository state, tests, incidents, documentation, standards, searches, papers, vendor guidance, and model-assisted investigation.</p>
+          </div>
+        </div>
+        <div class="plane">
+          <div class="plane-name">Evidence</div>
+          <div class="plane-body">
+            <p>Invariant retains provenance, scope, causal ground, method, and the observation itself. Confidence may guide review but does not grant authority.</p>
+          </div>
+        </div>
+        <div class="plane">
+          <div class="plane-name">Decision</div>
+          <div class="plane-body">
+            <p>An agent or human acts only within configured authority and the current request. Contradiction or insufficient authority becomes one explicit Change requirement.</p>
+          </div>
+        </div>
+        <div class="plane">
+          <div class="plane-name">Records</div>
+          <div class="plane-body">
+            <p>Accepted meaning is written as canonical prose with retrieval, evidence, verifier, revisit, and supersession coordinates.</p>
+          </div>
+        </div>
+      </div>
+
+      <h3>Minimal envelopes, open meaning</h3>
+      <p>The following examples are conceptual, not direct CLI input. They show what the product must preserve without deciding what a proposition means.</p>
+
+      <div class="cards">
+        <article class="card">
+          <h4>Record envelope</h4>
+          <pre><code>record:
+  id: processor-source-ownership
+  body: docs/architecture.md#source-ownership
+  accepted_by: user:task:import-processor#turn-3
+  applies_to: [repo:services/processor]
+  supported_by: [evidence:audit-20260907]
+  revisit_on: [repo:.gitmodules]
+  verifies: [test:checks/source-ownership.sh]
+  supersedes: [processor-external-ownership]
+  facets: {confidence: accepted}</code></pre>
+        </article>
+        <article class="card">
+          <h4>Evidence envelope</h4>
+          <pre><code>evidence:
+  id: audit-20260907
+  kind: repository-audit
+  source: repo:services/processor
+  ground:
+    commit: 8d2f...
+    tree: 40ae...
+  scope: [repo:services/processor]
+  observation: >-
+    Processor ownership is implicit in startup
+    and recovery behavior.</code></pre>
+        </article>
+        <article class="card">
+          <h4>Change envelope</h4>
+          <pre><code>task:
+  id: restore-processor
+  goal: Restore work after restart.
+  base: commit:8d2f...
+  state: awaiting-decision
+  records: [record:source-ownership]
+  evidence: [evidence:candidate-40ae]
+  requirements:
+    - Decide whether ownership meaning changes.</code></pre>
+        </article>
+      </div>
+    </section>
+
+    <section id="lifecycle" aria-labelledby="lifecycle-title">
+      <h2 id="lifecycle-title">4. The change lifecycle</h2>
+      <p>Humans ask for a change normally. The coding agent or harness drives a Change through one fixed lifecycle. Routine work moves through without ceremony; uncertainty appears only as an explicit requirement.</p>
+
+      <figure>
+        <div class="scroll-frame">
+          <div class="lifecycle" aria-label="Invariant change lifecycle">
+            <article class="node">
+              <span class="node-kicker">1</span>
+              <h3>Open</h3>
+              <p>Capture goal and integration ground.</p>
+            </article>
+            <article class="node">
+              <span class="node-kicker">2</span>
+              <h3>Retrieve</h3>
+              <p>Select applicable Records and unresolved Evidence.</p>
+            </article>
+            <article class="node">
+              <span class="node-kicker">3</span>
+              <h3>Isolate</h3>
+              <p>Create a linked worktree and generated branch.</p>
+            </article>
+            <article class="node">
+              <span class="node-kicker">4</span>
+              <h3>Work</h3>
+              <p>Implement using ordinary repository tools.</p>
+            </article>
+            <article class="node">
+              <span class="node-kicker">5</span>
+              <h3>Construct</h3>
+              <p>Build the exact prospective integration tree.</p>
+            </article>
+            <article class="node">
+              <span class="node-kicker">6</span>
+              <h3>Evidence</h3>
+              <p>Calculate impact and run applicable observations.</p>
+            </article>
+            <article class="node">
+              <span class="node-kicker">7</span>
+              <h3>Resolve</h3>
+              <p>Answer only remaining semantic requirements.</p>
+            </article>
+            <article class="node primary">
+              <span class="node-kicker">8</span>
+              <h3>Land</h3>
+              <p>Verify again and atomically move the target.</p>
+            </article>
+          </div>
+        </div>
+        <figcaption>The lifecycle remains strict even when its intermediate objects are hidden from the normal product vocabulary.</figcaption>
+      </figure>
+
+      <aside class="callout">
+        <span class="label">Two suspension points</span>
+        <p>A semantic integration may ask for clarification before implementation or require judgment after evidence for the proposed change exists. It cannot replace branch isolation, evidence collection, verification, or landing.</p>
+      </aside>
+    </section>
+
+    <section id="decision" aria-labelledby="decision-title">
+      <h2 id="decision-title">5. The semantic decision</h2>
+      <p>Internal impact calculations may remain sophisticated. The public question is smaller: what must this Change do about accepted meaning before it can land?</p>
+
+      <figure>
+        <div class="decision-stack" aria-label="Semantic decision sequence">
+          <div class="decision recommended">
+            <div class="decision-question">Does the proposed change preserve every applicable Record?</div>
+            <div class="decision-condition">Yes</div>
+            <div class="decision-result">Retain the conclusion and supporting Evidence on the Change, then continue to exact-tree verification.</div>
+          </div>
+          <div class="decision">
+            <div class="decision-question">Does the proposed change introduce or change durable meaning?</div>
+            <div class="decision-condition">Yes</div>
+            <div class="decision-result">Create or supersede the smallest necessary Record and bind it to the Evidence and accepting authority.</div>
+          </div>
+          <div class="decision">
+            <div class="decision-question">Could more investigation change the decision?</div>
+            <div class="decision-condition">Unclear</div>
+            <div class="decision-result">Gather more Evidence. An audit or external search remains non-authoritative until reviewed.</div>
+          </div>
+          <div class="decision">
+            <div class="decision-question">Is the required decision outside the actor's authority?</div>
+            <div class="decision-condition">Yes</div>
+            <div class="decision-result">Pause the Change with one behavior-level question for the human. Do not ask them to construct protocol fields.</div>
+          </div>
+        </div>
+        <figcaption>Reach classes, boundary dispositions, review packets, and approval flags may support this decision internally; they are not additional public concepts.</figcaption>
+      </figure>
+    </section>
+
+    <section id="parallel" aria-labelledby="parallel-title">
+      <h2 id="parallel-title">6. Changes are plural because work is parallel</h2>
+      <p><strong>Change</strong> remains the singular object type. A repository may hold many Changes at once. Parallelism is expressed through their captured bases, dependencies, claims, and convergence order—not through another semantic tier.</p>
+
+      <figure>
+        <div class="scroll-frame">
+          <div class="parallel-plane">
+            <span class="label">Shared repository · independent work</span>
+            <div class="parallel-grid">
+              <article class="node primary">
+                <span class="node-kicker">Accepted base</span>
+                <h3>Records + Git head C</h3>
+                <p>The common causal starting point.</p>
+              </article>
+              <div class="connector" aria-hidden="true"><span class="connector-arrow">→</span></div>
+              <article class="node">
+                <span class="node-kicker">Change A</span>
+                <h3>Recovery</h3>
+                <p>Own worktree, evidence, and proposed change.</p>
+              </article>
+              <article class="node">
+                <span class="node-kicker">Change B</span>
+                <h3>Protocol</h3>
+                <p>May land first if its claims do not conflict.</p>
+              </article>
+              <article class="node">
+                <span class="node-kicker">Change C</span>
+                <h3>Consumer</h3>
+                <p>Waits when it depends on Change B.</p>
+              </article>
+            </div>
+            <div class="convergence">
+              <article class="node primary">
+                <span class="node-kicker">Land first</span>
+                <h3>Change B → head D</h3>
+                <p>The checked proposed change advances the landing branch.</p>
+              </article>
+              <article class="node derived">
+                <span class="node-kicker">Rebuildable</span>
+                <h3>Change A against D</h3>
+                <p>Reconstruct and reverify before landing.</p>
+              </article>
+              <article class="node derived">
+                <span class="node-kicker">Dependency satisfied</span>
+                <h3>Change C against D</h3>
+                <p>Now consumes the landed protocol Record and code.</p>
+              </article>
+            </div>
+          </div>
+        </div>
+        <figcaption>Plans and reserved work are coordination mechanics. They prevent conflicting work and stale handoffs, but they never create decision authority.</figcaption>
+      </figure>
+    </section>
+
+    <section id="guarantees" aria-labelledby="guarantees-title">
+      <h2 id="guarantees-title">7. Guarantees retained</h2>
+      <p>Simplifying the public ontology does not simplify away the control guarantees. These remain mandatory mechanics.</p>
+
+      <div class="guarantees">
+        <article class="guarantee">
+          <h3>Git object identity</h3>
+          <p>Ground, proposed change, and landing are bound to exact commits and trees rather than mutable branch names or timestamps.</p>
+        </article>
+        <article class="guarantee">
+          <h3>Isolated Changes</h3>
+          <p>Linked worktrees let several agents work in one clone without moving the integration checkout.</p>
+        </article>
+        <article class="guarantee">
+          <h3>Evidence before authority</h3>
+          <p>Repository observations, searches, audits, tests, and model output cannot silently become accepted meaning.</p>
+        </article>
+        <article class="guarantee">
+          <h3>Exact-tree verification</h3>
+          <p>Reviews and executable checks apply to the prospective integrated result, not merely the earlier work branch.</p>
+        </article>
+        <article class="guarantee">
+          <h3>Compare-and-swap landing</h3>
+          <p>The local target moves only if it still equals the captured head. Concurrent movement forces reconstruction.</p>
+        </article>
+        <article class="guarantee">
+          <h3>Recoverable failure</h3>
+          <p>A failed check, conflict, missing decision, or stale proposed change leaves the target unchanged and Change work available.</p>
+        </article>
+        <article class="guarantee">
+          <h3>Explicit authority</h3>
+          <p>Agent authority covers only repository meaning within the request. It does not imply destructive or unbounded external permission.</p>
+        </article>
+        <article class="guarantee primary">
+          <h3>Local landing before publication</h3>
+          <p>Remote publication is separate, disabled by default, and cannot retroactively make a verified local landing ambiguous.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="machinery" aria-labelledby="machinery-title">
+      <h2 id="machinery-title">8. Where the machinery goes</h2>
+      <p>The implementation uses precise internal types for domains, reach, boundary dispositions, lifecycle stages, command outcomes, and evidence. Simplification means giving each concept one home and exposing only the projection appropriate to the audience.</p>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Existing term</th>
+              <th>Public standing</th>
+              <th>Implementation role</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Domain</td>
+              <td>Record view</td>
+              <td>Retrieval coordinate for a stable responsibility.</td>
+            </tr>
+            <tr>
+              <td>Architecture</td>
+              <td>Record body</td>
+              <td>Canonical prose carrying rationale, consequences, and revision conditions.</td>
+            </tr>
+            <tr>
+              <td>Contract</td>
+              <td>Verified Record</td>
+              <td>A Record whose observable consequences select executable witnesses.</td>
+            </tr>
+            <tr>
+              <td>Constraint</td>
+              <td>Record specialization</td>
+              <td>Repository terminology or facets; not a parallel authority store.</td>
+            </tr>
+            <tr>
+              <td>Audit, finding, discovery</td>
+              <td>Evidence</td>
+              <td>Different capture and resolution behavior expressed by internal discriminated types.</td>
+            </tr>
+            <tr>
+              <td>Reach and impact</td>
+              <td>Evidence</td>
+              <td>Derived intersections that explain why Records may apply or require review.</td>
+            </tr>
+            <tr>
+              <td>Candidate review and verifier result</td>
+              <td>Evidence</td>
+              <td>Candidate-bound semantic and executable observations.</td>
+            </tr>
+            <tr>
+              <td>Candidate, assessment, receipt, action</td>
+              <td>Change internals</td>
+              <td>Typed persistence, suspension, resumption, and exact-tree bindings.</td>
+            </tr>
+            <tr>
+              <td>Plan and reservation</td>
+              <td>Change coordination</td>
+              <td>Derived or disposable mechanics for dependency order, ownership, and liveness.</td>
+            </tr>
+            <tr>
+              <td>Stage, outcome, assurance</td>
+              <td>Change projections</td>
+              <td>One state machine should derive these views rather than storing competing truths.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Normal product surface</h3>
+      <pre><code>initialize
+→ ask for a change
+→ retrieve governing Records
+→ work in an isolated Change
+→ collect Evidence
+→ pause only for a real unresolved decision
+→ verify the exact tree
+→ land locally</code></pre>
+
+      <p>Diagnostic commands, raw schemas, proposed-state construction, cache inspection, and coordination primitives remain available as an advanced machine API. They do not define the vocabulary a human must learn.</p>
+    </section>
+
+    <section id="documents" aria-labelledby="documents-title">
+      <h2 id="documents-title">9. Document hierarchy</h2>
+      <p>Invariant separates explanation, presentation rules, and executable repository contract so each audience receives the right amount of machinery.</p>
+
+      <div class="document-map">
+        <article>
+          <span class="node-kicker">Presentation source</span>
+          <h3><a href="design.md">design.md</a></h3>
+          <p>The normative visual language for explanatory architecture documents: print-first, monochrome, quiet, and self-contained.</p>
+        </article>
+        <article>
+          <span class="node-kicker">Human explanation</span>
+          <h3><a href="model.html">model.html</a></h3>
+          <p>This document. It explains the public model, authority boundary, lifecycle, parallelism, and retained guarantees.</p>
+        </article>
+        <article>
+          <span class="node-kicker">Machine contract</span>
+          <h3><a href="SPEC.md">SPEC.md</a></h3>
+          <p>The exhaustive design of record for agents and contributors working on Invariant itself, including schemas, commands, states, and mechanics.</p>
+        </article>
+      </div>
+
+      <aside class="callout">
+        <span class="label">Reader guidance</span>
+        <p>Use this explanatory model to understand the system. Use the machine specification when implementing, reviewing, or changing Invariant's protocol and safety behavior.</p>
+      </aside>
+    </section>
+
+    <footer>
+      <p><strong>Invariant's core rule:</strong> Records state what must be preserved, Evidence states what was observed, and Changes bind action and judgment to the exact repository result.</p>
+    </footer>
+  </main>
+</body>
+</html>

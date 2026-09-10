@@ -1,6 +1,6 @@
 """Compatibility adapters for the pre-package shell command surfaces.
 
-The adapters intentionally contain argument translation only.  Semantics,
+The adapters deliberately contain argument translation only.  Semantics,
 mechanics, and lifecycle live in the normal package modules, so the old skill
 script paths cannot become a second implementation.
 """
@@ -72,9 +72,16 @@ def _exact(positionals: list[str], count: int, usage: str) -> None:
 def _config(_: list[str]) -> list[str]:
     resolved = config.resolve(git.root())
     # Preserve the legacy resolver's stable six-line contract. The public CLI
-    # exposes the two optional lifecycle switches as well.
-    lines = config.lines(resolved)
-    return [line for line in lines if not line.startswith(("intent_expansion:", "outcome_review:"))]
+    # exposes the schema version, remote policy, and lifecycle switches as well.
+    return [
+        f"authority: {resolved.authority}",
+        f"execution: {resolved.execution}",
+        f"integration_branch: {resolved.integration_branch}",
+        f"source: {resolved.source}",
+        f"integration_branch_resolved: {resolved.integration_branch}",
+        f"branch_source: {resolved.branch_source}",
+        *(["integration_branch_unborn: true"] if resolved.unborn else []),
+    ]
 
 
 def _state(argv: list[str]) -> list[str]:
@@ -82,7 +89,7 @@ def _state(argv: list[str]) -> list[str]:
     if argv and argv[0] in {"--landing", "--audit"}:
         landing_mode = argv.pop(0) == "--landing"
     lines = state.validate(git.root(), landing=landing_mode, named=argv)
-    if lines[-1].endswith("intent state violation(s)"):
+    if lines[-1].endswith("Invariant state violation(s)"):
         raise Blocked(lines[-1], code="invalid_state", lines=lines[:-1])
     return lines
 
@@ -181,11 +188,11 @@ def _audit(argv: list[str]) -> list[str]:
             raise UsageError("Invariant: scoped audit requires --paths")
         return audit.frame(repo, "scope", values["--paths"])
     if command == "full":
-        positional, _, flags = _parse(rest, flags=("--assisted", "--auto"))
-        _exact(positional, 0, "usage: audit-support.sh full --assisted|--auto")
+        positional, _, flags = _parse(rest, flags=("--human", "--agent"))
+        _exact(positional, 0, "usage: audit-support.sh full --human|--agent")
         if len(flags) != 1:
-            raise UsageError("Invariant: full audit requires exactly one resolution mode")
-        return audit.full(repo, "auto" if "--auto" in flags else "assisted")
+            raise UsageError("Invariant: full audit requires exactly one authority mode")
+        return audit.full(repo, "agent" if "--agent" in flags else "human")
     if command == "fresh":
         if len(rest) not in {1, 2}:
             raise UsageError("usage: audit-support.sh fresh <audit> [head]")

@@ -1,182 +1,141 @@
-# Invariant
+# Invariant: Scale agentic coding without architectural drift
 
-Invariant preserves accepted architectural meaning while people and agents change a Git repository.
-It is a standalone Python CLI: Codex, another agent, CI, or a person can invoke the same local
-command contract.
+Agents rarely break architecture in one dramatic change. It drifts through individually reasonable
+changes made from partial context.
 
-- **Semantics** carries prose judgment: requested meaning, relevant domains, discoveries, and
-  architecture review.
-- **Mechanics** derives exact repository facts: reach, digests, freshness, candidate trees, checks,
-  and compare-and-swap ref updates.
-- **Lifecycle** keeps the fixed brief → isolate → implement → verify → land flow resumable.
+## The write side of intent
 
-![A read-only brief leads to an isolated work branch, an exact candidate tree, and verification against that tree before a compare-and-swap advances the integration ref. Tracked governance sits inside Git and feeds both the brief and verification; the ignored planning runtime sits outside it.](.github/assets/lifecycle.svg)
+Most tooling helps an agent read a codebase better. Invariant stabilizes what an agent is allowed
+to write back. The decisions, responsibilities, contracts, and sources a team has accepted live in
+the repository, versioned with the code, and every consequential change passes critical checkpoints
+that read them before it lands. The agent reasons freely; the checkpoints give it something exact to
+reason against, and the landing writes its attestation back into the same memory.
 
-The complete design is in [SPEC.md](SPEC.md).
+![A human accepts promises into repository memory made of domains, contracts, sources, and records; an agent's change passes reach, review, verify, and land checkpoints that read that memory before landing and attest back into it.](.github/assets/intent.svg)
 
-## Install
+- **Domains** name stable responsibilities and point at the architecture prose that explains them.
+- **Contracts** are executable promises between responsibilities, witnessed on the exact tree.
+- **Sources** bring attributable external evidence into scope without ever becoming authority.
+- **Records** bind decisions to canonical prose and reopen when their premises change.
 
-For development:
+## Core philosophy
 
-```bash
-uv sync
-uv run invariant --version
-```
+1. free-form agent reasoning for accuracy;
+2. deterministic, inspectable state where reasoning becomes consequential;
+3. near-zero user ceremony for routine work; and
+4. hard authority boundaries when an accepted promise is genuinely at risk.
 
-Install the repository as an isolated command:
+## True value
 
-```bash
-uv tool install .
-```
+- **Bounded autonomy.** Agents move fast because the rules are written down and enforced: routine
+  changes land in two commands, and touching a recorded decision pauses the lifecycle until an agent
+  — or you, when it lacks the authority — resolves it.
+- **Scaled coordination.** Several changes run in one clone without stepping on each other, because
+  each owns its worktree, receipt, and evidence, and landings serialize atomically on the integration
+  branch.
+- **Planning.** Plans and reserved work keep concurrent agents out of each other's way, and a moved
+  branch means a clean re-verification, not a clobbered landing.
 
-Or install it into a Python environment:
+![Durable memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, with many changes running it in parallel in one clone.](.github/assets/lifecycle.svg)
 
-```bash
-python -m pip install .
-```
+Architecture can evolve. It cannot drift silently.
 
-After publication, the corresponding package command is `uv tool install invariant-cli`. The
-distribution is named `invariant-cli`; the executable and import package are both named
-`invariant`.
+## Start
 
-The repository also keeps `bin/invariant` as a source-tree launcher. Repository-local `intent-*`
-shell scripts are deprecated compatibility adapters into the Python package; they are not included
-in the installed wheel and no longer own mechanics.
-
-## Use from Codex or a shell
-
-Codex does not need a custom integration or an additional skill. Agent instructions can tell it to
-invoke the CLI, use normal editing tools on the returned work branch, and provide semantic decisions
-when requested. Applications should select JSON output:
+Invariant is a local Python CLI. It uses an existing Codex or Claude Code installation and stores no
+provider credentials or API keys. Initialization checks the native connection and can open its normal
+sign-in flow when needed.
 
 ```bash
-invariant --format json task begin retry-handling \
-  --goal "Add retry handling to document processing" \
-  --posture local \
-  --boundary no-record \
-  --path src/processing
+uv tool install git+https://github.com/RenderBear/invariant-cli.git
 ```
 
-Humans may use the same command with text output. `task begin` creates a disposable Git-local
-receipt and enters a generated `intent/work/...` branch. After committing the implementation,
-prepare an assessment:
-
-```yaml
-version: 1
-goal_digest: <digest returned by task begin>
-paths: [src/processing]
-interfaces: []
-domains: []
-boundary:
-  disposition: no-record
-governance: []
-architecture_reviews: []
-checks: []
-```
-
-Then finish the fixed lifecycle:
+From a Git repository:
 
 ```bash
-invariant task finish retry-handling --assessment /tmp/retry-handling.yml
+invariant init
 ```
 
-Invariant reconstructs the prospective integration tree, recomputes reach, performs required
-semantic gates, runs checks against that tree, atomically advances the local integration ref, and
-cleans the completed task. It never pushes.
+Initialization asks for authority, execution, landing, publication, and optional intent-review
+policy, then ends with one yes-or-no choice to establish durable records. Use
+`invariant init --defaults` to accept the safe local policy without those questions. Failed provider
+connections are warnings and automatic selection continues to the next provider. A single connected
+provider is a complete setup; `invariant connect` inspects or changes machine-level connections.
+If a complete configuration already exists, `init` warns before asking setup questions and lets you
+keep it or replace every repository setting. Use `invariant set <key> <value>` for a single change.
 
-## Optional semantic bookends
-
-The core lifecycle always preserves durable repository intent. Two optional flags add task-specific
-precision before and after it without changing the middle:
-
-```yaml
-version: 1
-resolution: assisted
-execution: auto
-integration_branch: main
-lifecycle:
-  intent_expansion: false
-  outcome_review: false
-```
-
-- `intent_expansion` requires a versioned prose record with stable outcome, acceptance, and
-  constraint IDs before implementation. Pass it to `task begin --intent <file>`.
-- `outcome_review` requires the finish assessment to map those acceptance IDs to `satisfied`,
-  `not-satisfied`, or `unresolved` against the exact candidate tree.
-
-Both default off. They are semantic bookends, not replacements for briefing, durable-meaning
-review, verification, or landing. Run `invariant task guidance <task-id>` to compile the free-form
-brief, discovery, coordination, and landing guidance relevant to the current stage.
-
-## Progressive discovery
-
-A discovery records an observation, its causal basis, its relevance, and its disposition:
-
-```yaml
-version: 1
-id: missing-recovery-record
-observation: No document explains ownership after process restart.
-basis:
-  ground: <commit>
-  tree: <tree>
-  searched: [docs, src/jobs]
-  prose: Repository-wide search found behavior but no decision record.
-relevance:
-  domains: [jobs]
-  paths: [src/jobs]
-  related: [task:document-recovery]
-disposition:
-  state: open
-```
-
-Discoveries are evidence, never authority. A resolved discovery can point to a domain, contract,
-architecture section, another discovery, a repository path, or follow-up task—or close with prose
-and no new artifact. Missing ADRs, absent documentation, contradictions, implicit dependencies, and
-meaningful absences are therefore representable without pretending every finding is a contract.
+If you defer establishment:
 
 ```bash
-invariant evidence discovery capture missing-recovery-record \
-  --observation "No document explains ownership after restart." \
-  --searched docs --searched src/jobs --domain jobs
-
-invariant evidence discovery resolve missing-recovery-record \
-  --prose "Documentation work is tracked separately." \
-  --output task:document-recovery
+invariant establish
 ```
 
-## Repository and package layout
+Then work normally:
+
+```bash
+invariant ask "Explain how job recovery is owned"
+invariant change "Job recovery breaks after restart; fix it"
+invariant status
+```
+
+`change` plans and implements in an isolated worktree, commits an exact candidate, checks it against
+accepted records, resolves affected promises within configured authority, and lands it on the local
+branch. Publishing is off by default.
+
+## Bring your agent. Add only what you need.
+
+Invariant owns the durable lifecycle; your provider owns the model account, authentication, quota, and
+billing. Protected semantic reads and lifecycle transitions deliberately run with bounded tools and
+authority.
+
+The minimal setup needs no extras. Optional add-ons are there when the work calls for them:
+
+```bash
+invariant source add --url https://example.com/standards --repo
+invariant set adapters.intent_brief on
+invariant set harness claude
+```
+
+- **Grounding sources** bring attributable external evidence into a repository, domain, or contract.
+- **Intent review** expands ambiguous requests and reviews the exact candidate before landing.
+- **Another provider** is an available choice, not a missing dependency; the preference stays local to
+  the clone and is never committed.
+
+## The surface
+
+| Need | Command |
+| --- | --- |
+| Ask a read-only repository question | `invariant ask "…"` |
+| Run one managed change | `invariant change "…"` |
+| Keep a foreground conversation | `invariant start` |
+| Establish or refresh architecture | `invariant establish` |
+| See state or configuration | `invariant status`, `invariant settings` |
+| Add scoped evidence | `invariant source add …` |
+
+The ordinary surface stays small. The deterministic task, governance, evidence, coordination, and
+candidate protocol remains available to automation and recovery tooling through
+`invariant help protocol`.
+
+## What persists
 
 ```text
-src/invariant/
-  semantics/        prose models, discoveries, and stage guidance
-  mechanics/        deterministic Git, state, cache, audit, and landing operations
-  lifecycle/        fixed task state machine
-  cli/              argument and output adapters
-
 .invariant/
-  config.yml        optional repository configuration
-  DOMAINS.yml       accepted responsibilities and architecture/contract pointers
-  CONTRACTS.yml     accepted executable cross-domain promises
-  discoveries/      tracked non-authoritative discovery evidence
-  audits/            tracked non-authoritative audit evidence
-  runtime/           ignored active plans and leases
+├── config.yml       repository policy
+├── SEMANTICS.yml    accepted prose records, authority, applicability, and witnesses
+├── DOMAINS.yml      stable responsibilities and architecture pointers
+├── CONTRACTS.yml    executable promises between responsibilities
+├── SOURCES.yml      grounding-source origins and scopes
+├── audits/          saved investigations: evidence, not rules
+└── runtime/         self-ignored task state, worktrees, receipts, and archives
 ```
 
-Architecture prose remains canonical in anchored Markdown. Receipts live under
-`<git-common-dir>/invariant/briefs/`; they cache integrity and semantic scope but hold no authority.
-An unrelated mergeable integration advance can refresh a receipt. Changed selected governance,
-expanded scope, changed brief-dependency mechanics, or a conflict invalidates the affected reuse.
-Edits to stage guidance, landing, coordination, or output formatting do not evict the semantic
-envelope; those concerns reload or recompute independently. Candidate verification always binds to
-the exact tree being landed.
+Ordinary Markdown remains the source of truth. The YAML is a thin, deterministic envelope for retrieval,
+authority, and verification. Invariant always resolves the Git root and rejects ambiguous nested state;
+linked worktrees share one logical kernel while preserving isolated candidates.
 
-## Development
+## Read further
 
-```bash
-for test_file in tests/test-*.sh; do sh "$test_file" || exit; done
-uv run pytest
-uv build
-```
-
-Copy [AGENTS.example.md](AGENTS.example.md) into a consuming repository's always-loaded agent
-instructions to bind Codex or another coding agent to the lifecycle.
+- [Explanatory model](docs/model.html) — the architecture, authority model, and guarantees.
+- [CLI basics](docs/cli-basics.md) — complete commands and a task walkthrough.
+- [Design language](docs/design.md) — the document and terminal palette, glyphs, and layout rules.
+- [SPEC.md](docs/SPEC.md) — the exhaustive machine and contributor design of record.

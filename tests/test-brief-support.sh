@@ -3,7 +3,8 @@
 set -eu
 
 root=$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)
-brief="$root/skills/intent-brief/scripts/brief-support.sh"
+compat="$root/bin/invariant-compat"
+cli="$root/bin/invariant"
 fixture=$(mktemp -d "${TMPDIR:-/tmp}/invariant-brief-test.XXXXXX")
 cleanup() { rm -rf "$fixture"; }
 trap cleanup EXIT HUP INT TERM
@@ -47,7 +48,7 @@ EOF
 chmod +x "$fixture/checks/verify.sh"
 cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
-resolution: assisted
+authority: human
 EOF
 cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
 version: 1
@@ -112,7 +113,7 @@ git -C "$fixture" commit -qm "queue discovery"
 ok() { echo "ok - $1"; }
 die() { echo "not ok - $1"; exit 1; }
 
-out=$(cd "$fixture" && sh "$brief" reach --paths ui/view.txt)
+out=$(cd "$fixture" && "$compat" brief reach --paths ui/view.txt)
 printf '%s\n' "$out" | grep -q '^REACH: local$' || die "ordinary UI change gained governance ceremony"
 printf '%s\n' "$out" | grep -q '^TOPOLOGY: area.ui$' || die "derived scope missing"
 printf '%s\n' "$out" | grep -q '^TOPOLOGY-NEW:' && die "existing UI topology was reported as new"
@@ -121,13 +122,13 @@ ok "pending discoveries remain visible without changing local reach"
 
 printf 'ui changed\n' >"$fixture/ui/view.txt"
 git -C "$fixture" commit -qam "change discovery evidence"
-out=$(cd "$fixture" && sh "$brief" reach --paths ui/view.txt)
+out=$(cd "$fixture" && "$compat" brief reach --paths ui/view.txt)
 printf '%s\n' "$out" | grep -q '^DISCOVERY: ui-event-order (needs-review — changed evidence ui/view.txt)$' ||
   die "causally changed discovery evidence was not marked for review"
 printf '%s\n' "$out" | grep -q '^REACH: local$' || die "discovery freshness became a landing blocker"
 ok "causally suspect discoveries warn without governing"
 
-out=$(cd "$fixture" && sh "$brief" reach --paths .hidden/new.txt "Upper Dir/new.txt" \
+out=$(cd "$fixture" && "$compat" brief reach --paths .hidden/new.txt "Upper Dir/new.txt" \
   "packages/Fancy App/new.txt" root-new.txt)
 printf '%s\n' "$out" | grep -q '^TOPOLOGY: area.root$' || die "root topology missing from committed tree edge case"
 printf '%s\n' "$out" | grep -q '^TOPOLOGY: area.upper-dir$' || die "uppercase and spaced area slug changed"
@@ -138,43 +139,43 @@ ok "committed tree scopes preserve hidden, uppercase, spaced, package, and root-
 
 mkdir -p "$fixture/migrations"
 printf 'create table example(id integer);\n' >"$fixture/migrations/001.sql"
-out=$(cd "$fixture" && sh "$brief" reach --paths migrations/001.sql)
+out=$(cd "$fixture" && "$compat" brief reach --paths migrations/001.sql)
 printf '%s\n' "$out" | grep -q '^TOPOLOGY-NEW: area.migrations$' || die "new area topology was not reported"
 printf '%s\n' "$out" | grep -q '^REACH: local$' || die "new topology invented governance reach"
 rm -rf "$fixture/migrations"
 ok "new topology is advisory and remains semantically local"
 
-out=$(cd "$fixture" && sh "$brief" reach --paths src/ocr/engine.txt --domain ocr.external)
+out=$(cd "$fixture" && "$compat" brief reach --paths src/ocr/engine.txt --domain ocr.external)
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.protocol.v1 (bounded)$' || die "domain contract not selected"
 printf '%s\n' "$out" | grep -q '^AFFECTED: architecture:docs/architecture.md#provider-isolation (bounded)$' || die "domain architecture not selected"
 printf '%s\n' "$out" | grep -q '^REVIEW: architecture:docs/architecture.md#provider-isolation' || die "architecture review not emitted"
 printf '%s\n' "$out" | grep -q '^REACH: bounded$' || die "accepted domain work is not bounded"
 ok "semantic domain selection retrieves architecture and contracts"
 
-out=$(cd "$fixture" && sh "$brief" rows ocr.external)
+out=$(cd "$fixture" && "$compat" brief rows ocr.external)
 printf '%s\n' "$out" | grep -q '^ARCHITECTURE architecture:docs/architecture.md#provider-isolation$' ||
   die "domain rows omitted the canonical architecture pointer"
 printf '%s\n' "$out" | grep -q '^CONTRACT ocr.protocol.v1 — ' || die "domain contract pointer did not retrieve its promise"
 ok "domain pointers provide a thin semantic retrieval index"
 
-out=$(cd "$fixture" && sh "$brief" verifiers --paths src/ocr/engine.txt --domain ocr.external)
+out=$(cd "$fixture" && "$compat" brief verifiers --paths src/ocr/engine.txt --domain ocr.external)
 printf '%s\n' "$out" | grep -q '^VERIFY: contract:ocr.protocol.v1 command:checks/verify.sh$' || die "contract verifier missing"
 printf '%s\n' "$out" | grep -q '^REVIEW: architecture:docs/architecture.md#provider-isolation' || die "architecture review missing"
 ok "contracts verify mechanically while architecture retains semantic review"
 
-out=$(cd "$fixture" && sh "$brief" reach --paths schemas/ocr.json)
+out=$(cd "$fixture" && "$compat" brief reach --paths schemas/ocr.json)
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.protocol.v1 (bounded)$' || die "contract surface did not resolve mechanically"
-out=$(cd "$fixture" && sh "$brief" reach --paths ui/view.txt --interface OcrEngine)
+out=$(cd "$fixture" && "$compat" brief reach --paths ui/view.txt --interface OcrEngine)
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.protocol.v1 (bounded)$' || die "interface surface did not resolve"
 ok "contract surfaces remain mechanically discoverable without routes"
 
-out=$(cd "$fixture" && sh "$brief" reach --paths docs/architecture.md --domain ocr.external)
+out=$(cd "$fixture" && "$compat" brief reach --paths docs/architecture.md --domain ocr.external)
 printf '%s\n' "$out" | grep -q '^REACH: open$' || die "defining material change did not open governance"
 ok "defining material changes are open"
 
 sed 's/Submit work and observe its events/Submit work and stream its events/' "$fixture/README.md" >"$fixture/README.tmp"
 mv "$fixture/README.tmp" "$fixture/README.md"
-out=$(cd "$fixture" && sh "$brief" reach --paths README.md)
+out=$(cd "$fixture" && "$compat" brief reach --paths README.md)
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.submit-doc (open)$' || die "changed Markdown section did not reach its contract"
 printf '%s\n' "$out" | grep -q 'contract:ocr.setup-doc' && die "unchanged Markdown section reached an unrelated contract"
 git -C "$fixture" checkout -q -- README.md
@@ -184,17 +185,17 @@ readme_base=$(git -C "$fixture" rev-parse HEAD)
 sed 's/Run the local service/Run the local development service/' "$fixture/README.md" >"$fixture/README.tmp"
 mv "$fixture/README.tmp" "$fixture/README.md"
 git -C "$fixture" commit -qam "change setup section"
-out=$(cd "$fixture" && sh "$brief" reach "$readme_base")
+out=$(cd "$fixture" && "$compat" brief reach "$readme_base")
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.setup-doc (open)$' || die "committed Markdown section did not reach its contract"
 printf '%s\n' "$out" | grep -q 'contract:ocr.submit-doc' && die "candidate routing selected an unchanged Markdown section"
 ok "candidate-tree Markdown hunks route section-specific material"
 
-out=$(cd "$fixture" && sh "$brief" material-changes "$readme_base" HEAD ocr.external)
+out=$(cd "$fixture" && "$compat" brief material-changes "$readme_base" HEAD ocr.external)
 printf '%s\n' "$out" | grep -q '^MATERIAL-CHANGED: architecture:README.md#local-setup$' || die "changed selected material was not reported"
 printf '%s\n' "$out" | grep -q '#submit-and-observe-a-job$' && die "unchanged selected material was reported"
 ok "selected governing material changes are section-aware"
 
-out=$(cd "$fixture" && sh "$brief" reach --paths README.md)
+out=$(cd "$fixture" && "$compat" brief reach --paths README.md)
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.submit-doc (open)$' || die "hypothetical path check narrowed without diff evidence"
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.setup-doc (open)$' || die "hypothetical path check omitted anchored material"
 ok "path-only Markdown checks remain conservatively file-wide"
@@ -204,40 +205,57 @@ printf '\nChanged.\n' >>"$fixture/docs/architecture.md"
 git -C "$fixture" commit -qam "temporarily change architecture"
 git -C "$fixture" checkout -q "$history_base" -- docs/architecture.md
 git -C "$fixture" commit -qm "restore architecture"
-out=$(cd "$fixture" && sh "$brief" reach --history "$history_base")
+out=$(cd "$fixture" && "$compat" brief reach --history "$history_base")
 printf '%s\n' "$out" | grep -q '^AFFECTED: contract:ocr.protocol.v1 (open)$' || die "history reach hid a reverted material change"
-out=$(cd "$fixture" && sh "$brief" reach "$history_base")
+out=$(cd "$fixture" && "$compat" brief reach "$history_base")
 printf '%s\n' "$out" | grep -q '^REACH: local$' || die "net-tree reach unexpectedly retained a reverted change"
 ok "history reach preserves intervening path evidence across reverts"
 
-digest=$(cd "$fixture" && sh "$brief" digest ocr.external | sed 's/^DIGEST: //')
-at_digest=$(cd "$fixture" && sh "$brief" digest --at HEAD ocr.external | sed 's/^DIGEST: //')
+digest=$(cd "$fixture" && "$compat" brief digest ocr.external | sed 's/^DIGEST: //')
+at_digest=$(cd "$fixture" && "$compat" brief digest --at HEAD ocr.external | sed 's/^DIGEST: //')
 [ "$digest" = "$at_digest" ] || die "commit-addressed governance digest differs from the same working tree"
 sed 's/UI event ordering may need/UI event sequencing may need/' "$fixture/.invariant/discoveries/ui-event-order.yml" >"$fixture/.invariant/discoveries/ui-event-order.tmp"
 mv "$fixture/.invariant/discoveries/ui-event-order.tmp" "$fixture/.invariant/discoveries/ui-event-order.yml"
-after_discovery=$(cd "$fixture" && sh "$brief" digest ocr.external | sed 's/^DIGEST: //')
+after_discovery=$(cd "$fixture" && "$compat" brief digest ocr.external | sed 's/^DIGEST: //')
 [ "$digest" = "$after_discovery" ] || die "non-authoritative discovery entered governing digest"
 sed 's/Owns OCR capabilities/Owns OCR execution capabilities/' "$fixture/.invariant/DOMAINS.yml" >"$fixture/.invariant/DOMAINS.tmp"
 mv "$fixture/.invariant/DOMAINS.tmp" "$fixture/.invariant/DOMAINS.yml"
-after_domain=$(cd "$fixture" && sh "$brief" digest ocr.external | sed 's/^DIGEST: //')
+after_domain=$(cd "$fixture" && "$compat" brief digest ocr.external | sed 's/^DIGEST: //')
 [ "$digest" != "$after_domain" ] || die "domain responsibility change did not change digest"
-at_digest=$(cd "$fixture" && sh "$brief" digest --at HEAD ocr.external | sed 's/^DIGEST: //')
+at_digest=$(cd "$fixture" && "$compat" brief digest --at HEAD ocr.external | sed 's/^DIGEST: //')
 [ "$digest" = "$at_digest" ] || die "working governance leaked into commit-addressed digest"
-if (cd "$fixture" && sh "$brief" check-digest "$digest" ocr.external >/dev/null 2>&1); then die "stale digest was accepted"; fi
+if (cd "$fixture" && "$compat" brief check-digest "$digest" ocr.external >/dev/null 2>&1); then die "stale digest was accepted"; fi
 git -C "$fixture" checkout -q -- .invariant/DOMAINS.yml .invariant/discoveries/ui-event-order.yml
 ok "digest covers governance and excludes evidence"
 
 printf '  - id: ocr.embedded\n    responsibility: Embedded OCR engine.\n    authority: user:task:test#turn-2\n    parent: ocr\n' >>"$fixture/.invariant/DOMAINS.yml"
-out=$(cd "$fixture" && sh "$brief" reach --paths .invariant/DOMAINS.yml)
+out=$(cd "$fixture" && "$compat" brief reach --paths .invariant/DOMAINS.yml)
 printf '%s\n' "$out" | grep -q '^REACH: gated$' || die "working-tree governance edit was not conservative"
 git -C "$fixture" checkout -q -- .invariant/DOMAINS.yml
 ok "existing governance rewrites are conservatively gated"
 
-msg=$(cd "$fixture" && sh "$brief" message "change engine" --unit engine --scope area.src --domain ocr.external)
-printf '%s\n' "$msg" | grep -q '^Intent-Domain: ocr.external$' || die "semantic domain trailer missing"
+base=$(git -C "$fixture" rev-parse HEAD)
+cat >>"$fixture/.invariant/CONTRACTS.yml" <<'EOF'
+  - id: ocr.audit-protocol.v1
+    assertion: Governance audits remain executable.
+    authority: user:task:test#turn-2
+    between: [ocr.orchestrator, ocr.external]
+    surfaces: [repo:src/ocr]
+    architecture: [architecture:docs/architecture.md#provider-isolation]
+    verifies: [command:checks/verify.sh]
+EOF
+git -C "$fixture" add .invariant/CONTRACTS.yml
+git -C "$fixture" commit -qm "add audit protocol contract"
+out=$(cd "$fixture" && "$cli" context verifiers --base "$base")
+printf '%s\n' "$out" | grep -q '^VERIFY: contract:ocr.audit-protocol.v1 command:checks/verify.sh$' ||
+  die "new contract verifier was not selected during governance establishment"
+ok "new governance contracts run their declared verifiers"
+
+msg=$(cd "$fixture" && "$compat" brief message "change engine" --unit engine --scope area.src --domain ocr.external)
+printf '%s\n' "$msg" | grep -q '^Invariant-Domain: ocr.external$' || die "semantic domain trailer missing"
 printf 'changed\n' >>"$fixture/src/ocr/engine.txt"
 git -C "$fixture" commit -qam "$msg"
-(cd "$fixture" && sh "$brief" trailer HEAD >/dev/null) || die "honest derived scope/domain trailers failed"
+(cd "$fixture" && "$compat" brief trailer HEAD >/dev/null) || die "honest derived scope/domain trailers failed"
 ok "commit trailers retain mechanical scope and semantic domain separately"
 
-echo "17 brief checks passed"
+echo "18 brief checks passed"

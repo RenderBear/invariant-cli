@@ -1,23 +1,30 @@
 from __future__ import annotations
 
 import re
+import json
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable
 
 import yaml
 
-from invariant.errors import InvariantError
+from invariant.errors import InvariantError, UsageError
 from invariant.mechanics import git
+from invariant.protocol import Reach
+from invariant.semantics.domains import Domain, DomainIndex
+from invariant.semantics.records import SemanticRecord, parse_document
 
 
 GOVERNANCE_FILES = (
+    ".invariant/SEMANTICS.yml",
     ".invariant/DOMAINS.yml",
     ".invariant/CONTRACTS.yml",
     ".invariant/CONSTRAINTS.yml",
 )
 TEST_DIRECTORIES = {"tests", "test", "spec", "__tests__"}
 PACKAGE_MARKERS = {"package.json", "pyproject.toml", "Cargo.toml", "go.mod"}
+_MISSING = object()
 
 
 def refs(value: Any) -> list[str]:
@@ -31,54 +38,166 @@ def refs(value: Any) -> list[str]:
     return []
 
 
-def _load(repo: Path, relative: str, at: str | None = None) -> dict[str, Any]:
+def _load_document(repo: Path, relative: str, at: str | None = None) -> Any:
     if at:
         result = git.run(["show", f"{at}:{relative}"], cwd=repo, check=False)
-        if result.returncode or not result.stdout:
-            return {}
+        if result.returncode:
+            return _MISSING
         try:
-            raw = yaml.safe_load(result.stdout)
+            return yaml.safe_load(result.stdout)
         except yaml.YAMLError as exc:
             raise InvariantError(f"Invariant: invalid YAML in {relative} at {at}: {exc}") from exc
-    else:
-        path = repo / relative
-        if not path.is_file():
-            return {}
-        try:
-            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except yaml.YAMLError as exc:
-            raise InvariantError(f"Invariant: invalid YAML in {relative}: {exc}") from exc
+    path = repo / relative
+    if not path.is_file():
+        return _MISSING
+    try:
+        return yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise InvariantError(f"Invariant: invalid YAML in {relative}: {exc}") from exc
+
+
+def _load(repo: Path, relative: str, at: str | None = None) -> dict[str, Any]:
+    raw = _load_document(repo, relative, at)
     return raw if isinstance(raw, dict) else {}
 
 
-def domains(repo: Path, at: str | None = None) -> list[dict[str, Any]]:
-    value = _load(repo, GOVERNANCE_FILES[0], at).get("domains", [])
-    return value if isinstance(value, list) else []
+def domain_index(repo: Path, at: str | None = None) -> DomainIndex:
+    """Load the domain projection once as a validated semantic index."""
+
+    raw = _load_document(repo, ".invariant/DOMAINS.yml", at)
+    return DomainIndex() if raw is _MISSING else DomainIndex.parse_document(raw)
+
+
+def domains(repo: Path, at: str | None = None) -> list[Domain]:
+    return list(domain_index(repo, at))
+
+
+def _expanded_domain_ids(
+    index: DomainIndex, selected: Iterable[str]
+) -> list[str]:
+    try:
+        return [entry.identifier for entry in index.expand(selected)]
+    except UsageError as exc:
+        if exc.message.startswith("unknown semantic domain"):
+            raise InvariantError(
+                f"Invariant: {exc.message}", exit_code=1, code="unknown_domain"
+            ) from exc
+        raise
 
 
 def contracts(repo: Path, at: str | None = None) -> list[dict[str, Any]]:
-    value = _load(repo, GOVERNANCE_FILES[1], at).get("contracts", [])
+    value = _load(repo, ".invariant/CONTRACTS.yml", at).get("contracts", [])
     return value if isinstance(value, list) else []
 
 
 def constraints(repo: Path, at: str | None = None) -> list[dict[str, Any]]:
-    value = _load(repo, GOVERNANCE_FILES[2], at).get("constraints", [])
+    value = _load(repo, ".invariant/CONSTRAINTS.yml", at).get("constraints", [])
     return value if isinstance(value, list) else []
 
 
+def semantic_records(repo: Path, at: str | None = None) -> list[SemanticRecord]:
+    raw = _load(repo, ".invariant/SEMANTICS.yml", at)
+    if not raw:
+        return []
+    return parse_document(raw)
+
+
+def semantic_record_digest(repo: Path, identifier: str, at: str | None = None) -> str:
+    """Digest the indexed envelope and its exact canonical Markdown section."""
+
+    record = next(
+        (item for item in semantic_records(repo, at) if item.identifier == identifier),
+        None,
+    )
+    if record is None:
+        raise InvariantError(f"Invariant: unknown semantic record '{identifier}'")
+    document = record.document.removeprefix("architecture:")
+    path, _, anchor = document.partition("#")
+    content = _content(repo, at, path)
+    bounds = _section_bounds(content, anchor) if anchor else None
+    body = (
+        "\n".join(content.splitlines()[bounds[0] - 1 : bounds[1]])
+        if bounds
+        else content
+    )
+    payload = {
+        "id": record.identifier,
+        "document": record.document,
+        "authority": record.authority,
+        "status": record.status,
+        "applies_to": record.applies_to,
+        "revisit_on": record.revisit_on,
+        "verifies": record.verifies,
+        "supersedes": record.supersedes,
+        "relations": record.relations,
+        "facets": record.facets,
+        "body": body,
+    }
+    return sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+def applicable_semantic_records(
+    repo: Path,
+    *,
+    paths: Iterable[str] = (),
+    selected_domains: Iterable[str] = (),
+    interfaces: Iterable[str] = (),
+    at: str | None = None,
+    domain_catalog: DomainIndex | None = None,
+) -> list[SemanticRecord]:
+    """Select records by their small retrieval envelope, without interpreting prose."""
+
+    changed = list(paths)
+    catalog = domain_catalog or domain_index(repo, at)
+    domains_selected = set(_expanded_domain_ids(catalog, selected_domains))
+    interfaces_selected = set(interfaces)
+
+    def path_related(locator: str) -> bool:
+        path, _ = _locator_path(locator)
+        return bool(path and any(paths_related(candidate, path) for candidate in changed))
+
+    active = [record for record in semantic_records(repo, at) if record.status == "active"]
+    selected: dict[str, SemanticRecord] = {}
+    for record in active:
+        coordinates = [record.document, *record.applies_to, *record.revisit_on]
+        if (
+            any(
+                locator.startswith("domain:")
+                and locator.removeprefix("domain:") in domains_selected
+                for locator in record.applies_to
+            )
+            or any(
+                locator.startswith("interface:")
+                and locator.removeprefix("interface:") in interfaces_selected
+                for locator in [*record.applies_to, *record.revisit_on]
+            )
+            or any(path_related(locator) for locator in coordinates)
+        ):
+            selected[record.identifier] = record
+
+    # A record that explicitly revisits when another selected interpretation
+    # changes belongs in the same retrieval context. Relations remain open and
+    # descriptive; only revisit_on has this mechanical meaning.
+    expanded_context = True
+    while expanded_context:
+        expanded_context = False
+        selected_ids = set(selected)
+        for record in active:
+            dependencies = {
+                locator.removeprefix("semantic:")
+                for locator in record.revisit_on
+                if locator.startswith("semantic:")
+            }
+            if record.identifier not in selected and dependencies.intersection(selected_ids):
+                selected[record.identifier] = record
+                expanded_context = True
+    return sorted(selected.values(), key=lambda item: item.identifier)
+
+
 def expand_domains(repo: Path, selected: Iterable[str], at: str | None = None) -> list[str]:
-    rows = {str(row.get("id")): row for row in domains(repo, at) if row.get("id")}
-    expanded = set(selected)
-    pending = list(expanded)
-    while pending:
-        item = pending.pop()
-        if item not in rows:
-            raise InvariantError(f"Invariant: unknown semantic domain '{item}'", exit_code=1, code="unknown_domain")
-        parent = rows[item].get("parent")
-        if isinstance(parent, str) and parent and parent not in expanded:
-            expanded.add(parent)
-            pending.append(parent)
-    return sorted(expanded)
+    return _expanded_domain_ids(domain_index(repo, at), selected)
 
 
 def architecture_refs(value: Any) -> list[str]:
@@ -275,16 +394,77 @@ def first_path_intersection(changed: Iterable[str], locators: Any) -> str | None
 class Affected:
     kind: str
     identifier: str
-    level: str
+    level: Reach
     verifies: tuple[str, ...]
     assertion: str
 
 
-def _domain_contract_ids(repo: Path, selected: set[str], at: str | None = None) -> set[str]:
+@dataclass(frozen=True)
+class ContextResult:
+    """Typed mechanical context for one candidate or working-tree change."""
+
+    reach: Reach
+    affected: tuple[Affected, ...]
+    topology: tuple[str, ...] = ()
+    new_topology: tuple[str, ...] = ()
+    discoveries: tuple[str, ...] = ()
+    governance: tuple[str, ...] = ()
+
+    @property
+    def lines(self) -> list[str]:
+        lines = [f"TOPOLOGY: {scope}" for scope in self.topology]
+        lines.extend(f"TOPOLOGY-NEW: {scope}" for scope in self.new_topology)
+        for item in self.affected:
+            lines.append(
+                f"AFFECTED: {item.kind}:{item.identifier} ({item.level.value})"
+            )
+            if item.kind in {"architecture", "constraint"}:
+                lines.append(
+                    f"REVIEW: {item.kind}:{item.identifier} {item.assertion}"
+                )
+        lines.extend(self.discoveries)
+        lines.extend(self.governance)
+        lines.append(f"REACH: {self.reach.value}")
+        return lines
+
+    @property
+    def reviews(self) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                {
+                    f"{item.kind}:{item.identifier}"
+                    for item in self.affected
+                    if item.kind in {"architecture", "constraint"}
+                }
+            )
+        )
+
+    @property
+    def verifier_locators(self) -> tuple[str, ...]:
+        return tuple(
+            sorted({locator for item in self.affected for locator in item.verifies})
+        )
+
+    @property
+    def verifier_lines(self) -> list[str]:
+        lines: list[str] = []
+        for item in self.affected:
+            if item.kind in {"architecture", "constraint"}:
+                lines.append(
+                    f"REVIEW: {item.kind}:{item.identifier} {item.assertion}"
+                )
+            lines.extend(
+                f"VERIFY: {item.kind}:{item.identifier} {locator}"
+                for locator in item.verifies
+            )
+        return lines
+
+
+def _domain_contract_ids(index: DomainIndex, selected: set[str]) -> set[str]:
     result: set[str] = set()
-    for row in domains(repo, at):
-        if row.get("id") in selected:
-            result.update(refs(row.get("contracts")))
+    for domain in index:
+        if domain.identifier in selected:
+            result.update(domain.contracts)
     return result
 
 
@@ -297,18 +477,125 @@ def compile_affected(
     base: str | None = None,
     tip: str | None = None,
     at: str | None = None,
+    domain_catalog: DomainIndex | None = None,
+    base_domain_catalog: DomainIndex | None = None,
 ) -> list[Affected]:
     changed = list(paths)
-    selected = set(expand_domains(repo, selected_domains, at))
+    catalog = domain_catalog or domain_index(repo, at)
+    selected = set(_expanded_domain_ids(catalog, selected_domains))
     interface_set = set(interfaces)
-    selected_contracts = _domain_contract_ids(repo, selected, at)
+    selected_contracts = _domain_contract_ids(catalog, selected)
+    base_contracts = (
+        {str(row.get("id")): row for row in contracts(repo, base) if row.get("id")}
+        if base
+        else {}
+    )
+    if base:
+        base_catalog = base_domain_catalog or domain_index(repo, base)
+    else:
+        base_catalog = DomainIndex()
+    base_domains = {domain.identifier: domain for domain in base_catalog}
+    base_constraints = (
+        {str(row.get("id")): row for row in constraints(repo, base) if row.get("id")}
+        if base
+        else {}
+    )
+    base_semantics = (
+        {row.identifier: row for row in semantic_records(repo, base)} if base else {}
+    )
     affected: dict[tuple[str, str], Affected] = {}
 
     def add(item: Affected) -> None:
         key = (item.kind, item.identifier)
         existing = affected.get(key)
-        if existing is None or item.level == "open":
+        if existing is None or item.level == Reach.OPEN:
             affected[key] = item
+
+    semantic_rows = semantic_records(repo, at)
+    changed_semantic_meaning: set[str] = set()
+    for record in semantic_rows:
+        if (
+            ".invariant/SEMANTICS.yml" in changed
+            and base_semantics.get(record.identifier) != record
+        ) or path_hits(
+            repo,
+            changed,
+            [record.document, *record.revisit_on, *record.verifies],
+            base,
+            tip,
+        ):
+            changed_semantic_meaning.add(record.identifier)
+
+    semantic_levels: dict[str, Reach] = {}
+    for record in semantic_rows:
+        if record.status != "active":
+            continue
+        applies = record.applies_to
+        applies_domains = {
+            item.removeprefix("domain:")
+            for item in applies
+            if item.startswith("domain:")
+        }
+        level: Reach | None = None
+        if record.identifier in changed_semantic_meaning:
+            level = Reach.OPEN
+        if not level and (
+            selected.intersection(applies_domains)
+            or path_hits(repo, changed, applies, base, tip)
+            or any(
+                item == f"interface:{name}"
+                for name in interface_set
+                for item in applies
+            )
+        ):
+            level = Reach.BOUNDED
+        if level:
+            semantic_levels[record.identifier] = level
+
+    # Revisit dependencies propagate only semantic change events. Merely
+    # touching code within B's applicability may retrieve A for context, but
+    # does not claim that B's interpretation—and therefore A—changed.
+    propagated = True
+    while propagated:
+        propagated = False
+        for record in semantic_rows:
+            if record.status != "active":
+                continue
+            dependencies = {
+                locator.removeprefix("semantic:")
+                for locator in record.revisit_on
+                if locator.startswith("semantic:")
+            }
+            if dependencies.intersection(changed_semantic_meaning):
+                if semantic_levels.get(record.identifier) != Reach.OPEN:
+                    semantic_levels[record.identifier] = Reach.OPEN
+                    propagated = True
+                if record.identifier not in changed_semantic_meaning:
+                    changed_semantic_meaning.add(record.identifier)
+                    propagated = True
+
+    for record in semantic_rows:
+        level = semantic_levels.get(record.identifier)
+        if level:
+            add(
+                Affected(
+                    "semantic",
+                    record.identifier,
+                    level,
+                    tuple(record.verifies),
+                    f"Review {record.document} as canonical prose.",
+                )
+            )
+            if record.document.startswith("architecture:"):
+                add(
+                    Affected(
+                        "architecture",
+                        record.document.removeprefix("architecture:"),
+                        level,
+                        (),
+                        "Review the referenced semantic record.",
+                    )
+                )
 
     for row in contracts(repo, at):
         identifier = str(row.get("id", ""))
@@ -316,20 +603,26 @@ def compile_affected(
         surfaces = refs(row.get("surfaces"))
         architecture = row.get("architecture", row.get("material"))
         verifies = tuple(refs(row.get("verifies")))
-        level = ""
-        if (
+        level: Reach | None = None
+        if ".invariant/CONTRACTS.yml" in changed and base_contracts.get(identifier) != row:
+            level = Reach.OPEN
+        if not level and (
             selected.intersection(between)
             or identifier in selected_contracts
             or path_hits(repo, changed, surfaces, base, tip)
             or any(surface == f"interface:{name}" for name in interface_set for surface in surfaces)
         ):
-            level = "bounded"
+            level = Reach.BOUNDED
         if path_hits(repo, changed, architecture, base, tip) or path_hits(repo, changed, verifies, base, tip):
-            level = "open"
+            level = Reach.OPEN
         if level:
             add(Affected("contract", identifier, level, verifies, str(row.get("assertion", ""))))
             for locator in architecture_refs(architecture):
-                architecture_level = "open" if path_hits(repo, changed, [locator], base, tip) else level
+                architecture_level = (
+                    Reach.OPEN
+                    if path_hits(repo, changed, [locator], base, tip)
+                    else level
+                )
                 add(
                     Affected(
                         "architecture",
@@ -340,12 +633,14 @@ def compile_affected(
                     )
                 )
 
-    for row in domains(repo, at):
-        identifier = str(row.get("id", ""))
-        for locator in architecture_refs(row.get("architecture", row.get("material"))):
-            level = "bounded" if identifier in selected else ""
+    for domain in catalog:
+        identifier = domain.identifier
+        for locator in domain.architecture:
+            level: Reach | None = Reach.BOUNDED if identifier in selected else None
+            if ".invariant/DOMAINS.yml" in changed and base_domains.get(identifier) != domain:
+                level = Reach.OPEN
             if path_hits(repo, changed, [locator], base, tip):
-                level = "open"
+                level = Reach.OPEN
             if level:
                 add(
                     Affected(
@@ -362,20 +657,23 @@ def compile_affected(
         surfaces = refs(row.get("surfaces"))
         material = row.get("material")
         verifies = tuple(refs(row.get("verifies")))
-        level = ""
-        if (
+        level: Reach | None = None
+        identifier = str(row.get("id", ""))
+        if ".invariant/CONSTRAINTS.yml" in changed and base_constraints.get(identifier) != row:
+            level = Reach.OPEN
+        if not level and (
             selected.intersection(applies)
             or path_hits(repo, changed, surfaces, base, tip)
             or any(surface == f"interface:{name}" for name in interface_set for surface in surfaces)
         ):
-            level = "bounded"
+            level = Reach.BOUNDED
         if path_hits(repo, changed, material, base, tip) or path_hits(repo, changed, verifies, base, tip):
-            level = "open"
+            level = Reach.OPEN
         if level:
             add(
                 Affected(
                     "constraint",
-                    str(row.get("id", "")),
+                    identifier,
                     level,
                     verifies,
                     str(row.get("assertion", "")),
@@ -418,8 +716,10 @@ def _discovery_records(repo: Path) -> list[tuple[Path, dict[str, Any]]]:
     return result
 
 
-def discovery_lines(repo: Path, paths: list[str], selected_domains: list[str]) -> list[str]:
-    output: list[str] = []
+def _relevant_discoveries(
+    repo: Path, paths: list[str], selected_domains: list[str]
+) -> list[tuple[dict[str, Any], str, str | None]]:
+    output: list[tuple[dict[str, Any], str, str | None]] = []
     selected = set(selected_domains)
     head = git.resolve(repo, "HEAD")
     for _, row in _discovery_records(repo):
@@ -448,6 +748,15 @@ def discovery_lines(repo: Path, paths: list[str], selected_domains: list[str]) -
                     state = "needs-review"
                     detail = first_path_intersection(changed, evidence)
         identifier = row.get("id")
+        if identifier:
+            output.append((row, state, detail))
+    return output
+
+
+def discovery_lines(repo: Path, paths: list[str], selected_domains: list[str]) -> list[str]:
+    output: list[str] = []
+    for row, state, detail in _relevant_discoveries(repo, paths, selected_domains):
+        identifier = row.get("id")
         if detail:
             output.append(f"DISCOVERY: {identifier} ({state} — changed evidence {detail})")
         else:
@@ -455,7 +764,44 @@ def discovery_lines(repo: Path, paths: list[str], selected_domains: list[str]) -
     return output
 
 
-def reach(
+def discovery_context(repo: Path, paths: list[str], selected_domains: list[str]) -> list[str]:
+    """Compile relevant discovery prose without granting it governing standing."""
+
+    output: list[str] = []
+    for row, state, detail in _relevant_discoveries(repo, paths, selected_domains):
+        basis = row.get("basis") if isinstance(row.get("basis"), dict) else {}
+        relevance = row.get("relevance") if isinstance(row.get("relevance"), dict) else {}
+        identifier = row.get("id")
+        suffix = f" — changed evidence {detail}" if detail else ""
+        output.append(f"DISCOVERY-CONTEXT: {identifier} ({state}{suffix})")
+
+        def prose(label: str, value: Any) -> None:
+            if not isinstance(value, str) or not value.strip():
+                return
+            output.append(f"{label}:")
+            output.extend(f"  {line}" for line in value.strip().splitlines())
+
+        prose("OBSERVATION", row.get("observation") or row.get("statement"))
+        prose("BASIS", basis.get("prose"))
+        evidence = refs(basis.get("evidence")) + refs(row.get("evidence"))
+        searched = refs(basis.get("searched"))
+        relevant_domains = refs(relevance.get("domains")) + refs(row.get("domains"))
+        relevant_paths = refs(relevance.get("paths")) + refs(row.get("paths"))
+        related = refs(relevance.get("related"))
+        if evidence:
+            output.append(f"EVIDENCE: {', '.join(sorted(set(evidence)))}")
+        if searched:
+            output.append(f"SEARCHED: {', '.join(sorted(set(searched)))}")
+        if relevant_domains:
+            output.append(f"DISCOVERY-DOMAINS: {', '.join(sorted(set(relevant_domains)))}")
+        if relevant_paths:
+            output.append(f"DISCOVERY-PATHS: {', '.join(sorted(set(relevant_paths)))}")
+        if related:
+            output.append(f"RELATED: {', '.join(sorted(set(related)))}")
+    return output
+
+
+def context_result(
     repo: Path,
     *,
     paths: list[str] | None = None,
@@ -464,7 +810,7 @@ def reach(
     base: str | None = None,
     history: bool = False,
     root_mode: bool = False,
-) -> list[str]:
+) -> ContextResult:
     selected = domains_selected or []
     interface_values = interfaces or []
     if paths is None:
@@ -477,10 +823,22 @@ def reach(
             changed = git.changed_paths(repo, base)
     else:
         changed = sorted(set(paths))
-    expanded = expand_domains(repo, selected)
-    affected = compile_affected(repo, changed, expanded, interface_values, base=base)
+    catalog = domain_index(repo)
+    expanded = _expanded_domain_ids(catalog, selected)
+    base_catalog = domain_index(repo, base) if base else DomainIndex()
+    affected = tuple(
+        compile_affected(
+            repo,
+            changed,
+            expanded,
+            interface_values,
+            base=base,
+            domain_catalog=catalog,
+            base_domain_catalog=base_catalog,
+        )
+    )
     scopes = sorted({scope for path in changed for scope in derived_scopes(repo, path)})
-    lines = [f"TOPOLOGY: {scope}" for scope in scopes]
+    new_topology: list[str] = []
     comparison = base or git.resolve(repo, "HEAD")
     if comparison:
         base_scopes = set(scopes_for_tree(repo, comparison))
@@ -488,27 +846,50 @@ def reach(
             if scope in {"area.tests", "area.test", "area.spec", "area.__tests__"}:
                 continue
             if scope not in base_scopes:
-                lines.append(f"TOPOLOGY-NEW: {scope}")
-    for item in affected:
-        lines.append(f"AFFECTED: {item.kind}:{item.identifier} ({item.level})")
-        if item.kind in {"architecture", "constraint"}:
-            lines.append(f"REVIEW: {item.kind}:{item.identifier} {item.assertion}")
-    lines.extend(discovery_lines(repo, changed, expanded))
+                new_topology.append(scope)
     structural = _governance_change_class(repo, changed, base)
+    governance_lines: tuple[str, ...] = ()
     if structural == "gated":
-        lines.append("GOVERNANCE: existing accepted record changed or removed")
-        verdict = "gated"
+        governance_lines = ("GOVERNANCE: existing accepted record changed or removed",)
+        verdict = Reach.GATED
     elif structural == "open":
-        lines.append("GOVERNANCE: additive record establishment")
-        verdict = "open"
-    elif any(item.level == "open" for item in affected):
-        verdict = "open"
+        governance_lines = ("GOVERNANCE: additive record establishment",)
+        verdict = Reach.OPEN
+    elif any(item.level == Reach.OPEN for item in affected):
+        verdict = Reach.OPEN
     elif affected:
-        verdict = "bounded"
+        verdict = Reach.BOUNDED
     else:
-        verdict = "local"
-    lines.append(f"REACH: {verdict}")
-    return lines
+        verdict = Reach.LOCAL
+    return ContextResult(
+        reach=verdict,
+        affected=affected,
+        topology=tuple(scopes),
+        new_topology=tuple(new_topology),
+        discoveries=tuple(discovery_lines(repo, changed, expanded)),
+        governance=governance_lines,
+    )
+
+
+def reach(
+    repo: Path,
+    *,
+    paths: list[str] | None = None,
+    domains_selected: list[str] | None = None,
+    interfaces: list[str] | None = None,
+    base: str | None = None,
+    history: bool = False,
+    root_mode: bool = False,
+) -> list[str]:
+    return context_result(
+        repo,
+        paths=paths,
+        domains_selected=domains_selected,
+        interfaces=interfaces,
+        base=base,
+        history=history,
+        root_mode=root_mode,
+    ).lines
 
 
 def verifiers(
@@ -521,40 +902,44 @@ def verifiers(
     history: bool = False,
     root_mode: bool = False,
 ) -> list[str]:
-    if paths is None:
-        if root_mode:
-            changed = git.run(["ls-tree", "-r", "--name-only", "HEAD", "--"], cwd=repo).stdout.splitlines()
-        elif history and base:
-            changed = git.history_changed_paths(repo, base)
-        else:
-            changed = git.changed_paths(repo, base)
-    else:
-        changed = paths
-    affected = compile_affected(repo, changed, domains_selected or [], interfaces or [], base=base)
-    lines: list[str] = []
-    for item in affected:
-        if item.kind in {"architecture", "constraint"}:
-            lines.append(f"REVIEW: {item.kind}:{item.identifier} {item.assertion}")
-        for locator in item.verifies:
-            lines.append(f"VERIFY: {item.kind}:{item.identifier} {locator}")
-    return lines
+    return context_result(
+        repo,
+        paths=paths,
+        domains_selected=domains_selected,
+        interfaces=interfaces,
+        base=base,
+        history=history,
+        root_mode=root_mode,
+    ).verifier_lines
 
 
 def governing_rows(repo: Path, selected: Iterable[str], at: str | None = None) -> list[str]:
-    expanded = set(expand_domains(repo, selected, at))
-    selected_contracts = _domain_contract_ids(repo, expanded, at)
+    catalog = domain_index(repo, at)
+    expanded = set(_expanded_domain_ids(catalog, selected))
+    selected_contracts = _domain_contract_ids(catalog, expanded)
     rows: list[str] = []
-    for row in domains(repo, at):
-        if row.get("id") not in expanded:
+    for record in semantic_records(repo, at):
+        applies_domains = {
+            item.removeprefix("domain:")
+            for item in record.applies_to
+            if item.startswith("domain:")
+        }
+        if applies_domains and not expanded.intersection(applies_domains):
+            continue
+        if not applies_domains and expanded:
+            continue
+        rows.append(_semantic_row(repo, record, at))
+    for domain in catalog:
+        if domain.identifier not in expanded:
             continue
         rows.append(
             "DOMAIN|{id}|{parent}|{responsibility}|{architecture}|{contracts}|{authority}".format(
-                id=row.get("id", ""),
-                parent=row.get("parent", ""),
-                responsibility=row.get("responsibility", row.get("description", "")),
-                architecture=" ".join(refs(row.get("architecture", row.get("material")))),
-                contracts=" ".join(refs(row.get("contracts"))),
-                authority=row.get("authority", ""),
+                id=domain.identifier,
+                parent=domain.parent or "",
+                responsibility=domain.responsibility,
+                architecture=" ".join(domain.architecture),
+                contracts=" ".join(domain.contracts),
+                authority=domain.authority,
             )
         )
     for row in contracts(repo, at):
@@ -587,11 +972,30 @@ def governing_rows(repo: Path, selected: Iterable[str], at: str | None = None) -
     return sorted(rows)
 
 
-def display_rows(repo: Path, selected: Iterable[str]) -> list[str]:
+def _semantic_row(repo: Path, record: SemanticRecord, at: str | None = None) -> str:
+    return "SEMANTIC|{id}|{status}|{document}|{applies}|{revisit}|{verifies}|{authority}|{digest}".format(
+        id=record.identifier,
+        status=record.status,
+        document=record.document,
+        applies=" ".join(record.applies_to),
+        revisit=" ".join(record.revisit_on),
+        verifies=" ".join(record.verifies),
+        authority=record.authority,
+        digest=semantic_record_digest(repo, record.identifier, at),
+    )
+
+
+def display_rows(repo: Path, selected: Iterable[str], at: str | None = None) -> list[str]:
     output: set[str] = set()
-    for row in governing_rows(repo, selected):
+    for row in governing_rows(repo, selected, at):
         values = row.split("|")
-        if values[0] == "DOMAIN":
+        if values[0] == "SEMANTIC":
+            output.add(
+                f"SEMANTIC {values[1]} ({values[2]}) — {values[3]}"
+            )
+            if values[3].startswith("architecture:"):
+                output.add(f"ARCHITECTURE {values[3]}")
+        elif values[0] == "DOMAIN":
             output.add(f"DOMAIN {values[1]} — {values[3]}")
             for locator in architecture_refs(values[4]):
                 output.add(f"ARCHITECTURE {locator}")
@@ -605,6 +1009,57 @@ def display_rows(repo: Path, selected: Iterable[str]) -> list[str]:
     return [*lines, f"ROWS: {len(lines)}"]
 
 
+def architecture_context(
+    repo: Path,
+    selected: Iterable[str],
+    at: str | None = None,
+    *,
+    paths: Iterable[str] = (),
+    interfaces: Iterable[str] = (),
+) -> list[str]:
+    """Return canonical selected architecture sections, not only their pointers."""
+
+    selected_values = list(selected)
+    catalog = domain_index(repo, at)
+    expanded = set(_expanded_domain_ids(catalog, selected_values))
+    selected_contracts = _domain_contract_ids(catalog, expanded)
+    locators: set[str] = set()
+    for record in applicable_semantic_records(
+        repo,
+        paths=paths,
+        selected_domains=expanded,
+        interfaces=interfaces,
+        at=at,
+        domain_catalog=catalog,
+    ):
+        if record.document.startswith("architecture:"):
+            locators.add(record.document)
+    for domain in catalog:
+        if domain.identifier in expanded:
+            locators.update(domain.architecture)
+    for row in contracts(repo, at):
+        if expanded.intersection(refs(row.get("between"))) or row.get("id") in selected_contracts:
+            locators.update(architecture_refs(row.get("architecture", row.get("material"))))
+    for row in constraints(repo, at):
+        if expanded.intersection(refs(row.get("applies_to"))):
+            locators.update(architecture_refs(row.get("material")))
+    output: list[str] = []
+    for locator in sorted(locators):
+        path_anchor = locator.removeprefix("architecture:")
+        if "#" not in path_anchor:
+            continue
+        path, anchor = path_anchor.split("#", 1)
+        content = _content(repo, at, path)
+        bounds = _section_bounds(content, anchor)
+        output.append(f"ARCHITECTURE-CONTEXT: {locator}")
+        if not bounds:
+            output.append("  [selected section is unavailable]")
+            continue
+        lines = content.splitlines()[bounds[0] - 1 : bounds[1]]
+        output.extend(f"  {line}" if line else "" for line in lines)
+    return output
+
+
 def digest(repo: Path, selected: Iterable[str], at: str | None = None) -> str:
     if at and not git.resolve(repo, at):
         raise InvariantError(f"Invariant: governance commit '{at}' does not resolve")
@@ -612,6 +1067,32 @@ def digest(repo: Path, selected: Iterable[str], at: str | None = None) -> str:
     if content:
         content += "\n"
     return git.hash_text(repo, content)
+
+
+def context_digest(
+    repo: Path,
+    selected: Iterable[str],
+    paths: Iterable[str],
+    interfaces: Iterable[str],
+    at: str | None = None,
+) -> str:
+    """Digest only governance retrievable from one task's semantic coordinates."""
+
+    if at and not git.resolve(repo, at):
+        raise InvariantError(f"Invariant: governance commit '{at}' does not resolve")
+    legacy = [row for row in governing_rows(repo, selected, at) if not row.startswith("SEMANTIC|")]
+    semantic = [
+        _semantic_row(repo, record, at)
+        for record in applicable_semantic_records(
+            repo,
+            paths=paths,
+            selected_domains=selected,
+            interfaces=interfaces,
+            at=at,
+        )
+    ]
+    content = "\n".join(sorted([*legacy, *semantic]))
+    return git.hash_text(repo, content + ("\n" if content else ""))
 
 
 def material_changes(repo: Path, base: str, tip: str, selected: Iterable[str]) -> list[str]:
@@ -641,12 +1122,21 @@ def commit_message(
 ) -> str:
     unit_values = list(units)
     scope_values = list(scopes)
+    domain_values = list(selected_domains)
     if not unit_values or not scope_values:
         raise InvariantError("Invariant: commit message requires units and scopes")
+    if not subject.strip() or "\n" in subject or "\r" in subject:
+        raise InvariantError("Invariant: commit subject must be one non-empty line")
+    for label, values in (("unit", unit_values), ("scope", scope_values), ("domain", domain_values)):
+        for item in values:
+            if not git.valid_id(item):
+                raise InvariantError(f"Invariant: invalid commit trailer {label} '{item}'")
+    if plan and not git.valid_id(plan):
+        raise InvariantError(f"Invariant: invalid plan id '{plan}'")
     lines = [subject, ""]
-    lines.extend(f"Intent-Unit: {item}" for item in unit_values)
-    lines.extend(f"Intent-Scope: {item}" for item in scope_values)
-    lines.extend(f"Intent-Domain: {item}" for item in selected_domains)
+    lines.extend(f"Invariant-Unit: {item}" for item in unit_values)
+    lines.extend(f"Invariant-Scope: {item}" for item in scope_values)
+    lines.extend(f"Invariant-Domain: {item}" for item in domain_values)
     if plan:
         plan_file = git.primary_worktree(repo) / ".invariant" / "runtime" / "plans" / f"{plan}.yml"
         if not plan_file.is_file():
@@ -654,29 +1144,37 @@ def commit_message(
         import zlib
 
         data = plan_file.read_bytes()
-        lines.append(f"Intent-Plan: {plan}")
-        lines.append(f"Intent-Plan-Digest: {zlib.crc32(data) & 0xffffffff}-{len(data)}")
+        lines.append(f"Invariant-Plan: {plan}")
+        lines.append(f"Invariant-Plan-Digest: {zlib.crc32(data) & 0xffffffff}-{len(data)}")
     return "\n".join(lines) + "\n"
 
 
 def validate_trailer(repo: Path, commit: str) -> list[str]:
-    claimed = git.trailers(repo, commit, "Intent-Scope")
+    claimed = git.trailers(repo, commit, "Invariant-Scope")
     if not claimed:
-        raise InvariantError(f"TRAILER: missing Intent-Scope on {commit}", exit_code=1, code="invalid_trailer")
-    domain_ids = {str(row.get("id")) for row in domains(repo)}
-    for domain in git.trailers(repo, commit, "Intent-Domain"):
+        raise InvariantError(f"TRAILER: missing Invariant-Scope on {commit}", exit_code=1, code="invalid_trailer")
+    domain_ids = set(domain_index(repo).identifiers)
+    for domain in git.trailers(repo, commit, "Invariant-Domain"):
         if domain not in domain_ids:
-            raise InvariantError(f"TRAILER: unknown Intent-Domain {domain}", exit_code=1, code="invalid_trailer")
+            raise InvariantError(f"TRAILER: unknown Invariant-Domain {domain}", exit_code=1, code="invalid_trailer")
     architecture = {
-        locator
-        for row in [*domains(repo), *contracts(repo)]
-        for locator in architecture_refs(row.get("architecture", row.get("material")))
+        locator for domain in domains(repo) for locator in domain.architecture
     }
-    for review in git.trailers(repo, commit, "Intent-Architecture"):
+    architecture.update(
+        locator
+        for row in contracts(repo)
+        for locator in architecture_refs(row.get("architecture", row.get("material")))
+    )
+    architecture.update(
+        record.document
+        for record in semantic_records(repo)
+        if record.status == "active" and record.document.startswith("architecture:")
+    )
+    for review in git.trailers(repo, commit, "Invariant-Architecture"):
         if not review.startswith("architecture:"):
-            raise InvariantError(f"TRAILER: invalid Intent-Architecture {review}", exit_code=1)
+            raise InvariantError(f"TRAILER: invalid Invariant-Architecture {review}", exit_code=1)
         if review not in architecture:
-            raise InvariantError(f"TRAILER: unreferenced Intent-Architecture {review}", exit_code=1)
+            raise InvariantError(f"TRAILER: unreferenced Invariant-Architecture {review}", exit_code=1)
     parent = git.resolve(repo, f"{commit}^")
     changed = git.changed_paths(repo, parent, commit) if parent else git.run(
         ["diff-tree", "--no-commit-id", "--name-only", "-r", "--root", commit], cwd=repo

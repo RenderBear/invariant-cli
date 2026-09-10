@@ -33,14 +33,14 @@ def _request(args: argparse.Namespace) -> landing.LandRequest:
     for path in changed:
         if not any(path == claim or path.startswith(claim + "/") for claim in assessment.paths):
             raise Blocked(f"Invariant: candidate path '{path}' is absent from the assessment")
-    reach = governance.reach(
+    context = governance.context_result(
         repo,
         paths=changed,
         base=old,
         domains_selected=assessment.domains,
         interfaces=assessment.interfaces,
     )
-    scopes = tuple(line.removeprefix("TOPOLOGY: ") for line in reach if line.startswith("TOPOLOGY: ")) or ("area.root",)
+    scopes = context.topology or ("area.root",)
     return landing.LandRequest(
         mode="merge",
         merge_branch=args.branch,
@@ -64,4 +64,3 @@ def _verify(args: argparse.Namespace) -> list[str]:
 
 def _land(args: argparse.Namespace) -> list[str]:
     return landing.verify_and_land(git.root(), _request(args), update_ref=True)
-

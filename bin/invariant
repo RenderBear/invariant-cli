@@ -9,4 +9,4 @@ if [ ! -x "$python" ]; then
   python=${PYTHON:-python3}
 fi
 
-PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec "$python" -m invariant "$@"
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec "$python" -P -m invariant "$@"

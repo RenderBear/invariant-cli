@@ -1,7 +1,0 @@
-#!/bin/sh
-# Deprecated source-tree adapter. State mechanics live in the invariant package.
-set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
-python=${INVARIANT_PYTHON:-$root/.venv/bin/python}
-[ -x "$python" ] || python=${PYTHON:-python3}
-PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec "$python" -m invariant.compat state "$@"

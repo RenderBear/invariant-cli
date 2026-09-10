@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 import yaml
 
 from invariant.errors import UsageError
+from invariant.protocol import BoundaryDisposition
 
 
 def _load_yaml(path: str | Path) -> Any:
@@ -28,49 +28,31 @@ def string_list(value: Any, field_name: str) -> list[str]:
     return sorted(set(value))
 
 
-def _valid_id(value: str) -> bool:
-    return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
-
-
 @dataclass(frozen=True)
 class Boundary:
-    disposition: str
+    value: BoundaryDisposition
+
+    @property
+    def disposition(self) -> str:
+        return self.value.value
 
     @classmethod
     def from_value(cls, value: Any) -> "Boundary":
         if not isinstance(value, dict):
             raise UsageError("assessment boundary must be a mapping")
-        disposition = value.get("disposition")
-        if not isinstance(disposition, str):
+        unknown = sorted(set(value) - {"disposition"})
+        if unknown:
+            raise UsageError(f"assessment boundary has unknown field '{unknown[0]}'")
+        raw_disposition = value.get("disposition")
+        if not isinstance(raw_disposition, str):
             raise UsageError("assessment boundary requires a disposition")
-        if disposition not in {"no-record", "recorded"} and not disposition.startswith("audit:"):
-            raise UsageError("assessment has an invalid boundary disposition")
+        try:
+            disposition = BoundaryDisposition.parse(
+                raw_disposition, allow_unresolved=False
+            )
+        except UsageError as exc:
+            raise UsageError("assessment has an invalid boundary disposition") from exc
         return cls(disposition)
-
-
-@dataclass(frozen=True)
-class OutcomeAssessment:
-    reference: str
-    disposition: str
-    prose: str
-    evidence: list[str] = field(default_factory=list)
-
-    @classmethod
-    def from_value(cls, value: Any, index: int) -> "OutcomeAssessment":
-        if not isinstance(value, dict):
-            raise UsageError(f"outcome_assessment[{index}] must be a mapping")
-        reference = value.get("satisfies") or value.get("id")
-        disposition = value.get("disposition")
-        prose = value.get("prose")
-        if not all(isinstance(item, str) and item.strip() for item in (reference, disposition, prose)):
-            raise UsageError(
-                f"outcome_assessment[{index}] requires satisfies, disposition, and prose"
-            )
-        if disposition not in {"satisfied", "not-satisfied", "unresolved"}:
-            raise UsageError(
-                f"outcome_assessment[{index}] disposition must be satisfied, not-satisfied, or unresolved"
-            )
-        return cls(reference, disposition, prose, string_list(value.get("evidence"), "outcome evidence"))
 
 
 @dataclass(frozen=True)
@@ -85,33 +67,53 @@ class Assessment:
     architecture_reviews: list[str]
     checks: list[str]
     allow_open: bool = False
-    outcomes: list[OutcomeAssessment] = field(default_factory=list)
     prose: str = ""
-    candidate_tree: str | None = None
 
     @classmethod
     def load(cls, path: str | Path) -> "Assessment":
         raw = _load_yaml(path)
         if not isinstance(raw, dict):
             raise UsageError("assessment must be a YAML mapping")
+        allowed = {
+            "version",
+            "goal_digest",
+            "paths",
+            "interfaces",
+            "domains",
+            "boundary",
+            "governance",
+            "architecture_reviews",
+            "checks",
+            "allow_open",
+            "prose",
+        }
+        unknown = sorted(set(raw) - allowed)
+        if unknown:
+            raise UsageError(f"assessment has unknown field '{unknown[0]}'")
         if raw.get("version") != 1:
             raise UsageError("assessment must declare version: 1")
+        required = {
+            "goal_digest",
+            "paths",
+            "interfaces",
+            "domains",
+            "boundary",
+            "governance",
+            "architecture_reviews",
+            "checks",
+        }
+        missing = sorted(required - set(raw))
+        if missing:
+            raise UsageError(f"assessment is missing required field '{missing[0]}'")
         goal_digest = raw.get("goal_digest")
         if not isinstance(goal_digest, str) or not goal_digest:
             raise UsageError("assessment requires goal_digest")
-        outcomes_raw = raw.get("outcome_assessment", [])
-        if not isinstance(outcomes_raw, list):
-            raise UsageError("outcome_assessment must be a list")
-        outcomes = [OutcomeAssessment.from_value(item, index) for index, item in enumerate(outcomes_raw)]
-        references = [item.reference for item in outcomes]
-        if len(references) != len(set(references)):
-            raise UsageError("outcome_assessment cannot contain duplicate satisfies references")
         prose = raw.get("prose", "")
         if not isinstance(prose, str):
             raise UsageError("assessment prose must be text")
-        candidate_tree = raw.get("candidate_tree")
-        if candidate_tree is not None and (not isinstance(candidate_tree, str) or not candidate_tree):
-            raise UsageError("assessment candidate_tree must be a non-empty Git tree id")
+        allow_open = raw.get("allow_open", False)
+        if not isinstance(allow_open, bool):
+            raise UsageError("assessment allow_open must be true or false")
         return cls(
             version=1,
             goal_digest=goal_digest,
@@ -124,50 +126,6 @@ class Assessment:
                 raw.get("architecture_reviews"), "assessment architecture_reviews"
             ),
             checks=string_list(raw.get("checks"), "assessment checks"),
-            allow_open=raw.get("allow_open", False) is True,
-            outcomes=outcomes,
+            allow_open=allow_open,
             prose=prose,
-            candidate_tree=candidate_tree,
         )
-
-
-@dataclass(frozen=True)
-class TaskIntent:
-    goal: str
-    outcomes: list[str] = field(default_factory=list)
-    acceptance: list[str] = field(default_factory=list)
-    constraints: list[str] = field(default_factory=list)
-
-    @classmethod
-    def load(cls, path: str | Path) -> "TaskIntent":
-        raw = _load_yaml(path)
-        if not isinstance(raw, dict) or raw.get("version") != 1:
-            raise UsageError("intent expansion must be a version-1 YAML mapping")
-        intent = raw.get("intent", raw)
-        if not isinstance(intent, dict):
-            raise UsageError("intent expansion requires an intent mapping")
-        goal = intent.get("goal")
-        if not isinstance(goal, str) or not goal.strip():
-            raise UsageError("intent expansion requires goal prose")
-
-        def refs(section: str) -> list[str]:
-            values = intent.get(section, [])
-            if not isinstance(values, list):
-                raise UsageError(f"intent {section} must be a list")
-            result: list[str] = []
-            for index, item in enumerate(values):
-                if not isinstance(item, dict) or not isinstance(item.get("id"), str):
-                    raise UsageError(f"intent {section}[{index}] requires an id")
-                if not _valid_id(item["id"]):
-                    raise UsageError(f"intent {section}[{index}] has an invalid id")
-                prose = item.get("prose", item.get("statement"))
-                if not isinstance(prose, str) or not prose.strip():
-                    raise UsageError(f"intent {section}[{index}] requires prose")
-                result.append(item["id"])
-            return result
-
-        outcomes, acceptance, constraints = refs("outcomes"), refs("acceptance"), refs("constraints")
-        identifiers = [*outcomes, *acceptance, *constraints]
-        if len(identifiers) != len(set(identifiers)):
-            raise UsageError("intent outcome, acceptance, and constraint ids must be unique")
-        return cls(goal, outcomes, acceptance, constraints)

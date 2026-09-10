@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="460" viewBox="0 0 1200 460" role="img" aria-labelledby="title desc">
+  <title id="title">Invariant stabilizes the write side of architectural intent</title>
+  <desc id="desc">A human decides promises once into repository memory made of domains, contracts, sources, and records. An agent reasons about a change and passes four checkpoints — reach, review, verify, land — that read that memory before the change lands and writes its attestation back.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#626262"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#4f7d1b"/>
+    </marker>
+    <style>
+      .sans { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .ink { fill: #171717; }
+      .muted { fill: #626262; }
+      .accent { fill: #4f7d1b; }
+      .label { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; }
+      .title { font-size: 15px; font-weight: 650; }
+      .body { font-size: 12px; }
+      .small { font-size: 11px; }
+      .line { fill: none; stroke: #626262; stroke-width: 1.5; marker-end: url(#arrow); }
+      .line-accent { fill: none; stroke: #4f7d1b; stroke-width: 1.5; marker-end: url(#arrow-accent); }
+      .line-dashed { fill: none; stroke: #626262; stroke-width: 1.5; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+      .plane { fill: #ffffff; stroke: #171717; stroke-width: 1.5; }
+      .card { fill: #ffffff; stroke: #b8b8b8; stroke-width: 1.2; }
+      .gate { fill: #ffffff; stroke: #171717; stroke-width: 2; }
+    </style>
+
+    <!-- Flat single-colour glyphs, 48×48 -->
+    <symbol id="human" viewBox="0 0 48 48">
+      <circle cx="24" cy="14" r="9" fill="#4f7d1b"/>
+      <path d="M6 44c0-11 8-17 18-17s18 6 18 17z" fill="#4f7d1b"/>
+    </symbol>
+    <symbol id="agent" viewBox="0 0 48 48">
+      <rect x="22" y="6" width="4" height="9" fill="#4f7d1b"/>
+      <circle cx="24" cy="5" r="3" fill="#4f7d1b"/>
+      <rect x="6" y="15" width="36" height="28" rx="7" fill="#4f7d1b"/>
+      <circle cx="17" cy="28" r="3.5" fill="#ffffff"/>
+      <circle cx="31" cy="28" r="3.5" fill="#ffffff"/>
+      <rect x="16" y="36" width="16" height="3" rx="1.5" fill="#ffffff"/>
+    </symbol>
+    <symbol id="contract" viewBox="0 0 48 48">
+      <path d="M9 4h30v34H9z" fill="#4f7d1b"/>
+      <rect x="14" y="10" width="20" height="2.5" fill="#ffffff"/>
+      <rect x="14" y="16" width="20" height="2.5" fill="#ffffff"/>
+      <rect x="14" y="22" width="12" height="2.5" fill="#ffffff"/>
+      <path d="M30 34l3 12 3-4 3 4 3-12z" fill="#4f7d1b"/>
+      <circle cx="33" cy="32" r="8" fill="#ffffff"/>
+      <circle cx="33" cy="32" r="6" fill="#4f7d1b"/>
+      <circle cx="33" cy="32" r="3" fill="#ffffff"/>
+    </symbol>
+    <symbol id="domain" viewBox="0 0 48 48">
+      <path d="M24 5l17 8-17 8-17-8z" fill="#4f7d1b"/>
+      <path d="M7 22l17 8 17-8v6l-17 8-17-8z" fill="#4f7d1b"/>
+      <path d="M7 32l17 8 17-8v6l-17 8-17-8z" fill="#4f7d1b" opacity="0.6"/>
+    </symbol>
+    <symbol id="sources" viewBox="0 0 48 48">
+      <path d="M5 8c6-3 12-3 17 1v31c-5-4-11-4-17-1z" fill="#4f7d1b"/>
+      <path d="M43 8c-6-3-12-3-17 1v31c5-4 11-4 17-1z" fill="#4f7d1b"/>
+      <rect x="9" y="15" width="9" height="2" fill="#ffffff"/>
+      <rect x="9" y="21" width="9" height="2" fill="#ffffff"/>
+      <rect x="30" y="15" width="9" height="2" fill="#ffffff"/>
+      <rect x="30" y="21" width="9" height="2" fill="#ffffff"/>
+    </symbol>
+    <symbol id="record" viewBox="0 0 48 48">
+      <path d="M11 4h18l8 8v32H11z" fill="#4f7d1b"/>
+      <path d="M29 4v8h8z" fill="#ffffff" opacity="0.5"/>
+      <rect x="16" y="20" width="16" height="2.5" fill="#ffffff"/>
+      <rect x="16" y="26" width="16" height="2.5" fill="#ffffff"/>
+      <rect x="16" y="32" width="10" height="2.5" fill="#ffffff"/>
+    </symbol>
+    <symbol id="reach" viewBox="0 0 48 48">
+      <circle cx="24" cy="24" r="18" fill="none" stroke="#4f7d1b" stroke-width="4"/>
+      <circle cx="24" cy="24" r="9" fill="none" stroke="#4f7d1b" stroke-width="4"/>
+      <circle cx="24" cy="24" r="3" fill="#4f7d1b"/>
+    </symbol>
+    <symbol id="review" viewBox="0 0 48 48">
+      <circle cx="21" cy="21" r="13" fill="none" stroke="#4f7d1b" stroke-width="5"/>
+      <path d="M30 30l12 12" stroke="#4f7d1b" stroke-width="6" stroke-linecap="round"/>
+    </symbol>
+    <symbol id="verify" viewBox="0 0 48 48">
+      <path d="M24 4l17 6v13c0 10-7 18-17 21C14 41 7 33 7 23V10z" fill="#4f7d1b"/>
+      <path d="M15 24l6 6 12-13" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="land" viewBox="0 0 48 48">
+      <path d="M24 4v24" stroke="#4f7d1b" stroke-width="5" stroke-linecap="round"/>
+      <path d="M14 19l10 11 10-11" fill="none" stroke="#4f7d1b" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M7 32v10h34V32h-6v5H13v-5z" fill="#4f7d1b"/>
+    </symbol>
+  </defs>
+
+  <rect width="1200" height="460" fill="#ffffff"/>
+
+  <g class="sans">
+    <!-- Human -->
+    <use href="#human" x="52" y="150" width="64" height="64"/>
+    <text x="84" y="240" text-anchor="middle" class="ink title">Human</text>
+    <text x="84" y="258" text-anchor="middle" class="muted body">decides promises once</text>
+    <text x="84" y="274" text-anchor="middle" class="muted body">resolves what agents may not</text>
+
+    <path d="M126 176 H198" class="line-accent"/>
+    <text x="162" y="168" text-anchor="middle" class="mono muted small">accept</text>
+
+    <!-- Repository memory -->
+    <rect x="206" y="40" width="392" height="380" class="plane"/>
+    <text x="226" y="66" class="mono ink label">REPOSITORY MEMORY</text>
+    <text x="226" y="86" class="muted body">Tracked in .invariant, versioned with the code</text>
+
+    <g transform="translate(226,104)">
+      <rect width="168" height="140" class="card"/>
+      <use href="#domain" x="60" y="14" width="48" height="48"/>
+      <text x="84" y="88" text-anchor="middle" class="ink title">Domains</text>
+      <text x="84" y="106" text-anchor="middle" class="muted body">stable responsibilities</text>
+      <text x="84" y="122" text-anchor="middle" class="muted body">and architecture pointers</text>
+    </g>
+    <g transform="translate(410,104)">
+      <rect width="168" height="140" class="card"/>
+      <use href="#contract" x="60" y="14" width="48" height="48"/>
+      <text x="84" y="88" text-anchor="middle" class="ink title">Contracts</text>
+      <text x="84" y="106" text-anchor="middle" class="muted body">executable promises</text>
+      <text x="84" y="122" text-anchor="middle" class="muted body">between responsibilities</text>
+    </g>
+    <g transform="translate(226,260)">
+      <rect width="168" height="140" class="card"/>
+      <use href="#sources" x="60" y="14" width="48" height="48"/>
+      <text x="84" y="88" text-anchor="middle" class="ink title">Sources</text>
+      <text x="84" y="106" text-anchor="middle" class="muted body">attributable evidence,</text>
+      <text x="84" y="122" text-anchor="middle" class="muted body">never authority by itself</text>
+    </g>
+    <g transform="translate(410,260)">
+      <rect width="168" height="140" class="card"/>
+      <use href="#record" x="60" y="14" width="48" height="48"/>
+      <text x="84" y="88" text-anchor="middle" class="ink title">Records</text>
+      <text x="84" y="106" text-anchor="middle" class="muted body">decisions bound to prose,</text>
+      <text x="84" y="122" text-anchor="middle" class="muted body">revisited when premises change</text>
+    </g>
+
+    <!-- Checkpoints -->
+    <path d="M598 176 H676" class="line"/>
+    <text x="637" y="168" text-anchor="middle" class="mono muted small">read</text>
+    <path d="M676 300 H598" class="line-accent"/>
+    <text x="637" y="322" text-anchor="middle" class="mono muted small">attest</text>
+
+    <rect x="684" y="40" width="320" height="380" class="plane"/>
+    <text x="704" y="66" class="mono ink label">CHECKPOINTS</text>
+    <text x="704" y="86" class="muted body">Deterministic and mechanically enforced</text>
+
+    <g transform="translate(704,104)">
+      <rect width="280" height="66" class="gate"/>
+      <use href="#reach" x="14" y="9" width="48" height="48"/>
+      <text x="76" y="30" class="ink title">Reach</text>
+      <text x="76" y="48" class="muted small">which promises the change touches</text>
+    </g>
+    <g transform="translate(704,180)">
+      <rect width="280" height="66" class="gate"/>
+      <use href="#review" x="14" y="9" width="48" height="48"/>
+      <text x="76" y="30" class="ink title">Review</text>
+      <text x="76" y="48" class="muted small">each affected decision, acknowledged</text>
+    </g>
+    <g transform="translate(704,256)">
+      <rect width="280" height="66" class="gate"/>
+      <use href="#verify" x="14" y="9" width="48" height="48"/>
+      <text x="76" y="30" class="ink title">Verify</text>
+      <text x="76" y="48" class="muted small">contract witnesses on the exact tree</text>
+    </g>
+    <g transform="translate(704,332)">
+      <rect width="280" height="66" class="gate"/>
+      <use href="#land" x="14" y="9" width="48" height="48"/>
+      <text x="76" y="30" class="ink title">Land</text>
+      <text x="76" y="48" class="muted small">atomic and attested, or not at all</text>
+    </g>
+
+    <!-- Agent -->
+    <path d="M1066 176 H1012" class="line"/>
+    <text x="1039" y="168" text-anchor="middle" class="mono muted small">change</text>
+    <path d="M1012 300 H1066" class="line-dashed"/>
+    <text x="1039" y="322" text-anchor="middle" class="mono muted small">guidance</text>
+
+    <use href="#agent" x="1084" y="150" width="64" height="64"/>
+    <text x="1116" y="240" text-anchor="middle" class="ink title">Agent</text>
+    <text x="1116" y="258" text-anchor="middle" class="muted body">reasons freely, in isolation</text>
+    <text x="1116" y="274" text-anchor="middle" class="muted body">lands only within the promises</text>
+
+    <!-- Escalation -->
+    <path d="M704 420 V434 Q704 442 696 442 H92 Q84 442 84 434 V292" class="line-dashed"/>
+    <text x="400" y="456" text-anchor="middle" class="mono muted small">escalate when authority is lacking</text>
+  </g>
+</svg>

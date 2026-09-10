@@ -2,26 +2,41 @@ from __future__ import annotations
 
 from importlib.resources import files
 
+from invariant.protocol import TaskStage
+
 
 def read(name: str) -> str:
     resource = files("invariant.semantics").joinpath("guidance", f"{name}.md")
     return resource.read_text(encoding="utf-8").strip()
 
 
-def for_stage(stage: str, *, intent_expansion: bool, outcome_review: bool) -> str:
-    if stage == "awaiting-intent-expansion":
-        names = ["intent-expansion"]
-    elif stage == "awaiting-outcome-review":
-        names = ["outcome-review"]
-    elif stage == "awaiting-landing":
-        names = ["land"]
-    elif stage in {"implementing", "implementing-unborn"}:
-        names = ["brief", "discovery", "coordinate", "land"]
-        if outcome_review:
-            names.append("outcome-review")
+def for_stage(stage: TaskStage | str, *, full: bool = False) -> str:
+    stage = TaskStage.parse(stage)
+    if not full:
+        names = (
+            ["brief"]
+            if stage
+            in {
+                TaskStage.BRIEFING,
+                TaskStage.AWAITING_BRANCH,
+                TaskStage.BRIEFED,
+            }
+            else ["land"]
+        )
+        return "\n\n".join(read(name) for name in names)
+    if stage == TaskStage.AWAITING_LANDING:
+        names = ["semantic-reasoning", "repository-archaeology", "land", "human-ergonomics"]
+    elif stage in {TaskStage.IMPLEMENTING, TaskStage.IMPLEMENTING_UNBORN}:
+        names = [
+            "brief",
+            "semantic-reasoning",
+            "repository-archaeology",
+            "discovery",
+            "coordinate",
+            "land",
+            "human-ergonomics",
+        ]
     else:
-        names = ["brief"]
-        if intent_expansion:
-            names.insert(0, "intent-expansion")
+        names = ["brief", "semantic-reasoning", "repository-archaeology", "human-ergonomics"]
+    names.append("protocol-reference")
     return "\n\n".join(read(name) for name in names)
-

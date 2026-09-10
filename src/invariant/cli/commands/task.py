@@ -1,9 +1,24 @@
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 
+import yaml
+
+from invariant import adapters
+from invariant.cli.output import CommandResult
+from invariant.errors import Blocked
 from invariant.lifecycle import tasks
-from invariant.mechanics import git
+from invariant.mechanics import git, receipts
+from invariant.mechanics.documents import dump_yaml
+from invariant.protocol import CommandOutcome, TaskStage
+from invariant.semantics import schemas
+
+
+TASK_ID_HELP = (
+    "caller-chosen ID for one managed repository change "
+    "(letters, numbers, dot, underscore, and hyphen)"
+)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -11,24 +26,34 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     commands = parser.add_subparsers(dest="task_command", required=True)
 
     begin = commands.add_parser("begin")
-    begin.add_argument("task_id")
+    begin.add_argument("task_id", help=TASK_ID_HELP)
     begin.add_argument("--goal", required=True)
-    begin.add_argument("--posture", required=True)
-    begin.add_argument("--boundary", required=True)
+    begin.add_argument(
+        "--boundary",
+        default="unresolved",
+        help="initial durable-meaning disposition (defaults to unresolved)",
+    )
     begin.add_argument("--path", action="append", default=[])
     begin.add_argument("--interface", action="append", default=[])
     begin.add_argument("--domain", action="append", default=[])
-    begin.add_argument("--intent")
-    begin.add_argument("--intent-expansion", action=argparse.BooleanOptionalAction, default=None)
-    begin.add_argument("--outcome-review", action=argparse.BooleanOptionalAction, default=None)
+    begin.add_argument(
+        "--intent-brief-file",
+        help="optional intent brief response; supplying it enables the adapter for this task",
+    )
+    begin.add_argument(
+        "--intent-brief",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="override the configured intent brief adapter for this task",
+    )
     begin.set_defaults(_handler=_begin, _command="task.begin")
 
     status = commands.add_parser("status")
-    status.add_argument("task_id")
+    status.add_argument("task_id", help=TASK_ID_HELP)
     status.set_defaults(_handler=_status, _command="task.status")
 
     check = commands.add_parser("check")
-    check.add_argument("task_id")
+    check.add_argument("task_id", help=TASK_ID_HELP)
     goal = check.add_mutually_exclusive_group(required=True)
     goal.add_argument("--goal")
     goal.add_argument("--goal-digest")
@@ -39,48 +64,270 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
     check.set_defaults(_handler=_check, _command="task.check")
 
     finish = commands.add_parser("finish")
-    finish.add_argument("task_id")
-    finish.add_argument("--assessment", required=True)
+    finish.add_argument("task_id", help=TASK_ID_HELP)
+    finish.add_argument(
+        "--assessment",
+        help="legacy low-level assessment input; normal task finish is CLI-managed",
+    )
     finish.add_argument("--subject")
     finish.add_argument("--check", action="append", default=[])
     finish.set_defaults(_handler=_finish, _command="task.finish")
 
+    respond = commands.add_parser(
+        "respond", help="Resolve one structured lifecycle or adapter action"
+    )
+    respond.add_argument("task_id", help=TASK_ID_HELP)
+    respond.add_argument("request_id", help="action id returned by begin or finish")
+    respond.add_argument("--input", required=True, help="YAML or JSON response document")
+    respond.set_defaults(_handler=_respond, _command="task.respond")
+
+    action = commands.add_parser(
+        "action", help="Expand one pending action, including its response schema"
+    )
+    action.add_argument("task_id", help=TASK_ID_HELP)
+    action.add_argument("request_id")
+    action.set_defaults(_handler=_action, _command="task.action")
+
+    evidence = commands.add_parser(
+        "evidence", help="List or retrieve candidate evidence by stable id"
+    )
+    evidence.add_argument("task_id", help=TASK_ID_HELP)
+    evidence.add_argument("evidence_id", nargs="?")
+    evidence.set_defaults(_handler=_evidence, _command="task.evidence")
+
     continuation = commands.add_parser("continue")
-    continuation.add_argument("task_id")
+    continuation.add_argument("task_id", help=TASK_ID_HELP)
     continuation.add_argument("--apply", action="store_true")
     continuation.set_defaults(_handler=_continue, _command="task.continue")
 
     invalidate = commands.add_parser("invalidate")
-    invalidate.add_argument("task_id")
+    invalidate.add_argument("task_id", help=TASK_ID_HELP)
+    invalidate.add_argument(
+        "--discard",
+        action="store_true",
+        help="drop uncommitted or unlanded task work along with the receipt",
+    )
     invalidate.set_defaults(_handler=_invalidate, _command="task.invalidate")
 
+    reconcile = commands.add_parser(
+        "reconcile", help="Repair a task whose landing outran its lifecycle bookkeeping"
+    )
+    reconcile.add_argument("task_id", help=TASK_ID_HELP)
+    reconcile.set_defaults(_handler=_reconcile, _command="task.reconcile")
+
     guide = commands.add_parser("guidance")
-    guide.add_argument("task_id")
+    guide.add_argument("task_id", help=TASK_ID_HELP)
+    guide.add_argument(
+        "--full",
+        action="store_true",
+        help="include the detailed semantic reasoning and protocol handbook",
+    )
     guide.set_defaults(_handler=_guidance, _command="task.guidance")
+
+    assessment = commands.add_parser("assessment", help="Inspect or prepare task assessments")
+    assessments = assessment.add_subparsers(dest="assessment_command", required=True)
+    assessment_schema = assessments.add_parser("schema", help="Print the version-1 assessment schema")
+    assessment_schema.set_defaults(
+        _handler=_assessment_schema, _command="task.assessment.schema"
+    )
+    assessment_example = assessments.add_parser("example", help="Print a complete assessment example")
+    assessment_example.set_defaults(
+        _handler=_assessment_example, _command="task.assessment.example"
+    )
+    assessment_prepare = assessments.add_parser(
+        "prepare", help="Generate a candidate-bound assessment draft and missing requirements"
+    )
+    assessment_prepare.add_argument("task_id", help=TASK_ID_HELP)
+    assessment_prepare.add_argument("--output")
+    assessment_prepare.set_defaults(
+        _handler=_assessment_prepare, _command="task.assessment.prepare"
+    )
+
+    intent = commands.add_parser(
+        "intent-brief", help="Inspect the bundled intent brief adapter protocol"
+    )
+    intents = intent.add_subparsers(dest="intent_command", required=True)
+    intent_schema = intents.add_parser(
+        "schema", help="Print the brief and review schemas"
+    )
+    intent_schema.set_defaults(
+        _handler=_intent_schema, _command="task.intent-brief.schema"
+    )
+    intent_example = intents.add_parser(
+        "example", help="Print prose-first brief and whole-candidate review examples"
+    )
+    intent_example.set_defaults(
+        _handler=_intent_example, _command="task.intent-brief.example"
+    )
 
 
 def _repo():
     return git.root()
 
 
-def _begin(args: argparse.Namespace) -> list[str]:
-    return tasks.begin(
-        _repo(),
+def _receipt_payload(task_id: str, receipt: dict[str, object]) -> dict[str, object]:
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    scope = receipt.get("scope") if isinstance(receipt.get("scope"), dict) else {}
+    change = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    initial_boundary = str(change.get("boundary") or "unresolved")
+    final_boundary = str(receipt.get("resolved_boundary") or "")
+    return {
+        "id": task_id,
+        "stage": TaskStage.parse(
+            lifecycle.get("stage"), default=TaskStage.BRIEFED
+        ).value,
+        "goal_digest": str(receipt.get("goal_digest") or ""),
+        "scope": {
+            "paths": list(scope.get("paths", [])),
+            "interfaces": list(scope.get("interfaces", [])),
+            "domains": list(scope.get("domains", [])),
+        },
+        "boundary": final_boundary or initial_boundary,
+        "boundary_state": {
+            "initial": initial_boundary,
+            "final": final_boundary,
+        },
+        "integration": {
+            "target": str(receipt.get("integration_target") or ""),
+            "base": str(receipt.get("integration_head") or ""),
+        },
+        "work": {
+            "branch": str(lifecycle.get("branch") or ""),
+            "worktree": str(lifecycle.get("worktree") or ""),
+        },
+        "adapters": list(adapters.enabled(receipt)),
+        "actions": adapters.action_descriptors(receipt),
+        "artifacts": receipt.get("hook_artifacts", []),
+        "assurance": receipt.get("assurance", {}),
+        "completion": {"commit": str(receipt.get("completed_commit") or "")},
+    }
+
+
+def _task_payload(repo: Path, task_id: str) -> dict[str, object]:
+    try:
+        receipt = receipts.load(repo, task_id)
+    except Blocked as exc:
+        if exc.code != "missing_task":
+            raise
+        receipt = receipts.load_completed(repo, task_id)
+        if receipt is None:
+            raise
+    return _receipt_payload(task_id, receipt)
+
+
+def _terminal_task_payload(
+    repo: Path, task_id: str, stage: TaskStage | str = TaskStage.COMPLETED
+) -> dict[str, object]:
+    stage_value = stage.value if isinstance(stage, TaskStage) else stage
+    completed = (
+        receipts.load_completed(repo, task_id)
+        if stage_value == TaskStage.COMPLETED.value
+        else None
+    )
+    if completed is not None:
+        return _receipt_payload(task_id, completed)
+    return {
+        "id": task_id,
+        "stage": stage_value,
+        "goal_digest": "",
+        "scope": {"paths": [], "interfaces": [], "domains": []},
+        "boundary": "unresolved",
+        "boundary_state": {"initial": "unresolved", "final": ""},
+        "integration": {"target": "", "base": ""},
+        "work": {"branch": "", "worktree": ""},
+        "adapters": [],
+        "actions": [],
+        "artifacts": [],
+        "assurance": {},
+        "completion": {"commit": ""},
+    }
+
+
+def _task_result(repo: Path, task_id: str, lines: list[str]) -> CommandResult:
+    payload = _task_payload(repo, task_id)
+    stage = TaskStage.parse(payload["stage"], default=TaskStage.BRIEFED)
+    outcome = (
+        CommandOutcome.COMPLETED
+        if stage == TaskStage.COMPLETED
+        else CommandOutcome.NEEDS_INPUT
+        if payload["actions"]
+        else CommandOutcome.AWAITING_APPROVAL
+        if stage in {TaskStage.AWAITING_BRANCH, TaskStage.AWAITING_LANDING}
+        else CommandOutcome.READY
+    )
+    return CommandResult(lines, {"task": payload}, outcome)
+
+
+def _assurance_delta(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, object] = {}
+    for name in ("structural", "behavioral", "semantic"):
+        raw = value.get(name)
+        if not isinstance(raw, dict):
+            continue
+        item: dict[str, object] = {"status": str(raw.get("status") or "unknown")}
+        for field in ("authority", "review_mode"):
+            if raw.get(field):
+                item[field] = str(raw[field])
+        result[name] = item
+    return result
+
+
+def _flow_result(
+    repo: Path, task_id: str, result: tasks.FlowResult
+) -> CommandResult:
+    if receipts.receipt_path(repo, task_id).is_file():
+        task_payload = _task_payload(repo, task_id)
+    else:
+        task_payload = _terminal_task_payload(repo, task_id)
+    data: dict[str, object] = {
+        "task": {
+            "id": task_payload["id"],
+            "stage": task_payload["stage"],
+            "boundary": task_payload["boundary"],
+            "actions": task_payload["actions"],
+            "assurance": _assurance_delta(task_payload.get("assurance")),
+            "completion": task_payload["completion"],
+        }
+    }
+    candidate_tree = result.data.get("candidate_tree")
+    evidence_ids = result.data.get("evidence_ids")
+    if candidate_tree or evidence_ids:
+        data["candidate"] = {
+            "tree": str(candidate_tree or ""),
+            "evidence_ids": evidence_ids if isinstance(evidence_ids, list) else [],
+        }
+    return CommandResult(result.lines, data, result.outcome)
+
+
+def _begin(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.begin(
+        repo,
         args.task_id,
         goal=args.goal,
-        posture=args.posture,
         boundary=args.boundary,
         paths=args.path,
         interfaces=args.interface,
         domains=args.domain,
-        intent_file=args.intent,
-        intent_expansion=args.intent_expansion,
-        outcome_review=args.outcome_review,
+        adapter_inputs={"intent_brief": args.intent_brief_file},
+        adapter_overrides=(
+            {"intent_brief": args.intent_brief}
+            if args.intent_brief is not None
+            else {}
+        ),
     )
+    return _task_result(repo, args.task_id, lines)
 
 
-def _status(args: argparse.Namespace) -> list[str]:
-    return tasks.status(_repo(), args.task_id)
+def _status(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    return _task_result(repo, args.task_id, tasks.status(repo, args.task_id))
 
 
 def _check(args: argparse.Namespace) -> list[str]:
@@ -96,24 +343,228 @@ def _check(args: argparse.Namespace) -> list[str]:
     )
 
 
-def _finish(args: argparse.Namespace) -> list[str]:
-    return tasks.finish(
-        _repo(),
-        args.task_id,
-        assessment_path=args.assessment,
-        subject=args.subject,
-        checks=args.check,
+def _finish(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    if args.assessment:
+        lines = tasks.finish(
+            repo,
+            args.task_id,
+            assessment_path=args.assessment,
+            subject=args.subject,
+            checks=args.check,
+        )
+        return CommandResult(
+            lines, {"task": _terminal_task_payload(repo, args.task_id)}
+        )
+    result = tasks.prepare_finish(
+        repo, args.task_id, subject=args.subject, checks=args.check
+    )
+    return _flow_result(repo, args.task_id, result)
+
+
+def _respond(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    result = tasks.respond(repo, args.task_id, args.request_id, args.input)
+    return _flow_result(repo, args.task_id, result)
+
+
+def _action(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    receipt = receipts.load(repo, args.task_id)
+    matches = [
+        item for item in adapters.pending(receipt) if item.get("id") == args.request_id
+    ]
+    if len(matches) != 1:
+        raise Blocked(
+            f"Invariant: task '{args.task_id}' has no pending action '{args.request_id}'",
+            code="unknown_action",
+        )
+    raw = matches[0]
+    value = {
+        **adapters.action_descriptor(raw),
+        "input_schema": raw.get("input_schema", {}),
+    }
+    raw_context = raw.get("context") if isinstance(raw.get("context"), dict) else {}
+    if "brief" in raw_context:
+        context = value.get("context")
+        if isinstance(context, dict):
+            value["context"] = {**context, "brief": raw_context["brief"]}
+    lines = [
+        f"ACTION: {value.get('id')} — {value.get('kind')}",
+        f"SCHEMA: {value.get('schema_id') or 'embedded'}",
+    ]
+    return CommandResult(lines, {"action": value})
+
+
+def _evidence_root(repo: Path, task_id: str) -> Path:
+    active = receipts.task_root(repo, task_id)
+    if receipts.receipt_path(repo, task_id).is_file() and active.is_dir():
+        return active
+    completed = receipts.completed_task_root(repo, task_id)
+    if completed is not None:
+        return completed
+    raise Blocked(f"Invariant: no active or completed task '{task_id}'", code="missing_task")
+
+
+def _evidence(args: argparse.Namespace) -> CommandResult:
+    root = _evidence_root(_repo(), args.task_id) / "evidence"
+    values: list[dict[str, object]] = []
+    if root.is_dir():
+        for path in sorted(root.glob("*.yml")):
+            raw = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if isinstance(raw, dict) and raw.get("evidence_id"):
+                values.append(raw)
+    if args.evidence_id:
+        matches = [
+            value for value in values if value.get("evidence_id") == args.evidence_id
+        ]
+        if len(matches) != 1:
+            raise Blocked(
+                f"Invariant: task '{args.task_id}' has no evidence '{args.evidence_id}'",
+                code="missing_evidence",
+            )
+        value = matches[0]
+        return CommandResult(
+            [
+                f"EVIDENCE: {value.get('evidence_id')}",
+                f"KIND: {value.get('kind') or 'verification'}",
+                f"STATUS: {value.get('status') or 'captured'}",
+            ],
+            {"evidence": value},
+        )
+    summaries = [
+        {
+            "id": str(value.get("evidence_id")),
+            "kind": str(value.get("kind") or "verification"),
+            "status": str(value.get("status") or "captured"),
+            "tree": str(value.get("tree") or ""),
+            "locator": str(value.get("locator") or ""),
+        }
+        for value in values
+    ]
+    return CommandResult(
+        [
+            *[
+                f"EVIDENCE: {item['id']} — {item['kind']} ({item['status']})"
+                for item in summaries
+            ],
+            f"EVIDENCE-COUNT: {len(summaries)}",
+        ],
+        {"evidence": summaries},
     )
 
 
-def _continue(args: argparse.Namespace) -> list[str]:
-    return tasks.continue_task(_repo(), args.task_id, apply=args.apply)
+def _continue(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.continue_task(repo, args.task_id, apply=args.apply)
+    if "STATUS: completed" in lines:
+        return CommandResult(
+            lines,
+            {"task": _terminal_task_payload(repo, args.task_id)},
+        )
+    return _task_result(repo, args.task_id, lines)
 
 
-def _invalidate(args: argparse.Namespace) -> list[str]:
-    return tasks.invalidate(_repo(), args.task_id)
+def _invalidate(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.invalidate(repo, args.task_id, discard=args.discard)
+    return CommandResult(
+        lines, {"task": _terminal_task_payload(repo, args.task_id, "invalidated")}
+    )
 
 
-def _guidance(args: argparse.Namespace) -> list[str]:
-    return tasks.task_guidance(_repo(), args.task_id)
+def _reconcile(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.reconcile(repo, args.task_id)
+    if "STATUS: completed" in lines:
+        return CommandResult(
+            lines, {"task": _terminal_task_payload(repo, args.task_id)}
+        )
+    return _task_result(repo, args.task_id, lines)
 
+
+def _guidance(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    lines = tasks.task_guidance(repo, args.task_id, full=args.full)
+    return CommandResult(lines, {"task": _task_payload(repo, args.task_id), "guidance": "\n".join(lines)})
+
+
+def _yaml_lines(value: object) -> list[str]:
+    return yaml.safe_dump(value, sort_keys=False, allow_unicode=True).rstrip().splitlines()
+
+
+def _assessment_schema(_: argparse.Namespace) -> CommandResult:
+    value = schemas.assessment_schema()
+    return CommandResult(_yaml_lines(value), {"schema": value})
+
+
+def _assessment_example(_: argparse.Namespace) -> CommandResult:
+    value = schemas.assessment_example()
+    return CommandResult(_yaml_lines(value), {"example": value})
+
+
+def _intent_schema(_: argparse.Namespace) -> CommandResult:
+    value = adapters.schemas("intent_brief")
+    return CommandResult(_yaml_lines(value), {"schema": value})
+
+
+def _intent_example(_: argparse.Namespace) -> CommandResult:
+    value = adapters.examples("intent_brief")
+    return CommandResult(_yaml_lines(value), {"example": value})
+
+
+def _assessment_prepare(args: argparse.Namespace) -> CommandResult:
+    repo = _repo()
+    assessment, analysis = tasks.prepare_assessment(repo, args.task_id)
+    destination = (
+        (repo / args.output).resolve()
+        if args.output
+        else receipts.task_root(repo, args.task_id) / "prepared-assessment.yml"
+    )
+    dump_yaml(destination, assessment)
+    lines, _ = _preparation_lines(repo, args.task_id, destination, analysis)
+    return CommandResult(
+        lines,
+        {"assessment": assessment, "analysis": analysis, "path": str(destination)},
+    )
+
+
+def _preparation_lines(
+    repo: Path, task_id: str, destination: Path, analysis: dict[str, object]
+) -> tuple[list[str], int]:
+    try:
+        display_path: object = destination.relative_to(repo)
+    except ValueError:
+        display_path = destination
+    lines = [f"ASSESSMENT: prepared {task_id}", f"SAVED: {display_path}"]
+    adapter_required = sum(
+        len(item.get("required", []))
+        for item in analysis.get("adapters", [])
+        if isinstance(item, dict) and isinstance(item.get("required"), list)
+    )
+    semantic_required = analysis.get("required", [])
+    if not isinstance(semantic_required, list):
+        semantic_required = []
+    if semantic_required or adapter_required:
+        lines.append(
+            f"REQUIRED: {len(semantic_required)} semantic completion(s), "
+            f"{adapter_required} adapter result(s)"
+        )
+    else:
+        lines.append("READY: assessment has no unresolved generated requirements")
+    for item in semantic_required:
+        if isinstance(item, dict):
+            detail = (
+                item.get("values")
+                or item.get("allowed")
+                or item.get("value_after_approval")
+            )
+            suffix = f" — {detail}" if detail else ""
+            lines.append(
+                f"REQUIRED-FIELD: {item.get('field', 'unknown')} — "
+                f"{item.get('reason', 'completion required')}{suffix}"
+            )
+    for adapter in analysis.get("adapters", []):
+        if isinstance(adapter, dict) and adapter.get("review"):
+            lines.append(f"ADAPTER-REVIEW: {adapter['review']}")
+    return lines, len(semantic_required) + adapter_required

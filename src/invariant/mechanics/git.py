@@ -46,11 +46,54 @@ def run(
     return result
 
 
+def require_capabilities(repo: Path) -> None:
+    """Fail before mutation when Git lacks mechanics required by Invariant."""
+    version = run(["--version"], cwd=repo, check=False)
+    merge_tree_help = run(["merge-tree", "-h"], cwd=repo, check=False)
+    worktrees = run(["worktree", "list", "--porcelain"], cwd=repo, check=False)
+    missing: list[str] = []
+    if "--write-tree" not in f"{merge_tree_help.stdout}\n{merge_tree_help.stderr}":
+        missing.append("git merge-tree --write-tree")
+    if worktrees.returncode:
+        missing.append("git worktree porcelain support")
+    if missing:
+        label = version.stdout or version.stderr or "unknown Git version"
+        raise InvariantError(
+            "Invariant: installed Git lacks required exact-candidate capabilities",
+            code="unsupported_git",
+            lines=[
+                f"GIT: {label}",
+                *[f"MISSING: {capability}" for capability in missing],
+                "NEXT: install a Git release that provides the missing capabilities, then retry",
+            ],
+        )
+
+
 def root(cwd: Path | str | None = None) -> Path:
     result = run(["rev-parse", "--show-toplevel"], cwd=cwd, check=False)
     if result.returncode:
         raise InvariantError("Invariant: not inside a Git repository", code="not_a_repository")
     return Path(result.stdout).resolve()
+
+
+def tracked_nested_invariant_paths(repo: Path) -> list[str]:
+    """Return tracked Invariant state below the one repository root.
+
+    A separate nested Git repository is not part of the parent's tracked file
+    set, so this detects only competing kernels inside the same atomic Git
+    boundary.
+    """
+
+    result = run(
+        ["ls-files", "--cached", "--", ":(glob)**/.invariant/**"],
+        cwd=repo,
+        check=False,
+    )
+    return sorted(
+        path
+        for path in result.stdout.splitlines()
+        if path and path.split("/").index(".invariant") > 0
+    )
 
 
 def common_dir(repo: Path) -> Path:
@@ -101,13 +144,20 @@ def changed_paths(repo: Path, base: str | None = None, tip: str | None = None) -
 
 
 def history_changed_paths(repo: Path, base: str, tip: str = "HEAD") -> list[str]:
-    commits = run(["rev-list", "--first-parent", "--reverse", f"{base}..{tip}"], cwd=repo).stdout.splitlines()
-    paths: set[str] = set()
-    for commit in commits:
-        parent = resolve(repo, f"{commit}^1")
-        if parent:
-            paths.update(changed_paths(repo, parent, commit))
-    return sorted(paths)
+    result = run(
+        [
+            "log",
+            "--first-parent",
+            "--diff-merges=first-parent",
+            "--format=",
+            "--name-only",
+            "-z",
+            f"{base}..{tip}",
+            "--",
+        ],
+        cwd=repo,
+    )
+    return sorted({path for path in result.stdout.split("\0") if path})
 
 
 def worktree_for_branch(repo: Path, branch: str) -> Path | None:
@@ -145,13 +195,17 @@ def tracked_worktree_clean(repo: Path) -> bool:
 
 def merge_tree(repo: Path, base: str, tip: str) -> str:
     result = run(["merge-tree", "--write-tree", base, tip], cwd=repo, check=False)
-    if result.returncode:
+    # merge-tree exits 1 only for content conflicts; any other status is a Git failure.
+    if result.returncode == 1:
         lines = [line for line in (result.stdout, result.stderr) if line]
         raise Blocked(
             "Invariant: prospective merge conflicts; integration branch unchanged",
             code="merge_conflict",
             lines=lines,
         )
+    if result.returncode:
+        detail = result.stderr or result.stdout or "Git command failed"
+        raise InvariantError(f"Invariant: {detail}", code="git_failed")
     return result.stdout.splitlines()[0]
 
 
@@ -165,6 +219,60 @@ def trailers(repo: Path, commit: str, key: str) -> list[str]:
     if result.returncode or not result.stdout:
         return []
     return [item for item in result.stdout.replace("\x1d", "\n").splitlines() if item]
+
+
+@dataclass(frozen=True)
+class TrailerCommit:
+    commit: str
+    parents: tuple[str, ...]
+    trailers: Mapping[str, tuple[str, ...]]
+
+
+def trailer_history(
+    repo: Path, tip: str, keys: Iterable[str], *, after: str | None = None
+) -> list[TrailerCommit] | None:
+    """Return first-parent commits reaching `tip`, oldest first, with the requested trailers.
+
+    One Git invocation formats the whole range. `after` excludes that commit and its
+    ancestors so callers can skip history that predates the trailers they inspect.
+    """
+
+    key_values = list(keys)
+    fields = "".join(
+        f"%x00%(trailers:key={key},valueonly,separator=%x1d)" for key in key_values
+    )
+    arguments = ["log", "--first-parent", "--reverse", f"--format=%H%x00%P{fields}%x1e", tip]
+    if after:
+        arguments.append(f"^{after}")
+    result = run(arguments, cwd=repo, check=False)
+    if result.returncode:
+        return None
+    history: list[TrailerCommit] = []
+    for record in result.stdout.split("\x1e"):
+        record = record.strip()
+        if not record:
+            continue
+        parts = record.split("\x00")
+        if len(parts) != len(key_values) + 2:
+            continue
+        values = {
+            key: tuple(item for item in parts[index + 2].split("\x1d") if item)
+            for index, key in enumerate(key_values)
+        }
+        history.append(TrailerCommit(parts[0], tuple(parts[1].split()), values))
+    return history
+
+
+def commits_mentioning(
+    repo: Path, tip: str, key: str, *, after: str | None = None
+) -> list[str]:
+    """Return first-parent commits reaching `tip`, newest first, whose message names a trailer key."""
+
+    arguments = ["rev-list", "--first-parent", f"--grep=^{key}:", tip]
+    if after:
+        arguments.append(f"^{after}")
+    result = run(arguments, cwd=repo, check=False)
+    return result.stdout.splitlines() if result.returncode == 0 else []
 
 
 def valid_id(value: str) -> bool:

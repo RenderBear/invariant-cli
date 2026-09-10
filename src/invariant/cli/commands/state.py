@@ -18,11 +18,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 def _validate(args: argparse.Namespace) -> list[str]:
     lines = state.validate(git.root(), landing=args.landing)
-    if lines[-1].endswith("intent state violation(s)"):
+    if lines[-1].endswith("Invariant state violation(s)"):
         raise Blocked("Invariant: state validation failed", code="invalid_state", lines=lines)
     return lines
 
 
 def _config(_: argparse.Namespace) -> list[str]:
     return config.lines(config.resolve(git.root()))
-

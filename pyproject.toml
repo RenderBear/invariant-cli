@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "invariant-cli"
 version = "0.1.0"
-description = "Preserve durable architectural intent across repository change"
+description = "Scale agentic coding without architectural drift"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -25,7 +25,8 @@ classifiers = [
 ]
 
 [project.scripts]
-invariant = "invariant.cli.app:main"
+invariant = "invariant.entry:main"
+invariant-agent = "invariant.harness.cli:main"
 
 [project.urls]
 Repository = "https://github.com/RenderBear/invariant-cli"

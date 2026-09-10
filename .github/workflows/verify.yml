@@ -1,0 +1,42 @@
+name: Verify
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - run: uv sync --locked
+      - name: Shell mechanics
+        run: for test_file in tests/test-*.sh; do sh "$test_file" || exit; done
+      - run: uv run --frozen pytest
+      - run: uv build --no-sources
+
+  clean-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+      - name: Install only the published project surface
+        run: uv tool install .
+      - name: Exercise a fresh installed CLI
+        run: |
+          fixture=$(mktemp -d)
+          git -C "$fixture" init -qb main
+          git -C "$fixture" config user.name test
+          git -C "$fixture" config user.email test@example.com
+          printf 'seed\n' > "$fixture/file.txt"
+          git -C "$fixture" add file.txt
+          git -C "$fixture" commit -qm seed
+          cd "$fixture"
+          invariant --version
+          invariant init --defaults
+          test -f .invariant/config.yml

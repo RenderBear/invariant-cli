@@ -9,7 +9,7 @@ from typing import Any, Iterable
 
 from invariant.errors import Blocked, InvariantError
 from invariant.mechanics import config, git, governance
-from invariant.mechanics.documents import dump_yaml, load_yaml
+from invariant.mechanics.documents import create_yaml, dump_yaml, load_yaml
 
 
 def runtime_root(repo: Path) -> Path:
@@ -115,7 +115,7 @@ def validate_plan(repo: Path, value: str) -> list[str]:
             if path_claim.startswith("/") or ".." in Path(path_claim).parts:
                 failures.append(f"unit {unit} has unsafe path claim {path_claim}")
         for verifier in verifiers:
-            if not verifier.startswith(("command:", "test:", "schema:")):
+            if not verifier.startswith(("command:", "test:", "schema:", "runner:")):
                 failures.append(f"unit {unit} has unsupported verifier {verifier}")
         dependencies = set(governance.refs(item.get("dependencies")))
         dependency_sets[unit] = dependencies
@@ -194,7 +194,7 @@ def validate_plan(repo: Path, value: str) -> list[str]:
 
 def _landed_units(repo: Path, target: str) -> set[str]:
     result = git.run(
-        ["log", "--first-parent", target, "--format=%(trailers:key=Intent-Unit,valueonly,separator=%x0a)"],
+        ["log", "--first-parent", target, "--format=%(trailers:key=Invariant-Unit,valueonly,separator=%x0a)"],
         cwd=repo,
         check=False,
     )
@@ -258,6 +258,8 @@ def _parse_utc(value: str) -> datetime:
 
 
 def _lease_path(repo: Path, unit: str) -> Path:
+    if not git.valid_id(unit):
+        raise InvariantError(f"Invariant: invalid lease unit '{unit}'")
     return runtime_root(repo) / "leases" / f"{unit}.yml"
 
 
@@ -360,7 +362,12 @@ def create_lease(
     value["renewed"] = _utc(now)
     value["expires"] = _utc(now + timedelta(seconds=_duration(duration)))
     ensure_runtime(repo)
-    dump_yaml(path, value)
+    if not create_yaml(path, value):
+        existing = load_yaml(path) if path.is_file() else None
+        holder = existing.get("owner") if isinstance(existing, dict) else "unknown"
+        raise InvariantError(
+            f"Invariant: live lease for '{unit}' exists (owner {holder}) — renew or release it, never overwrite"
+        )
     if overlaps:
         return [f"LEASE: {unit} created — intersects {' '.join(overlaps)}; expires {value['expires']}"]
     return [f"LEASE: {unit} created — no live unit intersects; expires {value['expires']}"]
@@ -414,12 +421,27 @@ def lease_fresh(repo: Path, unit: str) -> list[str]:
     return [f"FRESH: {unit} — no intersecting landing since the recorded ground"]
 
 
-def release_lease(repo: Path, unit: str) -> list[str]:
+def release_lease(repo: Path, unit: str, *, missing_ok: bool = False) -> list[str]:
     path = _lease_path(repo, unit)
-    if not path.is_file():
-        raise InvariantError(f"Invariant: no lease for '{unit}'")
-    path.unlink()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        if missing_ok:
+            return []
+        raise InvariantError(f"Invariant: no lease for '{unit}'") from None
     return [f"released {unit}"]
+
+
+def _unlink_unchanged(path: Path, snapshot: bytes) -> bool:
+    """Remove a lease only if nobody rewrote it since it was inspected."""
+
+    try:
+        if path.read_bytes() != snapshot:
+            return False
+        path.unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def list_leases(repo: Path, *, scope: str | None = None, domain: str | None = None) -> list[str]:
@@ -460,6 +482,10 @@ def reap_leases(repo: Path, *, apply: bool = False) -> ReapResult:
     output: list[str] = []
     reaped = renewed = 0
     for path in files:
+        try:
+            snapshot = path.read_bytes()
+        except FileNotFoundError:
+            continue
         value = load_yaml(path)
         if not isinstance(value, dict):
             continue
@@ -482,22 +508,23 @@ def reap_leases(repo: Path, *, apply: bool = False) -> ReapResult:
             dead = "branch missing, lease expired"
         if dead:
             output.append(f"DEAD: {unit} ({dead})")
-            if apply:
-                path.unlink()
+            if apply and _unlink_unchanged(path, snapshot):
                 reaped += 1
         elif expired:
             current_tip = git.resolve(repo, f"refs/heads/{branch}") if exists else None
             if current_tip and tip and current_tip != tip:
                 output.append(f"RENEW: {unit} — tip advanced since grant; the worker is alive")
                 if apply:
-                    renew_lease(repo, unit)
+                    try:
+                        renew_lease(repo, unit)
+                    except InvariantError:
+                        continue
                     renewed += 1
             else:
                 output.append(
                     f"QUIESCENT: {unit} — expired, tip unmoved; reap ends the reservation, the work remains"
                 )
-                if apply:
-                    path.unlink()
+                if apply and _unlink_unchanged(path, snapshot):
                     reaped += 1
         else:
             output.append(f"LIVE: {unit}")
@@ -513,14 +540,43 @@ def runtime_status(repo: Path) -> list[str]:
     output = [f"RUNTIME: {runtime}"]
     if not runtime.is_dir():
         return [*output, "STATUS: empty"]
-    plans = sorted((runtime / "plans").glob("*.yml")) if (runtime / "plans").is_dir() else []
+    briefs = (
+        sorted((runtime / "briefs").glob("*.yml"))
+        if (runtime / "briefs").is_dir()
+        else []
+    )
+    output.extend(f"ACTIVE-TASK: {path.stem}" for path in briefs)
+    if not briefs:
+        output.append("ACTIVE-TASKS: none")
+    history = runtime / "history" / "tasks"
+    completions = sorted(history.glob("*/*/summary.yml")) if history.is_dir() else []
+    output.extend(
+        f"COMPLETED-TASK: {path.parents[1].name}@{path.parent.name}"
+        for path in completions
+    )
+    if not completions:
+        output.append("COMPLETED-TASKS: none")
+    verifications = runtime / "verifications"
+    verification_receipts = (
+        sorted(verifications.glob("*.yml")) if verifications.is_dir() else []
+    )
+    output.append(f"VERIFICATION-RECEIPTS: {len(verification_receipts)}")
+    plans = (
+        sorted((runtime / "plans").glob("*.yml"))
+        if (runtime / "plans").is_dir()
+        else []
+    )
     for path in plans:
         output.append(f"PLAN: {path.stem}")
         output.extend(f"  {line}" for line in plan_status(repo, path.stem))
     if not plans:
         output.append("PLANS: none")
     output.extend(list_leases(repo))
-    leases = sorted((runtime / "leases").glob("*.yml")) if (runtime / "leases").is_dir() else []
+    leases = (
+        sorted((runtime / "leases").glob("*.yml"))
+        if (runtime / "leases").is_dir()
+        else []
+    )
     for path in leases:
         try:
             raw = load_yaml(path)
@@ -530,13 +586,71 @@ def runtime_status(repo: Path) -> list[str]:
     return output
 
 
+WORK_BRANCH_PREFIX = "invariant/work/"
+
+
+def _active_work_branches(repo: Path) -> set[str]:
+    briefs = runtime_root(repo) / "briefs"
+    branches: set[str] = set()
+    for path in sorted(briefs.glob("*.yml")) if briefs.is_dir() else []:
+        raw = load_yaml(path)
+        lifecycle = raw.get("lifecycle") if isinstance(raw, dict) else None
+        if isinstance(lifecycle, dict) and lifecycle.get("branch"):
+            branches.add(str(lifecycle["branch"]))
+    return branches
+
+
+def orphaned_work(repo: Path) -> list[tuple[str, Path | None]]:
+    """Generated work branches and worktrees that no active task receipt references."""
+
+    active = _active_work_branches(repo)
+    worktrees_root = (runtime_root(repo) / "worktrees").resolve()
+    orphans: list[tuple[str, Path | None]] = []
+    seen: set[str] = set()
+    path: Path | None = None
+    for line in git.run(["worktree", "list", "--porcelain"], cwd=repo, check=False).stdout.splitlines():
+        if line.startswith("worktree "):
+            path = Path(line[9:])
+        elif line.startswith("branch refs/heads/") and path is not None:
+            branch = line[len("branch refs/heads/"):]
+            inside = worktrees_root in path.resolve().parents
+            if branch.startswith(WORK_BRANCH_PREFIX) and inside and branch not in active:
+                orphans.append((branch, path))
+                seen.add(branch)
+    refs = git.run(
+        ["for-each-ref", "--format=%(refname:short)", f"refs/heads/{WORK_BRANCH_PREFIX}"],
+        cwd=repo,
+        check=False,
+    ).stdout.splitlines()
+    for branch in refs:
+        if branch not in active and branch not in seen:
+            orphans.append((branch, None))
+    return orphans
+
+
 def clean_runtime(repo: Path, *, apply: bool = False) -> list[str]:
+    if apply:
+        ensure_runtime(repo)
     runtime = runtime_root(repo)
     if not runtime.is_dir():
         return ["CLEAN: nothing to do"]
     result = reap_leases(repo, apply=apply)
     output = list(result.lines)
-    plans = sorted((runtime / "plans").glob("*.yml")) if (runtime / "plans").is_dir() else []
+    primary = git.primary_worktree(repo)
+    for branch, worktree in orphaned_work(repo):
+        location = f"worktree {worktree}" if worktree else "no worktree"
+        if not apply:
+            output.append(f"ORPHANED: work branch {branch} ({location})")
+            continue
+        if worktree is not None:
+            git.run(["worktree", "remove", "--force", str(worktree)], cwd=primary, check=False)
+        git.run(["branch", "-D", branch], cwd=primary, check=False)
+        output.append(f"CLEANED: orphaned work branch {branch} ({location})")
+    plans = (
+        sorted((runtime / "plans").glob("*.yml"))
+        if (runtime / "plans").is_dir()
+        else []
+    )
     for path in plans:
         status = plan_status(repo, path.stem)
         complete = all(" landed " in f" {line} " for line in status[1:] if line.strip())
@@ -546,13 +660,36 @@ def clean_runtime(repo: Path, *, apply: bool = False) -> list[str]:
                 output.append(f"CLEANED: completed plan {path.stem}")
             else:
                 output.append(f"CLEANABLE: completed plan {path.stem}")
+    history = runtime / "history" / "tasks"
+    completions = sorted(history.glob("*/*")) if history.is_dir() else []
+    for path in completions:
+        if not path.is_dir():
+            continue
+        label = f"{path.parent.name}@{path.name}"
+        if apply:
+            shutil.rmtree(path)
+            output.append(f"CLEANED: completed task {label}")
+        else:
+            output.append(f"CLEANABLE: completed task {label}")
+    verifications = runtime / "verifications"
+    verification_files = sorted(verifications.iterdir()) if verifications.is_dir() else []
+    if verification_files:
+        if apply:
+            shutil.rmtree(verifications)
+            output.append(f"CLEANED: {len(verification_files)} verification cache file(s)")
+        else:
+            output.append(f"CLEANABLE: {len(verification_files)} verification cache file(s)")
     if apply:
         for directory in sorted((item for item in runtime.rglob("*") if item.is_dir()), reverse=True):
             try:
                 directory.rmdir()
             except OSError:
                 pass
-        payload = [item for item in runtime.iterdir() if item.name != ".gitignore"] if runtime.exists() else []
+        payload = (
+            [item for item in runtime.iterdir() if item.name != ".gitignore"]
+            if runtime.exists()
+            else []
+        )
         if not payload:
             (runtime / ".gitignore").unlink(missing_ok=True)
             try:

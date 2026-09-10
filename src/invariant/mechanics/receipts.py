@@ -6,17 +6,20 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable
 
+import yaml
+
 from invariant.errors import Blocked, InvariantError
-from invariant.mechanics import config, git, governance
+from invariant.mechanics import config, coordinate, git, governance
 from invariant.mechanics.documents import dump_yaml, load_yaml
+from invariant.protocol import TaskStage
 
 
 def receipt_root(repo: Path) -> Path:
-    return git.common_dir(repo) / "invariant" / "briefs"
+    return coordinate.runtime_root(repo) / "briefs"
 
 
 def task_root(repo: Path, task: str) -> Path:
-    return git.common_dir(repo) / "invariant" / "tasks" / task
+    return coordinate.runtime_root(repo) / "tasks" / task
 
 
 def receipt_path(repo: Path, task: str) -> Path:
@@ -66,7 +69,34 @@ def load(repo: Path, task: str) -> dict[str, Any]:
     return raw
 
 
+def completed_task_root(repo: Path, task: str) -> Path | None:
+    root = coordinate.runtime_root(repo) / "history" / "tasks" / task
+    if not root.is_dir():
+        return None
+    candidates = list(root.glob("*/receipt.yml"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda candidate: candidate.stat().st_mtime_ns).parent
+
+
+def load_completed(repo: Path, task: str) -> dict[str, Any] | None:
+    """Load the most recently archived completion for a reusable task id."""
+
+    root = completed_task_root(repo, task)
+    if root is None:
+        return None
+    path = root / "receipt.yml"
+    raw = load_yaml(path)
+    if not isinstance(raw, dict) or raw.get("version") != 1 or raw.get("task") != task:
+        raise InvariantError(
+            f"Invariant: corrupt completed task archive '{task}'",
+            code="corrupt_receipt",
+        )
+    return raw
+
+
 def save(repo: Path, task: str, receipt: dict[str, Any]) -> None:
+    coordinate.ensure_runtime(repo)
     dump_yaml(receipt_path(repo, task), receipt)
 
 
@@ -75,18 +105,39 @@ def open_receipt(
     task: str,
     *,
     goal: str,
-    posture: str,
     boundary: str,
+    posture: str | None = None,
     paths: Iterable[str] = (),
     interfaces: Iterable[str] = (),
     domains: Iterable[str] = (),
-    intent_expansion: bool = False,
-    outcome_review: bool = False,
+    adapters: Iterable[str] = (),
 ) -> tuple[dict[str, Any], list[str]]:
     resolved = config.resolve(repo)
     target = resolved.integration_branch
     head = integration_head(repo, target)
+    if head != "unborn":
+        config.resolve_at(repo, head, target)
     selected = sorted(set(domains))
+    selected_paths = sorted(set(paths))
+    selected_interfaces = sorted(set(interfaces))
+    governance_snapshot = {
+        "selected_digest": governance.context_digest(
+            repo, selected, selected_paths, selected_interfaces
+        ),
+        "integration_digest": (
+            governance.context_digest(
+                repo, selected, selected_paths, selected_interfaces, head
+            )
+            if head != "unborn"
+            else git.hash_text(repo, "")
+        ),
+    }
+    change_classification = {
+        "boundary": boundary,
+    }
+    if posture:
+        change_classification["posture"] = posture
+    adapter_ids = sorted(set(adapters))
     receipt = {
         "version": 1,
         "repository": repository_identity(repo, target),
@@ -96,23 +147,16 @@ def open_receipt(
         "integration_head": head,
         "mechanics_digest": mechanics_digest(),
         "scope": {
-            "paths": sorted(set(paths)),
-            "interfaces": sorted(set(interfaces)),
+            "paths": selected_paths,
+            "interfaces": selected_interfaces,
             "domains": selected,
         },
-        "intent": {
-            "governance_digest": governance.digest(repo, selected),
-            "integration_governance_digest": (
-                governance.digest(repo, selected, head) if head != "unborn" else git.hash_text(repo, "")
-            ),
-            "posture": posture,
-            "boundary": boundary,
-        },
-        "options": {
-            "intent_expansion": intent_expansion,
-            "outcome_review": outcome_review,
-        },
+        "governance_snapshot": governance_snapshot,
+        "change_classification": change_classification,
+        "adapters": adapter_ids,
     }
+    if adapter_ids:
+        receipt["goal"] = goal
     save(repo, task, receipt)
     return receipt, [f"BRIEF: opened {task}", f"RECEIPT: {receipt_path(repo, task)}"]
 
@@ -138,15 +182,15 @@ def check_receipt(
 ) -> tuple[dict[str, Any], list[str]]:
     receipt = load(repo, task)
     captured_target = str(receipt.get("integration_target", ""))
-    previous = os.environ.get("GIT_INTENT_INTEGRATION_TARGET")
-    os.environ["GIT_INTENT_INTEGRATION_TARGET"] = captured_target
+    previous = os.environ.get("INVARIANT_INTEGRATION_TARGET")
+    os.environ["INVARIANT_INTEGRATION_TARGET"] = captured_target
     try:
         target = config.resolve(repo).integration_branch
     finally:
         if previous is None:
-            os.environ.pop("GIT_INTENT_INTEGRATION_TARGET", None)
+            os.environ.pop("INVARIANT_INTEGRATION_TARGET", None)
         else:
-            os.environ["GIT_INTENT_INTEGRATION_TARGET"] = previous
+            os.environ["INVARIANT_INTEGRATION_TARGET"] = previous
     if target != captured_target:
         raise Blocked(
             f"STALE: integration target changed from {captured_target} to {target}", code="stale_receipt"
@@ -156,8 +200,21 @@ def check_receipt(
     if mechanics_digest() != receipt.get("mechanics_digest"):
         raise Blocked("STALE: CLI mechanics changed", code="stale_receipt")
     selected = _scope(receipt, "domains")
-    intent = receipt.get("intent") if isinstance(receipt.get("intent"), dict) else {}
-    if governance.digest(repo, selected) != intent.get("governance_digest"):
+    selected_paths = _scope(receipt, "paths")
+    selected_interfaces = _scope(receipt, "interfaces")
+    governance_snapshot = (
+        receipt.get("governance_snapshot")
+        if isinstance(receipt.get("governance_snapshot"), dict)
+        else {}
+    )
+    change_classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    if governance.context_digest(
+        repo, selected, selected_paths, selected_interfaces
+    ) != governance_snapshot.get("selected_digest"):
         raise Blocked("STALE: selected governance changed", code="stale_receipt")
 
     if (goal is None) == (goal_digest is None):
@@ -182,7 +239,7 @@ def check_receipt(
     cached_head = str(receipt.get("integration_head"))
     current_head = integration_head(repo, target)
     head_advanced = current_head != cached_head
-    integration_digest = intent.get("integration_governance_digest")
+    integration_digest = governance_snapshot.get("integration_digest")
     if head_advanced:
         if "unborn" in {cached_head, current_head}:
             raise Blocked("STALE: integration branch birth state changed", code="stale_receipt")
@@ -190,8 +247,14 @@ def check_receipt(
             raise Blocked(
                 "STALE: integration history no longer descends from the cached head", code="stale_receipt"
             )
-        integration_digest = governance.digest(repo, selected, current_head)
-        if integration_digest != intent.get("integration_governance_digest"):
+        integration_digest = governance.context_digest(
+            repo,
+            selected,
+            selected_paths,
+            selected_interfaces,
+            current_head,
+        )
+        if integration_digest != governance_snapshot.get("integration_digest"):
             raise Blocked(
                 "STALE: selected governance changed on the integration branch", code="stale_receipt"
             )
@@ -217,22 +280,18 @@ def check_receipt(
     if head_advanced or goal_changed:
         receipt["integration_head"] = current_head
         receipt["goal_digest"] = current_goal
-        intent["integration_governance_digest"] = integration_digest
-        receipt["intent"] = intent
+        governance_snapshot["integration_digest"] = integration_digest
+        receipt["governance_snapshot"] = governance_snapshot
         save(repo, task, receipt)
     output: list[str] = []
     if head_advanced:
         output.append(f"HEAD: advanced {cached_head}..{current_head} — mergeable, brief reused")
     if goal_changed:
         output.append("GOAL: changed text accepted for cached semantic envelope")
-    output.extend(
-        [
-            f"BRIEF: fresh {task}",
-            "REUSE: cached semantic envelope",
-            f"POSTURE: {intent.get('posture', '')}",
-            f"BOUNDARY: {intent.get('boundary', '')}",
-        ]
-    )
+    output.extend([f"BRIEF: fresh {task}", "REUSE: cached semantic envelope"])
+    if change_classification.get("posture"):
+        output.append(f"POSTURE: {change_classification['posture']}")
+    output.append(f"BOUNDARY: {change_classification.get('boundary', '')}")
     return receipt, output
 
 
@@ -240,14 +299,26 @@ def re_full_hex(value: str) -> bool:
     return bool(value) and all(character in "0123456789abcdef" for character in value)
 
 
-def set_lifecycle(repo: Path, task: str, stage: str, branch: str, worktree: str) -> dict[str, Any]:
+def set_lifecycle(
+    repo: Path,
+    task: str,
+    stage: TaskStage | str,
+    branch: str,
+    worktree: str,
+) -> dict[str, Any]:
     receipt = load(repo, task)
-    receipt["lifecycle"] = {"stage": stage, "branch": branch, "worktree": worktree}
+    parsed = TaskStage.parse(stage)
+    receipt["lifecycle"] = {
+        "stage": parsed.value,
+        "branch": branch,
+        "worktree": worktree,
+    }
     save(repo, task, receipt)
     return receipt
 
 
 def invalidate(repo: Path, task: str) -> list[str]:
+    coordinate.ensure_runtime(repo)
     path = receipt_path(repo, task)
     existed = path.is_file()
     if existed:
@@ -256,3 +327,97 @@ def invalidate(repo: Path, task: str) -> list[str]:
     if local_task.is_dir():
         shutil.rmtree(local_task)
     return [f"BRIEF: invalidated {task}" if existed else f"BRIEF: absent {task}"]
+
+
+def complete(repo: Path, task: str, landed_commit: str) -> Path:
+    """Archive the task's semantic argument trail after successful local landing."""
+
+    receipt = load(repo, task)
+    receipt["completed_commit"] = landed_commit
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    receipt["lifecycle"] = {**lifecycle, "stage": TaskStage.COMPLETED.value}
+    classification = (
+        receipt.get("change_classification")
+        if isinstance(receipt.get("change_classification"), dict)
+        else {}
+    )
+    governance_run = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    coverage = (
+        governance_run.get("coverage")
+        if isinstance(governance_run.get("coverage"), dict)
+        else {}
+    )
+    selected_findings = governance_run.get("selected_findings", [])
+    projected_records = coverage.get("projected_records", [])
+    finding_coverage = coverage.get("findings", {})
+    audit_id = str(governance_run.get("audit") or "")
+    audit_findings: list[dict[str, Any]] = []
+    if audit_id:
+        result = git.run(
+            ["show", f"{landed_commit}:.invariant/audits/{audit_id}.yml"],
+            cwd=repo,
+            check=False,
+        )
+        if result.returncode == 0:
+            audit_document = yaml.safe_load(result.stdout)
+            raw_findings = (
+                audit_document.get("findings", [])
+                if isinstance(audit_document, dict)
+                else []
+            )
+            audit_findings = [
+                dict(finding) for finding in raw_findings if isinstance(finding, dict)
+            ]
+    summary = {
+        "version": 1,
+        "task": task,
+        "status": "completed",
+        "goal_digest": str(receipt.get("goal_digest") or ""),
+        "landing": {
+            "target": str(receipt.get("integration_target") or ""),
+            "commit": landed_commit,
+            "candidate_tree": str(
+                receipt.get("candidate_tree")
+                or receipt.get("review_candidate_tree")
+                or ""
+            ),
+        },
+        "boundary": {
+            "initial": str(classification.get("boundary") or "unresolved"),
+            "final": str(receipt.get("resolved_boundary") or "unresolved"),
+        },
+        "governance": {
+            "audit": audit_id,
+            "audit_findings": audit_findings,
+            "selected_findings": (
+                list(selected_findings) if isinstance(selected_findings, list) else []
+            ),
+            "finding_coverage": (
+                dict(finding_coverage) if isinstance(finding_coverage, dict) else {}
+            ),
+            "projected_records": (
+                list(projected_records) if isinstance(projected_records, list) else []
+            ),
+        },
+        "assurance": receipt.get("assurance", {}),
+    }
+    coordinate.ensure_runtime(repo)
+    local_task = task_root(repo, task)
+    local_task.mkdir(parents=True, exist_ok=True)
+    dump_yaml(local_task / "receipt.yml", receipt)
+    dump_yaml(local_task / "summary.yml", summary)
+    destination = (
+        coordinate.runtime_root(repo) / "history" / "tasks" / task / landed_commit
+    )
+    if destination.exists():
+        raise InvariantError(
+            f"Invariant: completed task archive already exists for {task}@{landed_commit}"
+        )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.move(str(local_task), str(destination))
+    receipt_path(repo, task).unlink(missing_ok=True)
+    return destination
