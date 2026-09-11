@@ -44,7 +44,13 @@ def schema(mode: str) -> dict[str, Any]:
     }
 
 
-def prompt(repo: Path, mode: str, message: str) -> str:
+def prompt(
+    repo: Path,
+    mode: str,
+    message: str,
+    *,
+    decision_context: str = "",
+) -> str:
     if mode == "ask":
         instruction = (
             "Answer the user's repository question. This is a persistent conversation, so use "
@@ -57,11 +63,24 @@ def prompt(repo: Path, mode: str, message: str) -> str:
             "state. For a change, message must be a self-contained implementation request for "
             "Invariant's managed change lifecycle. For an answer, message is the answer."
         )
+    if decision_context:
+        instruction = (
+            "A durable-record proposal is awaiting the user's authority. Discuss and explain "
+            "that proposal using the supplied decision context. Choose action=answer: discussion "
+            "must not alter or accept the proposal. Only the user's :record control action accepts "
+            "the exact candidate."
+        )
     grounding = sources.prompt_context(repo)
     suffix = f"\n\n{grounding}" if grounding else ""
     return (
         "You are working through an Invariant repository session. Inspect the repository when "
         "useful, but do not modify files, create commits, or change external state in this "
         "conversation. Return exactly one JSON object matching the supplied schema.\n\n"
-        f"Session mode: {mode}\n{instruction}\n\nUser message:\n{message.strip()}\n{suffix}"
+        f"Session mode: {mode}\n{instruction}\n"
+        + (
+            f"\nPending record decision:\n{decision_context.strip()}\n"
+            if decision_context
+            else ""
+        )
+        + f"\nUser message:\n{message.strip()}\n{suffix}"
     )

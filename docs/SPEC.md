@@ -265,23 +265,13 @@ preference without changing the machine-wide connection or the tracked configura
 deterministically prefers the authenticated machine default, then the other supported harness. A
 named provider does not fall back.
 
-The human-facing model operations are:
-
-- `ask PROMPT`, a fresh read-only repository question;
-- `start [PROMPT]`, a persistent read-only conversation that may route implementation requests
-  through `change` when its local runtime mode permits;
-- `change PROMPT`, a generated task ID plus read-only work classification, one isolated provider
-  write or policy-driven coordinated writes, candidate convergence, evidence, verification, typed
-  action resolution, and local landing; and
-- `establish`, a generated governance task ID plus read-only audit, deterministic audit persistence,
-  unambiguous projection, verification, and local landing.
-
-Each accepts `--using` as an override. The one-shot operations accept `--dry-run` as a no-invocation
-preview. `change` and `establish` accept `--id` for automation; human callers never need to invent a
-task or action ID. Provider invocation is restricted to those explicit model-backed operations.
-Status, settings, and connection inspection never invoke a model. Initialization's repository seeding
-is deterministic; its final interactive yes-or-no choice may continue into the distinct model-backed
-establishment operation after initialization completes.
+The human-facing model operation is `start [PROMPT]`, one persistent conversation that answers
+questions, classifies requested writes, runs the internal managed-change lifecycle, explains status,
+and carries human decisions. `establish` composes it by starting the same conversation with an
+internal `:establish` control turn. Both accept `--using` as a provider override. Human callers never
+invent a task or action ID. Connection inspection never invokes a model, and initialization remains
+deterministic. When `start` or `establish` finds no configuration, guided initialization runs first
+and the original operation then continues.
 
 The distribution retains `invariant-agent` as a separate advanced host-side executable. This bridge
 reads a typed request from the core CLI, starts a provider in the task worktree, and sends the
@@ -330,11 +320,9 @@ The task worktree is the process working directory, and the host prompt forbids 
 publication, external effects, and Invariant runtime changes. The host—not the provider—creates the
 candidate commit and sends it through core evidence, review, verification, and landing.
 
-The advanced binding owns one-shot repository questions, governance audit generation, and resolution
-of pending typed lifecycle actions. The explicit
-`task respond TASK ACTION --using PROVIDER [--apply]` form remains available as an automation
-contract. Source changes are owned by the public host's distinct write phase, not by typed semantic
-workers. Both surfaces consume the same deterministic core protocol.
+The advanced binding owns governance audit generation and resolution of pending typed lifecycle
+actions for the host. Source changes are owned by the public host's distinct write phase, not by
+typed semantic workers. Both layers consume the same deterministic core protocol.
 
 ## 5. State and authority
 
@@ -448,8 +436,6 @@ authority: agent
 execution: auto
 integration_branch: auto
 push_remote: off
-adapters:
-  intent_brief: off
 ```
 
 Provider selection is deliberately absent from tracked configuration: which coding agent is
@@ -509,10 +495,11 @@ persisted under `.invariant/audits/` with its exact ground and tree before adopt
 the two controls separate: `authority` determines who approves the findings, while `execution`
 determines whether the resulting task branch, verification, and landing advance automatically.
 With agent authority, audit through adoption is one autonomous governance pass. With human authority,
-the saved audit is summarized before the human chooses deeper investigation, adoption of all ready
-findings, adoption of selected findings, or deferral. The human-facing establishment command owns
-that interaction and the exact-proposal acceptance; the user is never handed task, action,
-worktree, or governance-protocol commands.
+the host tentatively prepares an exact candidate, then presents its findings, evidence, projected
+records, and changed files inside the durable conversation that requested establishment. The user
+may discuss that packet normally; only `:record` accepts the exact candidate and supplies the
+attributable `user:` review authority. Leaving the conversation preserves the pending proposal. The
+user is never handed task, action, worktree, or governance-protocol commands.
 
 If an audit produced under agent authority classifies findings as `needs-authority`, the host sends
 exactly those findings to a fresh, read-only secondary agent before deciding that nothing is ready
@@ -527,11 +514,10 @@ and verification phases. The first pass establishes durable governance; later pa
 with the current committed integration state. The managed worktree is opened before audit
 persistence, eliminating an incidental audit-only commit between `audit save` and task creation.
 Under agent authority, saving the audit automatically selects its ready findings and advances the
-session to adoption. A bare `invariant establish` resumes the newest compatible unfinished pass;
-human status collapses equivalent attempts and describes persisted resumability separately from
-foreground process activity. `invariant establish --discard` invalidates the preserved pass and its
-candidate work without starting another; it is the only public way out of a proposal that cannot
-be projected or was not accepted.
+session to adoption. `invariant establish` starts a durable conversation and seeds it with
+`:establish`; the same control can be used later in any `start` conversation to prepare or resume the
+newest compatible unfinished pass. Human status and recovery are explained in that conversation,
+not as a request to run another lifecycle command.
 
 Projection uses the record projections carried by selected findings. When a selected finding
 carries none, `governance project` writes the adoption draft and reports incomplete coverage; the
@@ -543,16 +529,15 @@ overridden by that pass. A projection that fails structural validation reports e
 
 `governance begin` reserves every domain that exists at the integration head, because a governance
 pass reconciles the whole repository; re-recording an existing domain is therefore inside scope
-rather than a stale receipt. Under human authority a projection failure reopens the finding choice
-on the next run, the exact-proposal question lists the projected records and changed files, and a
-declined proposal is a successful command outcome (`STATUS: not accepted`) that preserves the
-proposal. The verification activity reports landing only when the task actually completed;
+rather than a stale receipt. Under human authority a projection failure remains available to the
+same conversation for further discussion or another `:establish`. The exact proposal lists the
+projected records and changed files, and only `:record` accepts it. The verification activity reports
+landing only when the task actually completed;
 otherwise it reports that review is pending. The completion result carries a `RECORDS:` line, and a
 pass that recorded nothing is presented as `Audit recorded`.
 
-Human status ends with a situation-specific verb and its public command: start, inspect, resume,
-review, continue, or retry. Failed establishment output keeps the first concrete problem beside the
-saved-work statement, its primary retry, and the discard alternative. With agent authority, retry
+Conversational status ends with a situation-specific explanation and next conversational action.
+Failed establishment output keeps the first concrete problem beside the saved-work statement. With agent authority, retry
 returns an older structurally invalid generated projection to investigation before invoking the
 agent again. Newly generated record locators are validated when the audit is saved and participate
 in the harness's bounded semantic correction loop.
@@ -573,11 +558,11 @@ Every verifier runs under a time limit: `verification.timeout` (default 300 seco
 each inferred locator and to any runner that declares no limit of its own, and a verifier that
 exceeds it fails the candidate rather than holding the landing open.
 
-Before initialization, repository authority, execution, and landing settings are undefined. Managed
-commands stop with `not_initialized` and point to `invariant init`; only help, version reporting,
-provider connection, and initialization remain available. Initialization persists
-`authority: agent`, `execution: auto`, `integration_branch: auto`, `push_remote: off`, and no enabled
-adapters unless the user selects otherwise. Automatic execution is the ergonomic default; it does not
+Before initialization, repository authority, execution, and landing settings are undefined. `start`
+and `establish` run guided initialization when configuration is absent and then continue into the
+requested conversation. Initialization persists `authority: agent`, `execution: auto`,
+`integration_branch: auto`, and `push_remote: off`. The configuration has no adapter registry.
+Automatic execution is the ergonomic default; it does not
 remove briefing, branch isolation, exact-tree verification, or atomic landing. Neither execution mode
 weakens validation or grants external authority.
 
@@ -587,11 +572,8 @@ selects every safe repository default without the policy questionnaire. Initiali
 named provider, or the machine-default provider followed by the other supported provider for `auto`.
 Each failed native connection is reported as a warning and skipped; it does not fail repository setup
 or prevent the next connection attempt. It creates `.invariant/config.yml` and does not inspect, create,
-or modify provider instruction files. After deterministic setup, text-mode interactive initialization
-asks one final yes-or-no question about running `invariant establish`.
-Choosing no reports that command without requiring a user-authored prompt. Non-interactive `--defaults`
-also initializes only and reports the separate establishment command. `init` has no establishment
-control flags. Before writing repository files it proves that
+or modify provider instruction files. Initialization ends after deterministic setup; establishment
+is entered explicitly or from the conversation. Before writing repository files it proves that
 Git provides the linked-worktree and `merge-tree --write-tree` capabilities used by the lifecycle.
 It reports provider connection state but never changes machine-wide sign-in. Existing unrelated
 agent instructions are outside initialization's scope. Managed task creation also requires the
@@ -606,18 +588,11 @@ and makes no changes. Explicit replacement runs the normal setup and replaces th
 document; `invariant set <key> <value>` is the path for changing one setting. Machine-readable
 initialization never replaces an existing configuration implicitly.
 
-`invariant config show` displays configured and resolved values after initialization.
-`invariant config init` remains the lower-level configuration-only initializer.
-`invariant config set <key> <value>` updates one validated setting atomically. The settable keys are
-`authority`, `execution`, `integration_branch`, `push_remote`, and `adapters.intent_brief`.
-Version `1` is the configuration schema marker, not an operational setting.
-
-Optional additions to the fixed core are configured under `adapters`. The bundled
-`intent_brief` adapter demonstrates the hook API: `task.created` expands the original goal into one
-prose brief and may interview the user; `candidate.evidenced` returns one whole-candidate verdict
-after evidence collection. It cannot create stages, branches, checks, or ref updates. Both hook
-responses use `task respond`. The model-led default leaves the adapter disabled and relies on the
-coding agent's normal understanding plus normal candidate review.
+The internal configuration engine validates and updates the tracked file atomically. The public
+`invariant set <key> <value>` command exposes `authority`, `execution`, `integration_branch`, and
+`push_remote`; `harness` and session `mode` remain clone-local preferences. Version `1` is the
+configuration schema marker, not an operational setting. Adapters are not configurable in version 1;
+a future `invariant add adapter` flow may introduce them as an explicit extension.
 
 ## 7. Semantic model
 
@@ -763,10 +738,11 @@ The result supplied to verification is one of:
 These are semantic assertions with mechanical validation. A reach classification never manufactures
 the assertion.
 
-### 7.6 Intent-brief adapter
+### 7.6 Reserved intent-brief adapter contract
 
-When `adapters.intent_brief` is enabled, `task begin` returns a `task.created` action whose response
-is a task-local prose brief:
+The implementation retains an experimental task-local intent-brief action contract for future
+extension work. It is not enabled by repository configuration or exposed on the human surface. A
+future `invariant add adapter` command may activate it explicitly. The reserved response is:
 
 ```yaml
 version: 1
@@ -800,17 +776,11 @@ The executable is named `invariant`. Its primary human surface is:
 ```text
 LOCAL   invariant init [--defaults] [--agent <auto|codex|claude>]
 GLOBAL  invariant connect [codex|claude] [--default <codex|claude>]
-LOCAL   invariant ask [--using <provider>] [--dry-run] <prompt>
 LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [--session <id> | --theme <theme>] [<prompt>]
 GLOBAL  invariant serve [--port <port>] [--project <folder>]...  # read-only state explorer
-GLOBAL  invariant project <add|list|remove> ...
-LOCAL   invariant session <new|list|show> ...
-LOCAL   invariant change [--using <provider>] [--id <change-id>] [--dry-run] <prompt>
-LOCAL   invariant establish [--using <provider>] [--id <establishment-id>] [--goal <focus>] [--dry-run | --discard]
-LOCAL   invariant status [<change-id>]
-LOCAL   invariant settings
+LOCAL   invariant establish [--using <provider>]
 LOCAL   invariant set <key> <value>
-GLOBAL  invariant help protocol
+LOCAL   invariant source add ...
 ```
 
 `invariant connect` reports the machine-default harness. `invariant connect --default PROVIDER`
@@ -818,97 +788,34 @@ establishes that native connection and switches the machine default. A clone wit
 preference follows it; `invariant set harness PROVIDER` records a clone-local override under
 `.invariant/runtime/`, which is self-ignored and never committed.
 
-`invariant start` is a terminal client for durable project sessions. A session has a host-owned id,
-one project folder, one human theme, an `ask` or `change` mode, a transcript, and an optional opaque
-provider conversation handle. The host id remains stable when a provider handle changes. A bare
-`start` creates a session; `--session` resumes one in the current repository. `change` mode may
-answer or route a self-contained request into the ordinary public change lifecycle. The
-conversation never writes the repository directly: every implementation still enters isolated
-task execution, candidate verification, and compare-and-swap landing. `:new`, `:sessions`, and
-`:switch` create and select the same durable sessions exposed by the browser workspace.
+`invariant start` is the terminal client for durable project sessions and is the ordinary work
+surface. A session has a host-owned id, one project folder, one human theme, a transcript, and an
+optional opaque provider conversation handle. The host id remains stable when a provider handle
+changes. A bare `start` creates a session; `--session` resumes one in the current repository. The
+conversation answers questions and routes requested writes into the managed lifecycle. It never
+writes the repository directly: every change still enters isolated task execution, candidate
+verification, and compare-and-swap landing. `:new`, `:sessions`, and `:switch` navigate the same
+durable sessions exposed by the browser workspace; `:status`, `:settings`, `:set`, and `:source`
+keep inspection and configuration inside the flow.
 
-Lifecycle and mechanical commands are composable and non-interactive. Repository bootstrap is the
-deliberate exception: `invariant init` is interactive, while `invariant init --defaults` skips the
-policy questionnaire. When terminal input is available, either form offers one final yes-or-no choice
-to establish records after deterministic setup has completed. Non-interactive `--defaults` initializes
-only and reports `invariant establish` as the next step. On an initially clean repository the host
-commits bootstrap files locally before establishment; when
+`invariant establish` composes the same surface rather than creating a second interaction model. It
+starts a session themed “Repository records” and seeds it with `:establish`. With human authority,
+the control turn prepares and displays the exact proposal, normal messages discuss it, and `:record`
+accepts it. With agent authority, the lifecycle completes without a routine decision stop.
+
+Repository bootstrap is interactive, while `invariant init --defaults` skips the policy questionnaire.
+If `start` or `establish` finds no configuration, it runs the same guided initialization and then
+continues into the requested session. On an initially clean repository the host commits bootstrap
+files locally before conversation work; when
 unrelated work is already present it leaves initialization uncommitted and reports that precondition
 before the first establishment or change.
 Repeated text-mode initialization first warns that continuation replaces the complete configuration;
 it proceeds only after an explicit replacement choice.
 
-At the protocol layer, a task ID is a caller-chosen, repository-local identifier for one managed
-change. It begins with an alphanumeric character, may contain alphanumerics, `.`, `_`, and `-`, and
-connects the task's goal, receipt, generated branch, verification, and landing. For example,
-`fix-job-recovery` is the task ID in:
-
-```bash
-invariant task begin fix-job-recovery --goal "Restore active jobs after restart"
-```
-
-The advanced protocol command groups are:
-
-```text
-invariant init [--defaults]
-invariant status [<task-id>]
-invariant governance begin <task-id>
-invariant governance audit-save <task-id> --input <findings-file>
-invariant governance adopt <task-id> <--all-ready|--finding <id>...>
-invariant governance project <task-id> [--input <adoption-manifest>]
-invariant governance coverage <task-id>
-invariant governance projection <schema|example>
-invariant governance defer <task-id>
-invariant governance status <task-id>
-invariant config show
-invariant config init
-invariant config set <key> <value>
-invariant task begin <task-id> --goal <text> [semantic scope...]
-                     [--intent-brief|--no-intent-brief]
-                     [--intent-brief-file <file>]
-invariant task status <task-id>
-invariant task check <task-id> [semantic scope...]
-invariant task finish <task-id> [--check <locator>]...
-invariant task respond <task-id> <action-id> --input <file>
-invariant task action <task-id> <action-id>
-invariant task evidence <task-id> [<evidence-id>]
-invariant task continue <task-id> [--apply]
-invariant task reconcile <task-id>
-invariant task invalidate <task-id> [--discard]
-invariant task guidance <task-id> [--full]
-invariant task assessment <schema|example>
-invariant task assessment prepare <task-id> [--output <file>]
-invariant task intent-brief <schema|example>
-invariant state validate
-invariant context map
-invariant context rows <domain>...
-invariant context semantics [--path <path>]... [--domain <domain>]...
-                            [--interface <interface>]... [--at <commit>]
-invariant context digest [--at <commit>] <domain>...
-invariant context reach [--base <ref>] [--path <path>]...
-                        [--interface <name>]... [--domain <id>]...
-invariant evidence audit <scope|full|schema|example> ...
-invariant evidence audit save <audit-id> --mode <scope|full> --input <findings-file> ...
-invariant evidence fresh <audit-or-discovery> [--at <ref>]
-invariant evidence discovery <capture|resolve> ... [--apply]
-invariant coordinate plan validate <plan>
-invariant coordinate status [<plan>]
-invariant coordinate lease <acquire|renew|release|list|fresh|reap> ...
-invariant candidate verify <candidate> --assessment <file> [--check <locator>]...
-invariant candidate land <candidate> --target <branch> --assessment <file>
-```
-
-The `task` group is the underlying lifecycle interface. These groups expose inspectable mechanical
-capabilities for hosts, diagnostics, CI, and recovery; they do not provide an alternate path around
-lifecycle invariants. The installed package owns the implementation and never invokes
-package-relative skill scripts.
-
-Two commands exist only for recovery. `task reconcile` repairs a task whose landing outran its
-bookkeeping: it replays an integration checkout sync that a crash interrupted after the ref moved,
-and archives a task whose unit trailer already reached the integration branch. `task invalidate`
-abandons a task and removes its generated worktree and branch; it refuses to drop uncommitted or
-unlanded work unless `--discard` is given. `coordinate runtime clean` reports generated work that
-no active receipt references and removes it with `--apply`.
+The protocol engine retains typed task, governance, state, evidence, coordination, and candidate
+operations for the host implementation. They are not part of the `invariant` human command surface
+and are never presented as a recovery procedure. A task ID remains an internal repository-local
+identity connecting a goal, receipt, generated worktree, verification, and landing.
 
 ### 8.1 Structured input
 
@@ -941,8 +848,8 @@ evidence IDs. `task action` retrieves affected semantics, inferred governance, t
 and other action-specific context. `task assessment prepare` exposes the lower-level assessment for
 diagnostics; normal hosts do not edit it.
 
-Adapter inputs do not extend the core assessment schema. When the intent-brief adapter is enabled,
-its final action accepts a separate whole-candidate review:
+Reserved adapter inputs do not extend the core assessment schema. The intent-brief final action
+accepts a separate whole-candidate review:
 
 ```yaml
 version: 1
@@ -956,7 +863,7 @@ candidate_defects: []
 retained_discoveries: []
 ```
 
-`invariant task intent-brief schema` exposes both adapter response shapes.
+The internal protocol schema exposes both reserved response shapes.
 
 ### 8.2 Structured output
 
@@ -966,7 +873,7 @@ duplicates its human rendering; `--verbose` adds that rendering explicitly for d
 
 The `invariant`, protocol, and `invariant-agent` surfaces all emit the same envelope, and an
 exit status crosses the harness boundary unchanged: a blocked core result stays exit `1` when
-reported through `invariant-agent` or `invariant change`. An unexpected internal failure still
+reported through the host or `invariant-agent`. An unexpected internal failure still
 produces the envelope, with diagnostic code `internal_error` and exit `2`.
 
 JSON uses one envelope:
@@ -1421,9 +1328,9 @@ local ref update.
 Both profiles preserve the same receipts, branches, candidate construction, checks, and landing
 guarantees. The distinction is only where the CLI pauses.
 
-### 14.3 Intent-brief adapter
+### 14.3 Reserved intent-brief adapter
 
-With the bundled adapter enabled, the single `task begin` creates or reserves normal isolated work
+If a future extension enables the bundled adapter, the single task begin creates or reserves normal isolated work
 and returns a `task.created` action. The task enters `briefing` only while material intent input is
 pending; `task respond` advances it without replaying begin. `task finish` then captures evidence
 for the exact candidate and returns a `candidate.evidenced` whole-intent review. A changed tree,
@@ -1447,8 +1354,9 @@ A skill may instruct an agent to call `invariant`, but it must not duplicate CLI
 reimplement the lifecycle. Skills must be independently useful and must not hash or import each
 other as freshness dependencies.
 
-Repository-local semantic prose remains optional reference material. Source-tree test adapters may
-invoke the package, but they are not distributed as the application and cannot be imported by the
+Repository-local semantic prose remains optional reference material. The retained test suite is
+restricted to Git mechanics and may invoke the internal core application to exercise exact-tree and
+landing behavior. Test support is not distributed as the application and cannot be imported by the
 mechanics or lifecycle layers.
 
 ## 16. Safety and authority
@@ -1489,8 +1397,9 @@ exchange discriminated values without importing each other. Compatibility shell 
 arguments into package calls and contain no policy.
 
 The distribution is `invariant-cli`; its console entry point is `invariant`, with the advanced
-`invariant-agent` host executable in the same package. `invariant` routes advanced commands directly
-to the core CLI and implements model-backed human operations outside the core dependency layers.
+`invariant-agent` host executable in the same package. `invariant` exposes only the seven human
+commands and implements model-backed operations outside the core dependency layers. The typed core
+CLI is an internal application module used by the host and tests.
 Any future MCP or richer harness adapter must call the same command contract rather than duplicate
 it.
 
@@ -1503,16 +1412,16 @@ The first CLI release is complete when:
 
 - one installed `invariant` executable replaces direct package-relative script invocation;
 - machine connection, repository provider selection, and instruction-file setup remain separate;
-- a human can ask, establish repository records, and land a managed change without supplying task or action
-  IDs;
+- a human can ask, establish repository records, and land a managed change from a durable
+  conversation without supplying task or action IDs;
 - `invariant task begin` creates the receipt and isolated generated worktree without moving the
   integration checkout;
 - `invariant task finish` recomputes reach, verifies the exact prospective tree, and atomically lands
   it;
 - automatic and assisted execution preserve the same lifecycle and differ only in routine pauses;
 - every read-only command supports stable JSON output;
-- existing state validation, reach, audit freshness, coordination, and landing tests pass through the
-  CLI;
+- Git capability, worktree, exact-tree, concurrent landing, and remote-publication mechanics pass
+  through the internal core application;
 - no context or verification command depends on a loaded skill;
 - context mechanics do not depend on coordination runtime;
 - semantic selections enter through explicit arguments or a versioned assessment document;

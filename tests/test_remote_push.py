@@ -58,31 +58,6 @@ def test_unborn_integration_never_pushes(monkeypatch: pytest.MonkeyPatch) -> Non
     assert landing._remote_push_enabled(Path("."), _candidate(old=None)) is False
 
 
-def test_landing_rejects_a_tree_changed_after_adapter_review(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(landing.git, "require_capabilities", lambda _repo: None)
-    monkeypatch.setattr(
-        landing.git,
-        "run",
-        lambda *_args, **_kwargs: git.CompletedGit("", "", 0),
-    )
-    monkeypatch.setattr(landing, "_construct", lambda *_args: _candidate())
-    request = landing.LandRequest(
-        mode="merge",
-        subject="reviewed task",
-        units=("task",),
-        scopes=("area.root",),
-        boundary="no-record",
-        merge_branch="invariant/work/task",
-        target="main",
-        expected_tree="4" * 40,
-    )
-    with pytest.raises(Blocked, match="changed after its adapter review") as captured:
-        landing.verify_and_land(Path("."), request)
-    assert captured.value.code == "stale_adapter_review"
-
-
 def test_remote_target_requires_existing_upstream(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[list[str]] = []
 

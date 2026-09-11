@@ -75,12 +75,12 @@ HTML = """<!doctype html>
 
 
 CSS = """:root {
-  color-scheme: light dark;
-  --paper: light-dark(#ffffff, #151515); --surface: light-dark(#f5f5f2, #1d1d1b);
-  --ink: light-dark(#171717, #f0f0eb); --muted: light-dark(#656560, #a3a39c);
-  --line: light-dark(#c8c8c1, #42423d); --strong-line: light-dark(#202020, #deded7);
-  --accent: light-dark(#007f92, #49c2d2); --ok: light-dark(#237a3b, #63c77b);
-  --warn: light-dark(#986800, #e2b64d); --bad: light-dark(#b42318, #ff796f);
+  color-scheme: dark;
+  --paper: #191919; --surface: #202020;
+  --ink: #e8e8e8; --muted: #8a8a8a;
+  --line: #343434; --strong-line: #555555;
+  --accent: #b48cf2; --ok: #25e04f;
+  --warn: #e6b450; --bad: #ff6666;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
@@ -105,7 +105,8 @@ h1, h2, h3 { letter-spacing: -.025em; margin: 0; } h1 { font-size: 24px; } h2 { 
 .tree { display: grid; gap: 8px; }
 .tree-project { min-width: 0; }
 .tree-row { align-items: start; background: transparent; border: 1px solid transparent; display: grid; gap: 8px; grid-template-columns: 14px minmax(0, 1fr) auto; padding: 8px 9px; text-align: left; width: 100%; }
-.tree-row:hover { border-color: var(--line); } .tree-row.active { background: var(--paper); border-color: var(--strong-line); }
+.tree-row:hover { border-color: var(--line); } .tree-row.active { background: var(--paper); border-color: var(--accent); }
+.tree-row.active .tree-glyph { color: var(--accent); }
 .tree-row.unavailable { color: var(--bad); }
 .tree-glyph { color: var(--muted); font: 11px/1.5 var(--mono); }
 .tree-label { display: block; font-size: 12px; line-height: 1.5; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -114,7 +115,7 @@ h1, h2, h3 { letter-spacing: -.025em; margin: 0; } h1 { font-size: 24px; } h2 { 
 .file-row { grid-template-columns: 14px minmax(0, 1fr); padding-bottom: 6px; padding-top: 6px; }
 .file-copy { min-width: 0; } .file-copy .tree-label { font-family: var(--mono); font-size: 11px; }
 .file-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.live-mark { color: var(--accent); font-style: normal; margin-left: 5px; }
+.live-mark { color: var(--ok); font-style: normal; margin-left: 5px; }
 .empty { border: 1px dashed var(--line); color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 9px; padding: 14px; }
 .empty p { margin: 0; } .empty code { display: block; font: 9px/1.5 var(--mono); margin-top: 9px; overflow-wrap: anywhere; }
 .pane-note { border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; margin: 28px 9px 0; padding-top: 14px; }
@@ -142,7 +143,7 @@ h1, h2, h3 { letter-spacing: -.025em; margin: 0; } h1 { font-size: 24px; } h2 { 
 .lifecycle-summary > div { border-right: 1px solid var(--line); padding: 12px; } .lifecycle-summary > div:last-child { border-right: 0; }
 .lifecycle-summary dt { color: var(--muted); font: 8px var(--mono); text-transform: uppercase; } .lifecycle-summary dd { font: 18px var(--mono); margin: 5px 0 0; }
 .task-list { display: grid; gap: 9px; }
-.task { border: 1px solid var(--line); padding: 13px 15px; } .task.attention { border-color: var(--warn); } .task.bad { border-color: var(--bad); }
+.task { border: 1px solid var(--line); padding: 13px 15px; } .task.ok { border-color: var(--ok); } .task.attention { border-color: var(--warn); } .task.bad { border-color: var(--bad); }
 .task-head { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; } .task-head strong { font-size: 12px; overflow-wrap: anywhere; }
 .task-meta { color: var(--muted); display: flex; flex-wrap: wrap; font: 9px/1.5 var(--mono); gap: 4px 14px; margin-top: 9px; }
 .activity-empty { border: 1px dashed var(--line); color: var(--muted); font-size: 12px; margin: 0; padding: 16px; }
@@ -212,7 +213,7 @@ function renderRepository() {
   const tasks = repositorySnapshot.tasks || []; const plans = repositorySnapshot.plans || []; const leases = repositorySnapshot.leases || []; const processes = repositorySnapshot.processes || []; const evidence = repositorySnapshot.evidence || []; const records = repositorySnapshot.governance?.records || [];
   $("activity-count").textContent = `${tasks.length} active`;
   $("lifecycle-summary").innerHTML = [["Tasks", tasks.length], ["Plans", plans.length], ["Leases", leases.length], ["Records", records.length], ["Evidence", evidence.length]].map(([name, value]) => `<div><dt>${esc(name)}</dt><dd>${esc(value)}</dd></div>`).join("");
-  $("tasks").innerHTML = tasks.length ? tasks.map(item => { const state = item.freshness || item.stage; return `<article class="task ${tone(state) === "bad" ? "bad" : tone(state) === "warn" ? "attention" : ""}"><div class="task-head"><strong>${esc(item.id)}</strong><span class="tag ${tone(item.stage)}">${esc(item.stage)}</span></div><div class="task-meta"><span>${esc(item.kind)}</span><span>${esc(item.freshness)}</span><span>target ${esc(item.target || "—")}</span><span>${esc(item.pending_actions)} pending</span></div></article>`; }).join("") : `<p class="activity-empty">No active changes. Repository mechanics are ready.</p>`;
+  $("tasks").innerHTML = tasks.length ? tasks.map(item => { const state = item.freshness || item.stage; const stateTone = tone(state); return `<article class="task ${stateTone === "ok" ? "ok" : stateTone === "bad" ? "bad" : stateTone === "warn" ? "attention" : ""}"><div class="task-head"><strong>${esc(item.id)}</strong><span class="tag ${tone(item.stage)}">${esc(item.stage)}</span></div><div class="task-meta"><span>${esc(item.kind)}</span><span>${esc(item.freshness)}</span><span>target ${esc(item.target || "—")}</span><span>${esc(item.pending_actions)} pending</span></div></article>`; }).join("") : `<p class="activity-empty">No active changes. Repository mechanics are ready.</p>`;
   $("signals").innerHTML = [
     signal("Plans", plans, item => item.summary || item.id, item => item.valid ? "valid" : "invalid"),
     signal("Leases", leases, item => item.unit, item => item.state),

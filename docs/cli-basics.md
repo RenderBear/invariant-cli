@@ -1,108 +1,103 @@
 # Invariant CLI basics
 
-Invariant has one small human-facing command surface. It connects to a native Codex or Claude Code
-installation and owns the repository lifecycle around that provider. Detailed protocol commands
-remain available to agents and automation.
+Invariant has seven human-facing commands:
 
-| Scope | Commands |
-| --- | --- |
-| Global | `connect`, `help`, and `--version` work anywhere on the machine. |
-| Local | `init`, `ask`, `start`, `change`, `establish`, `source`, `status`, `settings`, and `set` operate only on the current Git repository. |
+```text
+init  connect  start  establish  serve  source  set
+```
 
-## First-time setup
+Questions, changes, status, recovery, and authority decisions happen inside a durable `start`
+conversation. The user is never asked to operate task IDs, worktrees, review files, or lifecycle
+commands.
 
-Install and authenticate at least one provider CLI once on the machine. Invariant does not install
-providers into repositories and does not store their credentials.
+## Connect a coding agent
+
+Invariant uses an existing Codex or Claude Code installation and stores no provider credentials.
 
 ```bash
 invariant connect
-invariant connect codex       # or: invariant connect claude
+invariant connect codex
+invariant connect claude
 invariant connect --default codex
 ```
 
-`connect` without a provider is a read-only status check. With a provider, it runs that CLI's native
-login only when needed. The working default is shown as `AGENT`; other connected providers are
-`AVAILABLE`, while unconfigured alternatives are `OPTIONAL`, not failed setup. `--default
-codex|claude` connects and switches the machine preference. Provider account eligibility, quota,
-and billing remain with that CLI.
+Without an argument, `connect` reports both providers and the machine default. With a provider it
+opens that tool's native sign-in flow when needed. `--default` also changes the machine preference.
+A repository-specific choice can be made later with `invariant set harness codex|claude|auto`.
 
-Initialize the repository and optionally override the machine default for this clone:
+## Initialize a repository
 
 ```bash
 invariant init
-invariant set harness claude
-invariant set harness auto
 ```
 
-Initialization attempts the selected coding agent's native connection. Without a clone-local
-preference, it tries the machine default first and then the other supported provider. A failed attempt
-is shown as a warning, skipped, and does not stop setup. The provider preference lives under
-`.invariant/runtime/` and is never committed, so another machine's choice cannot break a fresh clone;
-initialization never creates or modifies `AGENTS.md` or `CLAUDE.md`.
+Interactive setup asks four questions: who has authority over repository meaning, whether valid
+local transitions run automatically, which branch receives landed work, and whether successful
+landings are published to an existing upstream. There is no adapter question and the tracked
+configuration contains no adapter registry.
 
-At the end of interactive initialization, Invariant asks one yes-or-no question about establishing
-durable repository records. Choosing no finishes initialization and shows `invariant establish`.
-`init` has no establishment flags. Non-interactive `--defaults` seeds the repository and reports the
-separate establishment command.
-
-Ordinary interactive setup asks for authority, execution, landing branch, publication, and
-intent-review policy. To accept agent authority, automatic execution, the current branch,
-local-only publication, and no intent-review add-on without those questions, use:
+Use the defaults without the questionnaire:
 
 ```bash
 invariant init --defaults
 ```
 
-Without a local preference, Invariant prefers the connected machine-default harness and then the
-other available harness.
-On a clean repository, `init` commits its deterministic setup locally; when prior uncommitted work
-exists, it leaves the initialization unstaged for review.
+On a clean repository, initialization commits its deterministic configuration locally. Existing
+provider instructions such as `AGENTS.md` and `CLAUDE.md` are untouched. Running `init` again offers
+to keep the complete configuration or replace it; `set` is the normal way to change one preference.
 
-Running `invariant init` again against a complete configuration warns before the questionnaire. The
-default choice keeps the current file untouched; choosing replacement runs setup and replaces every
-repository setting. Use `invariant set <key> <value>` when changing only one setting.
+Initialization is optional ceremony. If `start` or `establish` finds no configuration, it runs the
+same guided setup, takes the user's choices, and then continues into the requested conversation.
 
-## Everyday commands
-
-Ask a read-only question:
-
-```bash
-invariant ask "Where is retry behavior defined?"
-```
-
-Start a repository conversation:
+## Work through one conversation
 
 ```bash
 invariant start
-invariant start "Where is retry behavior defined?"
-invariant session new "Retry recovery"
+invariant start "Explain how restart recovery is owned"
 invariant start --session <session-id>
-invariant set mode change
 ```
 
-Sessions are durable themes within the current project folder. The default `ask` mode is read-only.
-`change` mode still uses a read-only conversational
-coordinator, but it may classify a turn as an implementation request and route that request through
-the ordinary managed-change lifecycle. It may also answer questions. The saved mode is local
-ignored runtime state, not a tracked repository decision.
+A new conversation can answer questions and route requested writes through Invariant's managed
+lifecycle. The agent remains read-only while interpreting the user's message. When a write is
+needed, Invariant creates an isolated worktree, checks the exact candidate against accepted records,
+verifies it, and lands it atomically on the configured local branch.
 
-`start` creates a durable session unless `--session` selects an existing one. Ending the foreground
-console leaves its theme, transcript, and provider context available to another terminal or the
-local browser workspace. Within one console:
+Sessions are durable files in the local workspace. They retain a theme, transcript, and opaque
+provider handle without becoming repository authority. Useful conversation controls are:
 
-| Command | Effect |
+| Control | Effect |
 | --- | --- |
-| `:mode ask\|change` | Switch the active conversation's capability. |
 | `:new [theme]` | Create and enter another durable session. |
-| `:sessions` | List this project's sessions. |
+| `:sessions` | List sessions in this project. |
 | `:switch ID` | Return to a listed session. |
-| `:status` | Show deterministic repository status without invoking the agent. |
-| `:settings` | Show repository settings. |
-| `:set KEY VALUE` | Update one repository preference. |
-| `:source add ...` | Add one scoped grounding source through the managed lifecycle. |
-| `:exit` or Ctrl-C | End the console. |
+| `:status` | Show deterministic repository and lifecycle status. |
+| `:settings` | Show repository and clone preferences. |
+| `:set KEY VALUE` | Change one preference. |
+| `:source add ...` | Add one scoped grounding source. |
+| `:establish` | Inspect and prepare durable repository records. |
+| `:record` | Accept the exact pending record proposal. |
+| `:exit` | End the console while preserving the session. |
 
-Add a grounding source with one URL or path and one scope:
+## Establish repository records
+
+```bash
+invariant establish
+```
+
+This is composition, not a separate interaction model. `establish` starts a normal durable session
+themed “Repository records” and seeds it with `:establish`.
+
+With agent authority, the audit, delegated authority review when needed, projection, checking, and
+landing continue automatically. With human authority, Invariant may tentatively prepare the exact
+candidate but cannot land it. It presents the recordable findings, their evidence, projected records,
+and changed files in the conversation. The user can discuss the proposal for as long as needed.
+Discussion does not accept or mutate it; entering `:record` accepts that exact candidate with user
+authority and continues verification and landing.
+
+Leaving the conversation preserves the proposal. Running `establish` later resumes the newest
+compatible attempt in another durable conversation.
+
+## Add grounding evidence
 
 ```bash
 invariant source add --url https://example.com/api.json --scope contract:payments-api
@@ -111,270 +106,35 @@ invariant source add --url https://example.com/standards --repo
 ```
 
 `--path` is relative to `.invariant/` and must remain beneath `.invariant/sources/`. `--scope`
-accepts an exact `domain:<id>` or `contract:<id>`. Other values are resolved as natural language;
-quotes group multiword descriptions. Natural resolution is read-only and may select only an
-already accepted domain or contract. `--repo` applies throughout the current repository. Source
-content is presented to agents as untrusted evidence and cannot create semantic records or
-authorize repository work.
+accepts an established `domain:<id>` or `contract:<id>`; a natural-language description may be
+resolved to one existing scope. `--repo` applies throughout the repository. Source material is
+always untrusted evidence: it cannot create records or grant authority by itself.
 
-Request a managed write:
+## Change preferences
 
 ```bash
-invariant change "Restore active jobs after restart"
+invariant set authority human
+invariant set execution auto
+invariant set integration_branch main
+invariant set push_remote off
+invariant set harness claude
 ```
 
-Invariant generates a change ID, opens an isolated worktree, invokes the selected provider there,
-commits the proposed change, captures evidence, checks the exact tree, resolves conflicts within
-the configured decision mode, and lands it locally. Use an explicit ID only when another system
-needs one:
+The first four values are tracked repository policy. `harness` and the optional session `mode` are
+clone-local preferences. Selecting a concrete harness also runs its native connection flow if needed.
+Adapters are intentionally absent from configuration; a future `invariant add adapter` command can
+introduce that extension explicitly.
+
+## View state in the browser
 
 ```bash
-invariant change --id PROJ-142 "Restore active jobs after restart"
-```
-
-Before implementation, `change` decides whether the request is one coherent work item or contains
-genuinely independent work. Small changes stay single. Disjoint ready work items run concurrently in
-isolated worktrees. When one work item creates or changes a contract, its consumers wait and then
-start from the converged contract snapshot; unrelated frontend and backend work may still proceed in
-parallel.
-
-Invariant validates the proposed execution plan before starting any worker. It gives the planner up
-to two chances to repair concrete plan errors and falls back to a single work item when safe
-parallelism is unclear. Generated tool caches do not count as worker output. If an independent
-review rejects a candidate, `change` shows and retains its defects, sends them back to the author for
-a bounded correction, reruns the checks, and asks a fresh reviewer before landing.
-
-Establish or refresh durable repository records:
-
-```bash
-invariant establish
-```
-
-Inspect without model invocation:
-
-```bash
-invariant status
-invariant settings
 invariant serve
-invariant ask --dry-run "Where is retry behavior defined?"
-invariant change --dry-run "Restore active jobs after restart"
-invariant establish --dry-run
 ```
 
-`invariant serve` runs the local workspace at `http://127.0.0.1:3000` for the current OS user until
-that process stops. `invariant init` registers the repository it initializes (and nested
-repositories it finds) for the workspace; `project list` and `project remove` manage that
-machine-local list. The workspace is a read-only explorer: project folders and their session files
-share one tree on the left, while the selected repository's lifecycle state and optional session log
-appear on the right. A session held by a running `invariant start` shows as live. The browser cannot
-create sessions, send turns, change modes, register folders, or advance lifecycle work; use the CLI
-for those operations. It observes only the selected project and receives change notifications
-through Server-Sent Events. Use `invariant serve --port <port>` when the default machine-local port
-is busy.
+The loopback browser is a read-only state and lifecycle explorer. Registered repositories appear as
+folders and their sessions as files in one explorer pane. The detail pane shows repository state,
+lifecycle work, evidence, and the selected session log. It cannot create sessions, send messages,
+change settings, or advance work.
 
-Project registrations, transcripts, and opaque provider handles live beneath the user's Invariant
-configuration directory; none are repository state or authority.
-
-Drop a preserved establishment and its proposal without starting another:
-
-```bash
-invariant establish --discard
-```
-
-`--using codex|claude` overrides the repository provider for one operation. `--id` supplies a stable
-change or establishment identity for automation. If a contract decision is required or the run mode
-asks for confirmation, the operation stops with its generated ID and a concrete continuation.
-
-## Human vocabulary
-
-The human surface uses a small vocabulary even though the underlying protocol is more detailed.
-
-| Term | Meaning |
-| --- | --- |
-| Request | The outcome the user asks for. |
-| Session | One foreground repository conversation with retained context. |
-| Harness | The connected coding agent used for reasoning and implementation. |
-| Change | One managed attempt to fulfill a request. |
-| Plan | Ordered or parallel work items for a change. |
-| Work item | One bounded part of a plan. |
-| Reserved work | Scope currently assigned to one work item. |
-| Proposed change | The exact repository state being checked before landing. |
-| Record | Durable accepted meaning that future changes should preserve. |
-| Domain | A named, stable responsibility in the system. |
-| Contract | An accepted executable promise on which another domain relies. |
-| Decision | An accepted architectural choice and its revision conditions. |
-| Constraint | An accepted restriction on future implementation. |
-| Source | A URL or repository-held document used as attributable grounding. |
-| Evidence | A grounded observation supporting or challenging an interpretation. |
-| Finding | A tracked observation that has not necessarily become an accepted record. |
-| Conflict | A finding that identifies disagreement between a request, record, contract, domain, or observed code. |
-| Delegation | Explicit permission for an agent to make a bounded class of decisions. |
-| Check | A test, schema check, command, or other executable observation. |
-| Land | Atomically apply the checked change to its local landing branch. |
-
-Status uses `ready to resume`, `needs retry`, `needs confirmation`, `needs your decision`,
-`needs attention`, and `complete`. These are persisted states, not process states: Invariant has no
-background workers, and model-backed operations run only in the foreground command that invoked
-them. Impact is rendered as `routine`, `covered`, `unclear`, `records updated`, or `contract
-change`. Findings remain `open` until they have an attributable resolution.
-
-Terms such as governance, disposition, reach, boundary, candidate, unit, and lease belong to the
-automation protocol and do not appear in normal human output.
-
-## What is a task ID?
-
-The protocol calls the internal lifecycle unit a task. Human commands call it a change and generate
-the ID automatically. A task ID connects the goal, disposable receipt, generated worktree,
-verification, and final landing. It is not a Git commit or filename.
-
-Low-level callers may choose a short value such as `fix-job-recovery` or `PROJ-142`. It must begin
-with a letter or number and may contain letters, numbers, `.`, `_`, and `-`. The same ID is passed to
-every low-level command for that task.
-
-## A typical agent-managed change
-
-The following is an illustrative sequence. A coding agent or harness usually supplies the detailed
-scope and runs these commands. Humans normally use `invariant change` instead.
-
-```bash
-# Open the managed task and linked worktree.
-invariant --format json task begin fix-job-recovery \
-  --goal "Restore active jobs after restart" \
-  --path src/jobs.py
-
-# Commit in the returned worktree, then finish from the repository checkout.
-invariant --format json task finish fix-job-recovery
-```
-
-For a routine local candidate, `task finish` infers the assessment and continues through exact-tree
-verification and landing. If semantic decisions remain, it returns one or more typed `actions`
-with `outcome: needs_input`. Submit each response through the action ID; do not edit runtime files:
-
-```bash
-invariant --format json task respond fix-job-recovery core:candidate-review \
-  --input semantic-review.yml
-```
-
-The default lifecycle result contains stable action references and candidate evidence IDs. Fetch
-the prompt, response schema, candidate context, or individual observations only when needed:
-
-```bash
-invariant --format json task action fix-job-recovery core:candidate-review
-invariant --format json task evidence fix-job-recovery
-invariant --format json task evidence fix-job-recovery state:<id>
-```
-
-`task assessment prepare` remains available for low-level inspection. A failed finish
-preserves the task receipt and managed worktree so the same task ID can be inspected and resumed.
-Successful completion archives the brief, review packet, evidence, final receipt, and a compact
-`summary.yml` under `.invariant/runtime/history/`, keyed by the landed commit. `task status` and
-`task evidence` continue to work after completion.
-
-When `adapters.intent_brief` is enabled, the single `task begin` creates the normal isolated worktree
-and returns a `task.created` action. The adapter writes one prose brief and asks only questions whose
-answers would materially change implementation or acceptance. After implementation, `task finish`
-collects mechanical evidence and returns a `candidate.evidenced` action. Its response is one verdict
-over the whole brief—not a matrix of placeholders or manually transcribed check results.
-
-These are hook actions, not adapter-owned stages. The core still owns receipt freshness, branch
-isolation, candidate construction, exact-tree verification, assisted transitions, compare-and-swap
-landing, and cleanup. A changed goal, brief, adapter implementation, or candidate tree invalidates
-the corresponding response.
-
-## Establishing repository records
-
-Establishment is one resumable session with distinct investigation, record creation, and checking
-phases. The first pass establishes durable records. Run it again after committed repository changes
-to reconcile stale or incomplete records:
-
-```bash
-invariant establish
-```
-
-The bare command resumes the latest compatible unfinished establishment; an explicit ID is not
-needed after a stopped run. A failed step reports its first concrete problem, confirms what was
-saved and that no process is still running, then names the next task and its command. It also offers
-`--discard` when dropping the saved proposal is preferable. With agent authority, retrying an older
-invalid generated projection returns the attempt to investigation so the same command can correct
-it instead of replaying a proposal that cannot pass. Equivalent older attempts collapse into one
-`Repository records` item in human-facing status.
-
-Selected findings that carry complete record projections are projected directly. When a selected
-finding has none, the command asks the agent to author the missing domain, contract, constraint, or
-semantic records from that finding's evidence, or to defer it with a reason, before verification.
-Establishment reserves every domain that already exists on the integration branch, so a later pass
-may re-record one; that is reconciliation, not a scope expansion.
-
-With agent authority and automatic execution, the agent owns finding selection and the lifecycle
-owns projection, checking, and landing. With human authority, the same command asks only which
-findings to record and whether to accept the exact proposal, which it lists by record and file
-before asking; it translates those answers into the protocol and continues the mechanics itself. A
-selection whose projection is rejected reopens the finding choice on the next run. Declining the
-proposal is an ordinary outcome, not an error: the exact proposal stays available for another
-look or for `--discard`.
-
-The completion panel names the records that landed. When the audit produced nothing to record,
-the panel is titled `Audit recorded` and says so; the audit itself still lands as evidence.
-
-The equivalent protocol sequence begins with:
-
-```bash
-invariant governance begin governance-baseline
-invariant governance audit-save governance-baseline --input findings.yml
-```
-
-The saved file is named `audit-<UTC timestamp>.yml`; its YAML also carries the RFC 3339
-`created_at` value and exact Git ground and tree.
-
-When the agent may decide, it continues through ready findings without a routine approval stop.
-When the user must decide, it summarizes the saved audit and offers deeper investigation, recording
-all ready findings, recording selected findings, or leaving them open.
-
-```bash
-invariant governance adopt governance-baseline --all-ready
-invariant governance adopt governance-baseline --finding recovery-ownership
-invariant governance project governance-baseline
-invariant governance coverage governance-baseline
-invariant governance defer governance-baseline
-```
-
-An audit finding can carry complete `records` projections. The project command materializes those
-unambiguous mappings and validates the generated registries. If semantic content is missing, it
-writes a draft whose unresolved entries must be mapped to records, retained discoveries, or
-explicit deferrals; coverage reports every selected finding.
-
-## Agent and harness interfaces
-
-The remaining command groups are primarily integration surfaces:
-
-| Group | Purpose |
-|---|---|
-| `task` | Manage the fixed brief, branch, assessment, verification, and landing lifecycle. |
-| `governance` | Coordinate a repeatable repository-wide audit and adoption pass. |
-| `context` | Retrieve affected domains, architecture, contracts, reach, and digests. |
-| `evidence` | Frame and save audits or capture progressive discoveries. |
-| `coordinate` | Manage temporary plans and causal leases for concurrent work. |
-| `candidate` | Expose exact-candidate verification and landing mechanics. |
-| `state` | Validate tracked Invariant configuration, governance, and evidence. |
-
-Use `--help` at any level for command syntax. Audit and assessment inputs are self-describing:
-
-```bash
-invariant evidence audit schema
-invariant evidence audit example
-invariant task assessment schema
-invariant task assessment example
-invariant task intent-brief schema
-invariant task intent-brief example
-invariant context semantics --path src/example.py
-```
-
-`context semantics` also accepts repeated `--domain` and `--interface` coordinates plus `--at` for
-historical retrieval. Scoped queries return applicable active records; an unscoped query returns the
-full index, including superseded records. JSON results retain open `relations` and `facets` and carry
-the canonical-prose digest.
-
-For automation, `--format json` emits protocol 1 with typed task state, actions, artifacts, and an
-`outcome` such as `ready`, `needs_input`, or `awaiting_approval`. Add `--verbose` only when the full
-human-readable rendering is also needed. `task guidance` is concise by default; use
-`task guidance <id> --full` when the detailed reasoning handbook is genuinely useful.
+Use `invariant serve --port <port>` when port 3000 is occupied. Project registrations, transcripts,
+and provider handles live in the user's local Invariant workspace and carry no semantic authority.

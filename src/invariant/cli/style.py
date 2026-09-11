@@ -18,15 +18,15 @@ import time
 from collections.abc import Sequence
 from typing import TextIO
 
-# Palette — ANSI attributes so the user's terminal theme supplies the actual colours.
-ACCENT = "1;36"
-STRONG = "1"
-MUTED = "2"
-OK = "1;32"
-OK_TEXT = "32"
-WARN = "1;33"
-WARN_TEXT = "33"
-BAD = "1;31"
+# Palette — fixed truecolour tones shared with the state explorer.
+ACCENT = "1;38;2;180;140;242"
+STRONG = "1;38;2;232;232;232"
+MUTED = "38;2;138;138;138"
+OK = "1;38;2;37;224;79"
+OK_TEXT = "38;2;37;224;79"
+WARN = "1;38;2;230;180;80"
+WARN_TEXT = "38;2;230;180;80"
+BAD = "1;38;2;255;102;102"
 
 # Glyphs — each one is reserved for a single meaning.
 BOX_TL, BOX_TR, BOX_BL, BOX_BR, BOX_H, BOX_V = "╭", "╮", "╰", "╯", "─", "│"

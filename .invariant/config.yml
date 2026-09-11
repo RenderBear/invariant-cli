@@ -3,5 +3,3 @@ authority: agent
 execution: auto
 integration_branch: auto
 push_remote: off
-adapters:
-  intent_brief: off

@@ -139,8 +139,7 @@ upstream. Never choose or configure an upstream automatically, and never run `gi
 Invariant's landing flow. If the remote rejects the update, preserve and report the completed local
 landing.
 
-Repositories may enable the bundled `adapters.intent_brief` unit. It expands the request into a
-task-local prose brief and may ask only material questions. After the CLI collects exact-tree
-evidence, the adapter returns one verdict over the whole brief before landing. Respond through the
-action API; do not edit task runtime or transcribe check output. When disabled, the fixed Invariant
-lifecycle remains unchanged.
+The intent-brief hook is reserved for a future explicit adapter-installation flow. Repository
+configuration does not enable it. If a host explicitly supplies that task-local extension, it may ask
+only material questions and must return one verdict over the whole brief after exact-tree evidence.
+The fixed Invariant lifecycle remains unchanged.

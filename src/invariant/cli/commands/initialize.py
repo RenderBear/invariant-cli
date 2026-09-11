@@ -172,7 +172,7 @@ def _logo() -> None:
 def _interaction_intro(*, terminal: bool | None = None) -> None:
     if terminal is None:
         terminal = sys.stdin.isatty() and sys.stdout.isatty()
-    print(f"\n{_color(style.MUTED, 'GUIDED SETUP  ·  5 choices')}")
+    print(f"\n{_color(style.MUTED, 'GUIDED SETUP  ·  4 choices')}")
     hint = "↑/↓ navigate • enter select" if terminal else "type an option value • enter select"
     print(_color(style.MUTED, hint))
 
@@ -200,7 +200,7 @@ def _interactive(
             ),
         ),
         "agent",
-        progress="1/5",
+        progress="1/4",
     )
     execution = _select(
         "Execution",
@@ -210,7 +210,7 @@ def _interactive(
             ("assisted", "Pause for confirmation", "Pause before branch creation and verified landing."),
         ),
         "auto",
-        progress="2/5",
+        progress="2/4",
     )
     integration_branch = _select(
         "Landing",
@@ -220,7 +220,7 @@ def _interactive(
             ("named", "Another local branch", "Keep one fixed convergence target."),
         ),
         "auto",
-        progress="3/5",
+        progress="3/4",
     )
     if integration_branch == "named":
         try:
@@ -237,32 +237,13 @@ def _interactive(
             ("on", "Publish upstream", "Push the exact commit to the branch's existing upstream."),
         ),
         "off",
-        progress="4/5",
-    )
-    task_adapter = _select(
-        "Requests",
-        "Should Invariant expand each request into a prose intent brief?",
-        (
-            (
-                "model",
-                "Direct",
-                "Use the coding agent's normal understanding and the core verification lifecycle.",
-            ),
-            (
-                "brief",
-                "Intent brief",
-                "Expand intent, ask material questions, and review the exact candidate before landing.",
-            ),
-        ),
-        "model",
-        progress="5/5",
+        progress="4/4",
     )
     return bootstrap.BootstrapSettings(
         authority=authority,
         execution=execution,
         integration_branch=integration_branch,
         push_remote=push_remote,
-        intent_brief=task_adapter == "brief",
     )
 
 
@@ -279,11 +260,6 @@ def _summary(lines: list[str], *, show_recommendation: bool = True) -> None:
     if value("INTEGRATION-BRANCH-SETTING") == "auto":
         branch = f"{branch} (current branch)"
     publication = "Local only" if value("PUSH-REMOTE") == "off" else "Existing upstream"
-    task_adapter = (
-        "Intent brief"
-        if value("INTENT-BRIEF-ADAPTER") == "on"
-        else "Agent's own workflow"
-    )
     agent = {
         "auto": "Automatic",
         "codex": "Codex",
@@ -294,7 +270,6 @@ def _summary(lines: list[str], *, show_recommendation: bool = True) -> None:
         *([("Agent", agent)] if agent else []),
         ("Autonomy", f"{authority} · {execution}"),
         ("Landing", f"{branch} · {publication}"),
-        ("Add-ons", task_adapter if task_adapter == "Intent brief" else "None"),
     )
     print(f"\n{_color(style.OK_TEXT, '  Repository ready')}\n")
     print(
@@ -311,27 +286,6 @@ def _summary(lines: list[str], *, show_recommendation: bool = True) -> None:
             prompt, width=76, initial_indent="  ", subsequent_indent="  "
         )
         print(recommendation)
-
-
-def establishment_choice() -> bool:
-    return _select(
-        "Establish records",
-        "Should Invariant establish the repository's durable records now?",
-        (
-            (
-                "yes",
-                "Yes",
-                "Use the selected coding agent to inspect the repository and establish its records.",
-            ),
-            (
-                "no",
-                "No",
-                "Finish initialization now and run invariant establish when ready.",
-            ),
-        ),
-        "yes",
-        progress="FINAL",
-    ) == "yes"
 
 
 def replacement_choice() -> bool:

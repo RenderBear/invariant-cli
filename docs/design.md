@@ -102,10 +102,23 @@ Diagrams are semantic HTML laid out with Grid or Flexbox; never raster images.
 
 ## Local workspace
 
-The `invariant serve` workspace translates the terminal language into a continuously updated
-project-and-session surface. It uses the document palette on Paper, with cyan reserved for the
-Invariant wordmark, user turns, and live-connection mark. Green, amber, and red retain their terminal
-meanings for healthy, waiting, and invalid or stale state. No state relies on colour alone.
+The `invariant serve` workspace translates the terminal language into a continuously updated,
+dark project-and-session surface. Lavender is reserved for the Invariant wordmark and user turns;
+vivid green marks healthy state. Amber and red retain their terminal meanings for waiting and
+invalid or stale state. No state relies on colour alone.
+
+| Token | Value | Use |
+| --- | --- | --- |
+| Paper | `#191919` | Main workspace background |
+| Surface | `#202020` | Explorer background and selected rows |
+| Ink | `#e8e8e8` | Primary text and values |
+| Muted | `#8a8a8a` | Labels, metadata, and secondary text |
+| Line | `#343434` | Ordinary rules and borders |
+| Strong line | `#555555` | Major boundaries |
+| Accent | `#b48cf2` | Wordmark, prompts, user turns, and explorer selection |
+| Ok | `#25e04f` | Healthy state, success titles, and success borders |
+| Warn | `#e6b450` | Waiting and decision state |
+| Bad | `#ff6666` | Invalid, failed, and stale state |
 
 - The application shell has two semantic columns: one file-explorer pane and one state-detail pane.
   Registered projects are folders; their themed sessions are nested `.session` files in the same
@@ -144,18 +157,18 @@ SVG figures under `.github/assets/` follow the document palette with one additio
 
 ## Terminal palette
 
-Colour is expressed as ANSI attributes so the user's terminal theme supplies the actual hues.
-Every attribute has exactly one role. The wordmark is the only bold, coloured brand element in a
-command; a box border takes the unit's state tone.
+Colour is expressed with fixed ANSI truecolour values shared with the state explorer. Every colour
+has exactly one role. The wordmark is the only bold, coloured brand element in a command; a box
+border takes the unit's state tone.
 
 | Token | Attribute | Role |
 | --- | --- | --- |
-| Accent | `1;36` bold cyan | The wordmark, the connected agent's name and glyph, the user prompt, the next-action arrow and command callouts |
-| Strong | `1` bold | The active option in a questionnaire, emphasis inside agent prose |
-| Muted | `2` dim | Unit titles, box borders at rest, field labels, the turn rule, the spinner line, durations, hints |
-| Ok | `32` green | Success titles and borders, trail marks; completed, ready, valid, landed states |
-| Warn | `33` amber / `1;33` bold amber | Decision titles and borders, warnings, recommended options; waiting and in-progress states |
-| Bad | `1;31` bold red | Failure marks; failed, invalid, stale, absent states |
+| Accent | `#b48cf2` lavender | The wordmark, the connected agent's name and glyph, the user prompt, the next-action arrow and command callouts |
+| Strong | `#e8e8e8` bold off-white | The active option in a questionnaire, emphasis inside agent prose |
+| Muted | `#8a8a8a` gray | Unit titles, box borders at rest, field labels, the turn rule, the spinner line, durations, hints |
+| Ok | `#25e04f` vivid green | Success titles and borders, trail marks; completed, ready, valid, landed states |
+| Warn | `#e6b450` amber | Decision titles and borders, warnings, recommended options; waiting and in-progress states |
+| Bad | `#ff6666` red | Failure marks; failed, invalid, stale, absent states |
 
 Plain text is the default; nothing else is coloured. `NO_COLOR` disables every attribute, and
 output that is not a terminal is emitted as the plain `NAME: value` records.
@@ -239,7 +252,7 @@ Decision:
 │                                                │
 ╰────────────────────────────────────────────────╯
 
-(decide) › Record all, none, or selected numbers: _
+(change) › :record _                                  explicit authority in the conversation
 ```
 
 Failure:
@@ -257,10 +270,10 @@ Conversation:
 █ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
 █ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █    conversation
 
-  codex  ·  ask mode  ·  session 1
+  codex  ·  change mode  ·  session 1
   :help for commands  ·  Ctrl-C to leave
 
-(ask) › what owns job recovery?         muted mode, accent ›, plain question (redrawn after Enter)
+(change) › what owns job recovery?      muted mode, accent ›, plain question (redrawn after Enter)
 
 (codex) ›                               the settled speaker line, with no duration
   The job runner owns recovery. Restart re-queues every non-terminal
@@ -268,11 +281,11 @@ Conversation:
 
   ──────────────────────────────────… full available terminal width, muted, blank line each side
 
-(ask) › next question
+(change) › next question
 ```
 
-- Both parties speak from the same shape: `(role) ›`. The user's role is the session mode,
-  `ask` or `change`, in Muted; the agent's role is its provider name, `codex` or `claude`, in
+- Both parties speak from the same shape: `(role) ›`. The user's role is the session mode in Muted;
+  new sessions use `change` so one conversation can answer or act. The agent's role is its provider name, `codex` or `claude`, in
   Accent. The `›` is Accent for both.
 - The question line is redrawn in that shape once Enter is pressed, when it fits on one physical
   line.
@@ -285,8 +298,6 @@ Conversation:
   markers removed; fenced code blocks are kept verbatim and unwrapped, indented four spaces.
 - Each complete question-and-answer turn ends with a rule spanning the available terminal width.
   The rule separates one Q&A set from the next rather than dividing either speaker's content.
-  One-shot `ask` prints the question line, one blank line, and the agent's line and prose with no
-  rule.
 - Block letters and boxes are reserved for system state; agent prose never receives them.
 - Ending a conversation prints one quiet `Session ended` line without a wordmark, box, or session
   count, with the same blank-line boundary before the shell resumes.
@@ -307,7 +318,7 @@ Conversation:
 ## Terminal questionnaire
 
 ```text
-SETUP  2/5                             muted progress
+SETUP  2/4                             muted progress
 Authority                              strong title
 Who may define repository-wide meaning?
 

@@ -243,8 +243,19 @@ The authority review may make a finding `adoptable` when the accepted policy and
 repository or task context are sufficient. It retains `needs-authority` when the decision requires
 an actual user choice, an external authority, or a policy change. Agent delegation never substitutes
 for the `user:` acceptance required to change policy (§3.3), and a human-authority repository still
-stops for the human's decision. The resulting audit remains evidence; selected records become
-authority only through the ordinary candidate review and landing lifecycle.
+requires the human's decision.
+
+A conversational host MUST keep that decision inside the conversation which requested or resumed
+the establishment. It MAY tentatively select the recordable findings and construct the exact
+candidate before authority is granted, because neither action changes the integration ref or makes
+the proposal authoritative. Before accepting the candidate it presents the findings, their evidence,
+and the exact projected record change to the user. An explicit accept action in that conversation
+binds the resulting review to an attributable `user:` locator and may continue verification and
+landing. Ordinary discussion is not acceptance, and leaving the conversation preserves the pending
+proposal without weakening the authority boundary.
+
+The resulting audit remains evidence; selected records become authority only through the ordinary
+candidate review and landing lifecycle.
 
 ### 2.7 Validation
 

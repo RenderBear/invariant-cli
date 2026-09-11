@@ -16,7 +16,6 @@ class BootstrapSettings:
     execution: str = "auto"
     integration_branch: str = "auto"
     push_remote: str = "off"
-    intent_brief: bool = False
 
 
 def initialize(
@@ -38,7 +37,6 @@ def initialize(
         execution=settings.execution,
         integration_branch=settings.integration_branch,
         push_remote=settings.push_remote,
-        intent_brief=settings.intent_brief,
         overwrite=overwrite,
     )
     resolved = config.resolve(repo)
@@ -50,6 +48,5 @@ def initialize(
         f"INTEGRATION-BRANCH: {resolved.integration_branch}",
         f"INTEGRATION-BRANCH-SETTING: {settings.integration_branch}",
         f"PUSH-REMOTE: {settings.push_remote}",
-        f"INTENT-BRIEF-ADAPTER: {'on' if settings.intent_brief else 'off'}",
         f"PROMPT: {ESTABLISH_COMMAND}",
     ]

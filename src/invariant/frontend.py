@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from invariant import __version__, conversation, host, observer, workspace
-from invariant.cli import app as protocol_cli
 from invariant.cli import style
 from invariant.cli.argv import hoist_global_options, requested_format
 from invariant.cli.commands import initialize as initialize_command
@@ -44,24 +43,6 @@ from invariant.semantics import sources
 from invariant.semantics.namespaces import Locator, parse_source_scope
 
 
-PUBLIC_COMMANDS = {
-    "ask",
-    "change",
-    "connect",
-    "establish",
-    "help",
-    "init",
-    "project",
-    "serve",
-    "session",
-    "set",
-    "settings",
-    "source",
-    "start",
-    "status",
-}
-
-
 class Parser(argparse.ArgumentParser):
     def error(self, message: str) -> None:
         raise UsageError(f"Invariant: {message}")
@@ -82,9 +63,8 @@ def build_parser() -> argparse.ArgumentParser:
             "durable while coding agents plan, edit, verify, and land local changes."
         ),
         epilog=(
-            "Bring an existing Codex or Claude sign-in; add grounding sources and intent "
-            "review only when useful. Low-level protocol commands remain available for automation. "
-            "Run 'invariant help protocol' to see them."
+            "Start one conversation for questions, changes, status, and human decisions. "
+            "Invariant uses an existing Codex or Claude Code sign-in."
         ),
     )
     parser.add_argument("--format", choices=["text", "json"], default="text")
@@ -110,7 +90,7 @@ def build_parser() -> argparse.ArgumentParser:
     initialize.set_defaults(handler=_init)
 
     connection = commands.add_parser(
-        "connect", help="use an existing Codex or Claude sign-in"
+        "connect", help="inspect or connect Codex and Claude Code"
     )
     connection.add_argument("provider", nargs="?", type=_provider)
     connection.add_argument(
@@ -118,22 +98,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="default_provider",
         type=_provider,
         metavar="codex|claude",
-        help="connect and make this the machine's default harness",
+        help="connect and make this the machine's default agent",
     )
     connection.set_defaults(handler=_connect)
 
-    ask = commands.add_parser(
-        "ask", help="ask a read-only repository question"
-    )
-    _invocation_arguments(ask, timeout=600)
-    ask.add_argument(
-        "--dry-run", action="store_true", help="preview without invoking the agent"
-    )
-    ask.add_argument("prompt")
-    ask.set_defaults(handler=_ask)
-
     start = commands.add_parser(
-        "start", help="start a persistent repository conversation"
+        "start", help="start or resume the repository conversation"
     )
     _invocation_arguments(start, timeout=600)
     start.add_argument(
@@ -168,69 +138,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     serve.set_defaults(handler=_serve)
 
-    projects = commands.add_parser("project", help="manage machine-local project folders")
-    project_commands = projects.add_subparsers(
-        dest="project_command", required=True, parser_class=Parser
-    )
-    project_list = project_commands.add_parser("list", help="list registered projects")
-    project_list.set_defaults(handler=_project_list)
-    project_remove = project_commands.add_parser("remove", help="forget a project and its sessions")
-    project_remove.add_argument("project_id")
-    project_remove.set_defaults(handler=_project_remove)
-
-    sessions = commands.add_parser("session", help="manage durable project sessions")
-    session_commands = sessions.add_subparsers(
-        dest="session_command", required=True, parser_class=Parser
-    )
-    session_new = session_commands.add_parser("new", help="create a themed session")
-    session_new.add_argument("theme")
-    session_new.add_argument("--mode", choices=["ask", "change"])
-    session_new.set_defaults(handler=_session_new)
-    session_list = session_commands.add_parser("list", help="list this project's sessions")
-    session_list.set_defaults(handler=_session_list_command)
-    session_show = session_commands.add_parser("show", help="show one session and its transcript")
-    session_show.add_argument("session_id")
-    session_show.set_defaults(handler=_session_show)
-
-    change = commands.add_parser(
-        "change", help="implement, check, and land one managed change"
-    )
-    _invocation_arguments(change, timeout=1800)
-    change.add_argument("--id", dest="change_id", help="stable change ID for automation")
-    change.add_argument("--boundary", default="unresolved", help=argparse.SUPPRESS)
-    change.add_argument("--path", action="append", default=[], help=argparse.SUPPRESS)
-    change.add_argument("--interface", action="append", default=[], help=argparse.SUPPRESS)
-    change.add_argument("--domain", action="append", default=[], help=argparse.SUPPRESS)
-    change.add_argument("--dry-run", action="store_true", help="preview without creating state")
-    change.add_argument("prompt")
-    change.set_defaults(handler=_change)
-
     establish = commands.add_parser(
-        "establish", help="establish or refresh durable repository records"
+        "establish", help="open a conversation and prepare durable repository records"
     )
     _invocation_arguments(establish, timeout=1800)
-    establish.add_argument(
-        "--id", dest="change_id", help="stable establishment ID for automation"
-    )
-    establish.add_argument("--goal", help="optional focus for repository establishment")
-    establish.add_argument(
-        "--dry-run", action="store_true", help="preview without creating state"
-    )
-    establish.add_argument(
-        "--discard",
-        action="store_true",
-        help="drop the preserved establishment and its proposal without starting another",
-    )
-    establish.set_defaults(handler=_establish)
-
-    status_parser = commands.add_parser(
-        "status", help="show repository state and the next useful operation"
-    )
-    status_parser.add_argument("change_id", nargs="?")
-    status_parser.set_defaults(handler=_status)
-
-    settings = commands.add_parser("settings", help="show repository settings")
-    settings.set_defaults(handler=_settings)
+    establish.set_defaults(handler=_enter_establishment)
 
     setting = commands.add_parser("set", help="set one repository preference")
     setting.add_argument("key")
@@ -249,9 +161,6 @@ def build_parser() -> argparse.ArgumentParser:
     _source_add_arguments(source_add)
     source_add.set_defaults(handler=_source_add, session_provider=None)
 
-    help_parser = commands.add_parser("help", help="show help for a command surface")
-    help_parser.add_argument("surface", nargs="?", choices=["protocol"])
-    help_parser.set_defaults(handler=_help)
     return parser
 
 
@@ -585,7 +494,11 @@ def _init(args: argparse.Namespace) -> CommandResult:
     settings = initialize_command.settings(
         repo,
         defaults=args.defaults,
-        show_logo=not replacing and args.format == "text",
+        show_logo=(
+            not replacing
+            and args.format == "text"
+            and bool(getattr(args, "show_logo", True))
+        ),
     )
     # The provider choice is a fact about this clone and machine, so it never enters the
     # tracked configuration that the setup commit records.
@@ -628,76 +541,24 @@ def _init(args: argparse.Namespace) -> CommandResult:
     if resolved.integration_branch_setting == "auto":
         landing = f"{landing} (current)"
     publishing = "local only" if resolved.push_remote == "off" else "publish upstream"
-    requests = (
-        "Intent brief" if resolved.adapters.is_enabled("intent_brief") else "Direct"
-    )
     lines.extend(
         [
             f"POLICY: {authority} · {execution}",
             f"LANDING: {landing} · {publishing}",
-            f"REQUESTS: {requests}",
         ]
     )
     if setup_commit:
         lines.append(f"SETUP-COMMIT: {setup_commit}")
     elif existing_changes:
         lines.append("SETUP-COMMIT: not created — repository has existing changes")
-    offer_establishment = args.format == "text" and (
-        not args.defaults or sys.stdin.isatty()
-    )
-    establish_now = (
-        initialize_command.establishment_choice() if offer_establishment else False
-    )
-
-    establishment_result: dict[str, Any] = {}
-    if establish_now and existing_changes:
-        lines.append(
-            "ESTABLISH: waiting — commit the initialization, then run 'invariant establish'"
-        )
-        connection_step = (
-            f", connect {selected_provider.value}"
-            if connected is None
-            else ""
-        )
-        lines.append(
-            f"NEXT: review and commit the initialization{connection_step}, then run 'invariant establish'"
-        )
-    elif establish_now and connected is None:
-        lines.append("ESTABLISH: skipped — no coding agent connected")
-        lines.append(
-            f"NEXT: run 'invariant connect {selected_provider.value}', then 'invariant establish'"
-        )
-    elif establish_now:
-        established = _establish(
-            argparse.Namespace(
-                using=None,
-                model=None,
-                timeout=1800,
-                change_id=None,
-                goal=None,
-                dry_run=False,
-                discard=False,
-                verbose=False,
-            )
-        )
-        lines.extend(established.lines)
-        if isinstance(established.data, dict):
-            establishment_result = established.data
-    elif existing_changes:
-        connection_step = (
-            f", connect {selected_provider.value}"
-            if connected is None
-            else ""
-        )
-        lines.append(
-            f"NEXT: review and commit the initialization{connection_step}, then run 'invariant establish'"
-        )
+    if existing_changes:
+        lines.append("NEXT: review and commit the initialization, then run 'invariant start'")
     elif connected is None:
         lines.append(
-            f"NEXT: run 'invariant connect {selected_provider.value}', then 'invariant establish'"
+            f"NEXT: install or sign in to {_provider_name(selected_provider)}, then run 'invariant start'"
         )
     else:
-        lines.append("NEXT: run 'invariant establish' when you are ready to establish records")
+        lines.append("NEXT: run 'invariant start' and describe what you need")
     return CommandResult(
         lines,
         {
@@ -712,7 +573,6 @@ def _init(args: argparse.Namespace) -> CommandResult:
             "agent": configured,
             "connections": attempts,
             "setup_commit": setup_commit,
-            "establishment": establishment_result,
         },
     )
 
@@ -856,7 +716,7 @@ def _session_list_command(_: argparse.Namespace) -> CommandResult:
         for item in sessions
     ]
     if not lines:
-        lines = ["STATUS: no sessions", 'NEXT: invariant session new "<theme>"']
+        lines = ["STATUS: no sessions", "NEXT: enter :new <theme> in the conversation"]
     return CommandResult(lines, {"project": selected_project, "sessions": sessions})
 
 
@@ -911,6 +771,7 @@ class _ConsoleSession:
     mode: str
     theme: str
     provider_session_id: str = ""
+    establishment_id: str = ""
 
 
 def _show(title: str, lines: list[str], *, critical: bool = False) -> None:
@@ -949,13 +810,26 @@ def _session_turn(
         session.mode = str(saved.get("mode") or session.mode)
         session.provider_session_id = str(saved.get("provider_session_id") or "")
         workspace.append_message(session.identifier, "user", message)
+        decision_context = ""
+        if session.establishment_id:
+            try:
+                packet = _human_record_packet(repo, session.establishment_id)
+            except InvariantError:
+                session.establishment_id = ""
+            else:
+                decision_context = json.dumps(packet.data, sort_keys=True)
         turn = style.turn(provider.value)
         try:
             with turn:
                 result = invoke_session(
                     provider,
                     repo,
-                    conversation.prompt(repo, session.mode, message),
+                    conversation.prompt(
+                        repo,
+                        session.mode,
+                        message,
+                        decision_context=decision_context,
+                    ),
                     conversation.schema(session.mode),
                     session_id=session.provider_session_id or None,
                     model=model,
@@ -1042,10 +916,63 @@ def _session_list(
     _show("Sessions", lines)
 
 
+def _session_establishment(
+    args: argparse.Namespace,
+    repo: Path,
+    provider: AgentProvider,
+    session: _ConsoleSession,
+    *,
+    accept: bool,
+) -> None:
+    change_id = session.establishment_id or (_latest_establishment(repo) if accept else None)
+    if accept and change_id is None:
+        raise UsageError("Invariant: there is no record proposal to accept; enter :establish first")
+    result = _establish(
+        argparse.Namespace(
+            using=provider,
+            model=args.model,
+            timeout=max(args.timeout, 1800),
+            change_id=change_id,
+            goal=None,
+            dry_run=False,
+            discard=False,
+            verbose=False,
+            conversation_flow="record" if accept else "prepare",
+        )
+    )
+    if isinstance(result.data, dict):
+        identifier = result.data.get("id")
+        status = str(result.data.get("status") or "")
+        if isinstance(identifier, str):
+            session.establishment_id = "" if status == "completed" else identifier
+    _show("Repository records", result.lines)
+    workspace.append_message(
+        session.identifier,
+        "system",
+        "\n".join(result.lines),
+        state=str(result.data.get("status") or "complete")
+        if isinstance(result.data, dict)
+        else "complete",
+        action="record" if accept else "establish",
+    )
+
+
 def _start(args: argparse.Namespace) -> CommandResult:
     if args.format == "json":
         raise UsageError("Invariant: start is an interactive text command")
     repo = git.root()
+    if not config.initialized(repo):
+        initialized = _init(
+            argparse.Namespace(
+                format="text",
+                defaults=False,
+                agent=(args.using.value if args.using is not None else None),
+                show_logo=False,
+            )
+        )
+        rendered = style.render("init", initialized.lines, branded=False)
+        if rendered:
+            print(rendered)
     pending = args.prompt.strip() if isinstance(args.prompt, str) else ""
     if args.session_id:
         if args.theme:
@@ -1074,7 +1001,7 @@ def _start(args: argparse.Namespace) -> CommandResult:
         saved = workspace.new_session(
             repo,
             theme,
-            mode=args.mode or preferences.session_mode(repo),
+            mode=args.mode or "change",
             provider=provider.value,
         )
         active = _ConsoleSession(
@@ -1086,6 +1013,23 @@ def _start(args: argparse.Namespace) -> CommandResult:
         active.mode = args.mode
         workspace.update_session(active.identifier, mode=args.mode)
     return _console_session(args, repo, provider, active=active, pending=pending)
+
+
+def _enter_establishment(args: argparse.Namespace) -> CommandResult:
+    """Enter the ordinary conversation and seed its establishment control turn."""
+
+    return _start(
+        argparse.Namespace(
+            format=args.format,
+            using=args.using,
+            model=args.model,
+            timeout=args.timeout,
+            mode="change",
+            session_id=None,
+            theme="Repository records",
+            prompt=":establish",
+        )
+    )
 
 
 def _show_transcript_message(provider: AgentProvider, item: dict[str, Any]) -> None:
@@ -1192,6 +1136,8 @@ def _console_session(
                     _show(
                         "Session commands",
                         [
+                            "COMMAND: :establish — inspect and prepare durable repository records",
+                            "COMMAND: :record — accept the exact record proposal awaiting your authority",
                             "COMMAND: :mode ask|change — switch this session",
                             "COMMAND: :new [theme] — create and switch to a durable session",
                             "COMMAND: :sessions — list sessions in this console",
@@ -1203,6 +1149,28 @@ def _console_session(
                             "COMMAND: :exit — end this console",
                         ],
                     )
+                    continue
+                if command == "establish":
+                    if value:
+                        _show("Session", ["USAGE: :establish"])
+                        continue
+                    try:
+                        _session_establishment(
+                            args, repo, provider, active, accept=False
+                        )
+                    except InvariantError as exc:
+                        _show_session_error(exc)
+                    continue
+                if command == "record":
+                    if value:
+                        _show("Session", ["USAGE: :record"])
+                        continue
+                    try:
+                        _session_establishment(
+                            args, repo, provider, active, accept=True
+                        )
+                    except InvariantError as exc:
+                        _show_session_error(exc)
                     continue
                 if command == "mode":
                     if value not in {"ask", "change"}:
@@ -1850,11 +1818,6 @@ def _present_establishment_failure(
         if line.startswith(("FAIL ", "INVALID: "))
     ]
     problem = error.message.removeprefix("Invariant: ")
-    resume = (
-        f"invariant establish --id {change_id}"
-        if show_identifier
-        else "invariant establish"
-    )
     error.lines = [
         *([f"ESTABLISH: {change_id}"] if show_identifier else []),
         "STATUS: stopped",
@@ -1867,8 +1830,7 @@ def _present_establishment_failure(
         *supporting,
         "SAVED: repository inspection and unfinished work",
         "ACTIVITY: stopped — no background process",
-        f"NEXT: retry from saved work with '{resume}'",
-        f"OPTION: discard saved work with '{resume} --discard'",
+        "NEXT: enter :establish in this conversation to retry from saved work",
     ]
     return error
 
@@ -1951,14 +1913,14 @@ def _human_change_state(
 
 def _human_next_operation(item: dict[str, Any]) -> str:
     if not item["establishment"]:
-        return f"inspect '{item['label']}' with 'invariant status {item['id']}'"
+        return f"discuss '{item['label']}' in this conversation"
     verb = {
         "needs retry": "retry from saved work",
         "needs your decision": "review the saved proposal",
         "needs confirmation": "continue the saved proposal",
         "needs attention": "resolve the saved attempt",
     }.get(str(item["state"]), "resume saved work")
-    return f"{verb} with 'invariant establish'"
+    return f"{verb} by entering :establish in this conversation"
 
 
 def _human_active_changes(repo: Path) -> list[dict[str, Any]]:
@@ -2007,7 +1969,7 @@ def _human_active_changes(repo: Path) -> list[dict[str, Any]]:
 
 
 def _human_decision_blocked(
-    request: str, *, next_step: str = "rerun invariant establish in an interactive terminal"
+    request: str, *, next_step: str = "continue in this conversation"
 ) -> Blocked:
     return Blocked(
         "Invariant: your decision is needed before repository records can change",
@@ -2083,7 +2045,8 @@ def _human_candidate_decisions(
     repo: Path,
     change_id: str,
     *,
-    next_step: str = "rerun invariant establish in an interactive terminal",
+    next_step: str = "continue in this conversation",
+    accept: bool = False,
 ) -> None:
     for _ in range(12):
         task = _task(repo, change_id)
@@ -2094,7 +2057,7 @@ def _human_candidate_decisions(
         ]
         if not actions:
             return
-        if not sys.stdin.isatty():
+        if not accept and not sys.stdin.isatty():
             raise _human_decision_blocked(
                 "accept or reject the exact proposed governed change",
                 next_step=next_step,
@@ -2122,11 +2085,14 @@ def _human_candidate_decisions(
             proposal.extend(["", "Records", *[f"  {item}" for item in references]])
         if changed:
             proposal.extend(["", "Files", *[f"  {item}" for item in changed]])
-        print(style.decision("Accept governed change", proposal))
-        accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
-        if accepted not in {"y", "yes"}:
-            raise _ProposalDeclined()
-        summary = input(style.prompt("decide") + "Reason (optional): ").strip()
+        if accept:
+            summary = "Accepted the exact proposed repository records with :record."
+        else:
+            print(style.decision("Accept governed change", proposal))
+            accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
+            if accepted not in {"y", "yes"}:
+                raise _ProposalDeclined()
+            summary = input(style.prompt("decide") + "Reason (optional): ").strip()
         prepared = load_yaml(receipts.task_root(repo, change_id) / "prepared-assessment.yml")
         boundary = prepared.get("boundary") if isinstance(prepared, dict) else {}
         disposition = (
@@ -2160,6 +2126,108 @@ def _human_candidate_decisions(
     )
 
 
+def _establishment_findings(repo: Path, change_id: str) -> list[dict[str, Any]]:
+    receipt = receipts.load(repo, change_id)
+    governance_run = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    audit_id = str(governance_run.get("audit") or "")
+    lifecycle = (
+        receipt.get("lifecycle")
+        if isinstance(receipt.get("lifecycle"), dict)
+        else {}
+    )
+    worktree = Path(str(lifecycle.get("worktree") or repo))
+    raw = load_yaml(worktree / ".invariant" / "audits" / f"{audit_id}.yml")
+    findings = raw.get("findings", []) if isinstance(raw, dict) else []
+    return [dict(item) for item in findings if isinstance(item, dict) and item.get("id")]
+
+
+def _recordable_establishment_findings(
+    repo: Path, change_id: str
+) -> list[dict[str, Any]]:
+    return [
+        item
+        for item in _establishment_findings(repo, change_id)
+        if item.get("disposition") in {"adoptable", "needs-authority"}
+        and item.get("proposed") not in {"none", "discovery", "observation"}
+    ]
+
+
+def _prepare_human_establishment(repo: Path, change_id: str) -> list[dict[str, Any]]:
+    findings = _recordable_establishment_findings(repo, change_id)
+    if findings:
+        arguments = ["governance", "adopt", change_id]
+        for finding in findings:
+            arguments.extend(["--finding", str(finding["id"])])
+        _core(repo, *arguments)
+    else:
+        _core(repo, "governance", "adopt", change_id, "--none")
+    return findings
+
+
+def _human_record_packet(repo: Path, change_id: str) -> CommandResult:
+    findings = _recordable_establishment_findings(repo, change_id)
+    task = _task(repo, change_id)
+    actions = [
+        item
+        for item in task.get("actions", [])
+        if isinstance(item, dict) and item.get("id")
+    ]
+    references: list[str] = []
+    changed: list[str] = []
+    candidate_tree = ""
+    if actions:
+        action_id = str(actions[0]["id"])
+        action = _result(_core(repo, "task", "action", change_id, action_id), "action")
+        context = action.get("context") if isinstance(action, dict) else {}
+        if isinstance(context, dict):
+            candidate_tree = str(context.get("candidate_tree") or "")
+            references = [
+                str(item)
+                for item in context.get("governance", [])
+                if isinstance(item, str)
+            ]
+            changed = [
+                str(item)
+                for item in context.get("changed_paths", [])
+                if isinstance(item, str)
+            ]
+    lines = [
+        f"ESTABLISH: {change_id}",
+        "STATUS: needs-your-decision",
+        f"FINDINGS: {len(findings)}",
+    ]
+    for index, finding in enumerate(findings, start=1):
+        summary = re.sub(r"\s+", " ", str(finding.get("summary") or "")).strip()
+        evidence = ", ".join(str(item) for item in finding.get("evidence", []))
+        lines.append(f"FINDING-{index}: {summary or finding['id']}")
+        if evidence:
+            lines.append(f"EVIDENCE-{index}: {evidence}")
+    lines.extend(
+        [
+            f"CANDIDATE-TREE: {candidate_tree or 'not constructed'}",
+            f"RECORDS: {', '.join(references) or 'none proposed'}",
+            f"FILES: {', '.join(changed) or 'audit evidence only'}",
+            "REQUEST: discuss the proposal here, then enter :record to accept the exact candidate",
+        ]
+    )
+    return CommandResult(
+        lines,
+        {
+            "id": change_id,
+            "operation": "establish",
+            "status": "needs-your-decision",
+            "findings": findings,
+            "candidate_tree": candidate_tree,
+            "records": references,
+            "changed_paths": changed,
+        },
+    )
+
+
 def _task(repo: Path, change_id: str) -> dict[str, Any]:
     value = _result(_core(repo, "task", "status", change_id), "task")
     if not isinstance(value, dict):
@@ -2174,11 +2242,7 @@ def _worktree(repo: Path, change_id: str) -> Path:
     path = Path(value) if value else None
     if path is None or not path.is_dir():
         stage = str(task.get("stage") or "paused")
-        next_step = (
-            f"invariant task continue {change_id} --apply"
-            if stage == "awaiting-branch"
-            else f"invariant status {change_id}"
-        )
+        next_step = "continue this change in the conversation"
         raise Blocked(
             f"Invariant: change '{change_id}' is waiting before its worktree can be used",
             code="change_paused",
@@ -3208,10 +3272,7 @@ def _finish_change(
                 _human_candidate_decisions(
                     repo,
                     change_id,
-                    next_step=(
-                        f"rerun the same invariant change command with --id {change_id} "
-                        "in an interactive terminal"
-                    ),
+                    next_step="continue this change in the conversation",
                 )
             else:
                 _resolve_actions(repo, change_id, provider, model=model, timeout=timeout)
@@ -3540,7 +3601,8 @@ def _change(args: argparse.Namespace) -> CommandResult:
 
 def _establish(args: argparse.Namespace) -> CommandResult:
     repo = git.root()
-    if args.discard:
+    conversation_flow = str(getattr(args, "conversation_flow", "") or "")
+    if bool(getattr(args, "discard", False)):
         return _discard_establishment(repo, args.change_id)
     provider = _resolve_provider(repo, args.using)
     goal = args.goal or (
@@ -3557,7 +3619,7 @@ def _establish(args: argparse.Namespace) -> CommandResult:
         "invoked": False,
         "resumed": resumed_id is not None,
     }
-    if args.dry_run:
+    if bool(getattr(args, "dry_run", False)):
         return CommandResult(
             [
                 f"ESTABLISH: {change_id}",
@@ -3604,11 +3666,15 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                 values = _governance_values(repo, change_id)
                 phase = values.get("GOVERNANCE-PHASE", "audit")
 
-            # A human whose last selection could not be projected gets to choose again.
+            # A conversational host prepares the exact proposal before asking for authority.
+            # Selection and projection are tentative until :record accepts the candidate.
             if config.resolve(repo).authority == "human" and (
                 phase == "decision" or (phase == "adopt" and had_failure)
             ):
-                _human_finding_decision(repo, change_id)
+                if conversation_flow:
+                    _prepare_human_establishment(repo, change_id)
+                else:
+                    _human_finding_decision(repo, change_id)
                 values = _governance_values(repo, change_id)
                 phase = values.get("GOVERNANCE-PHASE", "decision")
 
@@ -3661,30 +3727,36 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                     finished = final.get("result")
                     if isinstance(finished, dict) and finished.get("stage") == "completed":
                         step.done = "Verified and landed repository records"
-            if config.resolve(repo).authority == "human":
-                _human_candidate_decisions(repo, change_id)
-            else:
-                with style.activity(
-                    f"{_provider_name(provider)} is reviewing the result",
-                    done=f"{_provider_name(provider)} reviewed the result",
-                ):
-                    _resolve_actions(
-                        repo, change_id, provider, model=args.model, timeout=args.timeout
-                    )
+            task = _task(repo, change_id)
+            if task.get("stage") != "completed":
+                if config.resolve(repo).authority == "human":
+                    if conversation_flow == "record":
+                        _human_candidate_decisions(
+                            repo,
+                            change_id,
+                            next_step="enter :record in this conversation",
+                            accept=True,
+                        )
+                    elif conversation_flow == "prepare":
+                        return _human_record_packet(repo, change_id)
+                    else:
+                        _human_candidate_decisions(repo, change_id)
+                else:
+                    with style.activity(
+                        f"{_provider_name(provider)} is reviewing the result",
+                        done=f"{_provider_name(provider)} reviewed the result",
+                    ):
+                        _resolve_actions(
+                            repo, change_id, provider, model=args.model, timeout=args.timeout
+                        )
         task = _task(repo, change_id)
     except _ProposalDeclined:
-        resume = (
-            f"invariant establish --id {change_id}"
-            if args.change_id or args.goal or args.verbose
-            else "invariant establish"
-        )
         return CommandResult(
             [
                 *([f"ESTABLISH: {change_id}"] if args.change_id or args.verbose else []),
                 "STATUS: not accepted",
                 "SAVED: the exact proposal, ready for another look",
-                f"NEXT: review the saved proposal with '{resume}'",
-                f"OPTION: discard saved work with '{resume} --discard'",
+                "NEXT: discuss the saved proposal in this conversation",
             ],
             {**preview, "invoked": True, "status": "not accepted", "audit": audit_result},
         )
@@ -3906,18 +3978,14 @@ def _status(args: argparse.Namespace) -> CommandResult:
         if resolved.adapters.is_enabled("intent_brief"):
             add_ons.append("intent review")
         if not valid:
-            next_operation = (
-                "inspect invalid repository state with 'invariant state validate'"
-            )
+            next_operation = "discuss the invalid repository state in this conversation"
         elif changes:
             first = next(
                 (item for item in changes if item["attention"]), changes[0]
             )
             next_operation = _human_next_operation(first)
         else:
-            next_operation = (
-                "start a managed change with 'invariant change \"Describe the change\"'"
-            )
+            next_operation = "describe the next question or change in this conversation"
         lines = [
             f"STATUS: {status}",
             f"BRANCH: {branch_summary}",
@@ -4000,7 +4068,6 @@ def _settings(_: argparse.Namespace) -> CommandResult:
         f"RUN-MODE: {run_mode}",
         f"LANDING-BRANCH: {landing_branch}",
         f"PUBLISHING: {'off' if settings.get('push_remote') == 'off' else 'existing upstream'}",
-        f"INTENT-BRIEF: {settings.get('adapter_intent_brief', 'off')}",
     ]
     return CommandResult(
         public_lines,
@@ -4028,6 +4095,16 @@ def _set(args: argparse.Namespace) -> CommandResult:
             {"setting": {"key": "mode", "value": args.value}},
         )
     if args.key in {"harness", "agent"}:
+        if args.value != "auto":
+            try:
+                connect(AgentProvider(args.value))
+            except ValueError:
+                raise InvariantError(
+                    "Invariant: agent must be auto, codex, or claude",
+                    code="invalid_harness_preference",
+                ) from None
+            except AgentInvocationError as exc:
+                raise _agent_error(exc) from exc
         preferences.set_repo_harness(repo, args.value)
         return CommandResult(
             [f"SET: harness={args.value}", "SCOPE: this clone only — not committed"],
@@ -4176,19 +4253,9 @@ def _register_repositories(
     return lines
 
 
-def _help(args: argparse.Namespace) -> CommandResult:
-    if args.surface == "protocol":
-        protocol_cli.build_parser().print_help()
-    else:
-        build_parser().print_help()
-    return CommandResult([], {})
-
-
 def run(argv: list[str] | None = None) -> int:
     values = hoist_global_options(sys.argv[1:] if argv is None else argv)
     command = _top_level_command(values)
-    if command is not None and command not in PUBLIC_COMMANDS:
-        return protocol_cli.run(values)
     format_name = "json" if requested_format(values) == "json" else "text"
     verbose = False
     selected_command = command or "help"
@@ -4196,10 +4263,10 @@ def run(argv: list[str] | None = None) -> int:
         args = build_parser().parse_args(values)
         format_name = args.format
         verbose = args.verbose
-        if args.command not in {"connect", "help", "init", "project", "serve"}:
+        if args.command not in {"connect", "establish", "init", "serve", "start"}:
             config.require_initialized(git.root())
         tracked = (
-            selected_command in {"start", "change", "establish", "source"}
+            selected_command in {"start", "establish", "source"}
             and not bool(getattr(args, "dry_run", False))
         )
         task = str(

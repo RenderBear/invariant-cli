@@ -14,9 +14,9 @@ runs the lifecycle.
 
 ![Durable memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, with many changes running it in parallel in one clone.](.github/assets/lifecycle.svg)
 
-- **Bounded autonomy.** `invariant change` plans and implements in an isolated worktree, commits an
-  exact candidate, checks it against accepted records, and lands it on the local branch, so routine
-  changes land in two commands. Touching a recorded decision pauses the lifecycle until an agent
+- **Bounded autonomy.** A change requested in `invariant start` is planned and implemented in an
+  isolated worktree, committed as an exact candidate, checked against accepted records, and landed
+  on the local branch. Touching a recorded decision pauses the lifecycle until an agent
   — or you, when it lacks the authority — resolves it. Rewriting accepted governance or defining a
   contract requires a fresh second-agent review unless a human accepts the exact candidate.
 - **Scaled coordination.** Several changes run in one clone without stepping on each other, because
@@ -43,29 +43,29 @@ From a Git repository:
 invariant init
 ```
 
-Initialization asks for authority, execution, landing, publication, and optional intent-review
-policy, then ends with one yes-or-no choice to establish durable records. Use
-`invariant init --defaults` to accept the safe local policy without those questions. Failed provider
+Initialization asks for authority, execution, landing, and publication. Use `invariant init
+--defaults` to accept the safe local policy without those questions. Failed provider
 connections are warnings and automatic selection continues to the next provider. A single connected
 provider is a complete setup; `invariant connect` inspects or changes machine-level connections.
 If a complete configuration already exists, `init` warns before asking setup questions and lets you
 keep it or replace every repository setting. Use `invariant set <key> <value>` for a single change.
 
-If you defer establishment:
+Start working:
+
+```bash
+invariant start
+```
+
+Ask questions or request changes in that conversation. If `start` finds no configuration, it runs
+guided initialization first and then continues. Establishment uses the same flow:
 
 ```bash
 invariant establish
 ```
 
-Then work normally:
-
-```bash
-invariant ask "Explain how job recovery is owned"
-invariant change "Job recovery breaks after restart; fix it"
-invariant status
-```
-
-`change` runs the lifecycle above and lands on the local branch. Publishing is off by default.
+`establish` opens a durable conversation seeded with `:establish`. Under human authority it shows
+the findings and exact proposal there; discuss it normally, then enter `:record` to accept. Publishing
+is off by default.
 
 ## Bring your agent. Add only what you need.
 
@@ -73,16 +73,14 @@ Invariant owns the durable lifecycle; your provider owns the model account, auth
 billing. Protected semantic reads and lifecycle transitions deliberately run with bounded tools and
 authority.
 
-The minimal setup needs no extras. Optional add-ons are there when the work calls for them:
+The minimal setup needs no extras. Add grounding or choose a provider when the work calls for it:
 
 ```bash
 invariant source add --url https://example.com/standards --repo
-invariant set adapters.intent_brief on
 invariant set harness claude
 ```
 
 - **Grounding sources** bring attributable external evidence into a repository, domain, or contract.
-- **Intent review** expands ambiguous requests and reviews the exact candidate before landing.
 - **Another provider** is an available choice, not a missing dependency; the preference stays local to
   the clone and is never committed.
 
@@ -90,17 +88,16 @@ invariant set harness claude
 
 | Need | Command |
 | --- | --- |
-| Ask a read-only repository question | `invariant ask "…"` |
-| Run one managed change | `invariant change "…"` |
-| Keep or resume a themed project conversation | `invariant start [--session <id>]` |
+| Inspect or connect a coding agent | `invariant connect [codex\|claude]` |
+| Ask, change, inspect status, or resolve a decision | `invariant start [--session <id>]` |
 | Open the read-only project and lifecycle explorer | `invariant serve` |
-| Establish or refresh architecture | `invariant establish` |
-| See state or configuration | `invariant status`, `invariant settings` |
+| Establish or refresh architecture in a conversation | `invariant establish` |
 | Add scoped evidence | `invariant source add …` |
+| Change a repository or clone preference | `invariant set <key> <value>` |
 
-The ordinary surface stays small. The deterministic task, governance, evidence, coordination, and
-candidate protocol remains available to automation and recovery tooling through
-`invariant help protocol`.
+The human surface is exactly `init`, `connect`, `start`, `establish`, `serve`, `source`, and `set`.
+The deterministic task, governance, evidence, coordination, and candidate engine stays behind that
+surface.
 
 ## What persists
 

@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
-CLI = ROOT / "bin" / "invariant"
-AGENT = ROOT / "bin" / "invariant-agent"
+CORE = (sys.executable, "-P", "-m", "invariant.cli.app")
+CORE_COMMAND = shlex.join(CORE)
 
 
 def git(repo: Path, *arguments: str, check: bool = True) -> str:
@@ -20,9 +22,9 @@ def git(repo: Path, *arguments: str, check: bool = True) -> str:
     return completed.stdout.strip()
 
 
-def invariant(repo: Path, *arguments: str, executable: Path = CLI) -> tuple[int, dict]:
+def invariant(repo: Path, *arguments: str) -> tuple[int, dict]:
     completed = subprocess.run(
-        [str(executable), "--format", "json", *arguments],
+        [*CORE, "--format", "json", *arguments],
         cwd=repo,
         capture_output=True,
         text=True,
@@ -35,10 +37,6 @@ def invariant(repo: Path, *arguments: str, executable: Path = CLI) -> tuple[int,
             f"non-JSON output (exit {completed.returncode}): {completed.stdout!r} {completed.stderr!r}"
         )
     return completed.returncode, payload
-
-
-def codes(payload: dict) -> list[str]:
-    return [item.get("code") for item in payload.get("diagnostics", [])]
 
 
 def repository(path: Path, *, commits: int = 1) -> Path:

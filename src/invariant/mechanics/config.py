@@ -18,7 +18,6 @@ SETTABLE_KEYS = {
     "execution",
     "integration_branch",
     "push_remote",
-    "adapters.intent_brief",
 }
 CODING_AGENT_CHOICES = {"claude", "codex"}
 
@@ -39,7 +38,7 @@ def require_initialized(repo: Path) -> None:
 
 @dataclass(frozen=True)
 class AdapterOptions:
-    values: tuple[tuple[str, bool], ...] = (("intent_brief", False),)
+    values: tuple[tuple[str, bool], ...] = ()
 
     @property
     def enabled(self) -> tuple[str, ...]:
@@ -116,7 +115,6 @@ def _from_raw(
         "execution",
         "integration_branch",
         "push_remote",
-        "adapters",
         "verification",
     }
     unknown = sorted(set(raw) - allowed)
@@ -137,20 +135,7 @@ def _from_raw(
         raise InvariantError(
             f"Invariant: .invariant/config.yml has invalid push_remote '{push_remote}' (use on or off)"
         )
-    adapters_raw = raw.get("adapters", {"intent_brief": "off"})
-    if not isinstance(adapters_raw, dict):
-        raise InvariantError("Invariant: .invariant/config.yml adapters must be a mapping")
-    adapter_values: list[tuple[str, bool]] = []
-    for name, enabled in sorted(adapters_raw.items()):
-        if not isinstance(name, str) or not git.valid_id(name):
-            raise InvariantError(f"Invariant: invalid adapter id '{name}'")
-        if not isinstance(enabled, str) or enabled not in {"on", "off"}:
-            raise InvariantError(f"Invariant: adapters.{name} must be on or off")
-        adapter_values.append((name, enabled == "on"))
-    if "intent_brief" not in adapters_raw:
-        adapter_values.append(("intent_brief", False))
-        adapter_values.sort()
-    adapters = AdapterOptions(tuple(adapter_values))
+    adapters = AdapterOptions()
     verification_raw = raw.get("verification", {})
     if not isinstance(verification_raw, dict):
         raise InvariantError("Invariant: .invariant/config.yml verification must be a mapping")
@@ -288,7 +273,6 @@ def initialize(
     execution: str | None = None,
     integration_branch: str | None = None,
     push_remote: str | None = None,
-    intent_brief: bool | None = None,
     overwrite: bool = False,
 ) -> list[str]:
     path = repo / CONFIG_PATH
@@ -305,7 +289,6 @@ def initialize(
         "execution": execution if execution is not None else "auto",
         "integration_branch": branch_setting,
         "push_remote": push_remote if push_remote is not None else "off",
-        "adapters": {"intent_brief": "on" if intent_brief is True else "off"},
     }
     _from_raw(
         repo,
@@ -344,15 +327,6 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
         if value not in {"on", "off"}:
             raise InvariantError("Invariant: push_remote must be on or off", code="invalid_config_value")
         document[key] = value
-    elif key.startswith("adapters."):
-        if value not in {"on", "off"}:
-            raise InvariantError(f"Invariant: {key} must be on or off", code="invalid_config_value")
-        adapter_values = document.get("adapters", {})
-        if not isinstance(adapter_values, dict):
-            raise InvariantError("Invariant: .invariant/config.yml adapters must be a mapping")
-        adapter_values = dict(adapter_values)
-        adapter_values[key.removeprefix("adapters.")] = value
-        document["adapters"] = adapter_values
     _from_raw(
         repo,
         document,
@@ -411,10 +385,6 @@ def lines(config: Config) -> list[str]:
         f"source: {config.source}",
         f"integration_branch_resolved: {config.integration_branch}",
         f"branch_source: {config.branch_source}",
-        *[
-            f"adapter_{name}: {'on' if enabled else 'off'}"
-            for name, enabled in config.adapters.values
-        ],
     ]
     if config.unborn:
         output.append("integration_branch_unborn: true")
