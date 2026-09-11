@@ -1,35 +1,21 @@
 # Invariant: Scale agentic coding without architectural drift
 
-Agents rarely break architecture in one dramatic change. It drifts through individually reasonable
-changes made from partial context.
-
-Invariant is the write side of intent. The decisions, responsibilities, contracts, and sources a
-team has accepted live in the repository as records, versioned with the code, and every
-consequential change passes checkpoints that read them before it lands. The agent reasons freely;
-the checkpoints give it something exact to reason against, and the landing attests back into the
-same memory. The [protocol](protocol/README.md) defines that memory and its guarantees; this CLI
-runs the lifecycle.
+Invariant uses a governance derived ontology and a robust Git grounded change lifecycle, 
+to maintain durable architectural intent across complex and long running projects. Read [protocol](protocol/README.md) for the internals 
+of the invariant protocol. This repo is a Python CLI implementation of the same. 
 
 ## What a change goes through
 
 ![Durable memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, with many changes running it in parallel in one clone.](.github/assets/lifecycle.svg)
 
-- **Bounded autonomy.** A change requested in `invariant start` is planned and implemented in an
-  isolated worktree, committed as an exact candidate, checked against accepted records, and landed
-  on the local branch. Touching a recorded decision pauses the lifecycle until an agent
-  — or you, when it lacks the authority — resolves it. Rewriting accepted governance or defining a
-  contract requires a fresh second-agent review unless a human accepts the exact candidate.
-- **Scaled coordination.** Several changes run in one clone without stepping on each other, because
-  each owns its worktree, receipt, and evidence, and landings serialize atomically on the integration
-  branch.
-- **Planning.** Plans and reserved work keep concurrent agents out of each other's way, and a moved
-  branch means a clean re-verification, not a clobbered landing.
+- **Scaled planning and execution.** Well defined contracts and domain structures, allow an agent to clearly plan and parallelize work, 
+and eventually land with safety.
+- **Bounded autonomy.** Touching a recorded decision pauses the lifecycle until a secondary agent
+  — or you, when it lacks the authority — resolves it. 
 
-Architecture can evolve. It cannot drift silently.
+## Quick start
 
-## Start
-
-Invariant is a local Python CLI. It uses an existing Codex or Claude Code installation and stores no
+Invariant uses an existing Codex or Claude Code installation and stores no
 provider credentials or API keys. Initialization checks the native connection and can open its normal
 sign-in flow when needed.
 
