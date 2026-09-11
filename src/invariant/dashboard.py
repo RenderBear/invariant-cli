@@ -6,93 +6,68 @@ HTML = """<!doctype html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Invariant · Repository observer</title>
+  <title>Invariant · Local workspace</title>
   <link rel="stylesheet" href="/assets/app.css">
 </head>
 <body>
-  <main>
-    <header class="masthead">
-      <div class="identity">
-        <pre class="wordmark" aria-label="Invariant">█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
+  <header class="masthead">
+    <div class="brand">
+      <pre class="wordmark" aria-label="Invariant">█ █▄ █ █ █ ▄▀▄ █▀▄ █ ▄▀▄ █▄ █ ▀█▀
 █ █ ▀█ ▀▄▀ █▀█ █▀▄ █ █▀█ █ ▀█  █ </pre>
-        <p>Repository observer · read only</p>
-      </div>
-      <div class="stream" aria-live="polite">
-        <span id="stream-dot" class="stream-dot waiting"></span>
-        <span id="stream-state">CONNECTING</span>
-        <span class="muted" id="observed-at">waiting for snapshot</span>
-      </div>
-    </header>
+      <span>Local workspace</span>
+    </div>
+    <div class="connection" aria-live="polite">
+      <span id="stream-dot" class="stream-dot waiting"></span>
+      <strong id="stream-state">CONNECTING</strong>
+      <span id="observed-at" class="muted">loading projects</span>
+    </div>
+  </header>
 
-    <section class="repository" aria-labelledby="repository-title">
-      <div>
-        <p class="eyebrow">Repository</p>
-        <h1 id="repository-title">Loading…</h1>
-        <p class="muted path" id="repository-path"></p>
+  <main class="workspace">
+    <aside class="projects-pane" aria-labelledby="projects-title">
+      <div class="pane-head"><p class="eyebrow">Machine</p><h1 id="projects-title">Projects</h1></div>
+      <nav id="projects" class="nav-list" aria-label="Registered projects"></nav>
+      <div id="projects-empty" class="empty" hidden><p>No folders registered.</p><code>invariant project add &lt;folder&gt;</code></div>
+      <p class="pane-note">Folders are registered explicitly. Invariant never scans this computer.</p>
+    </aside>
+
+    <aside class="sessions-pane" aria-labelledby="sessions-title">
+      <div class="pane-head session-heading">
+        <div><p class="eyebrow">Project themes</p><h2 id="sessions-title">Sessions</h2></div>
+        <button id="new-session-toggle" class="quiet-button" type="button">New</button>
       </div>
-      <dl class="repository-facts" id="repository-facts"></dl>
+      <form id="new-session-form" class="new-session" hidden>
+        <label for="session-theme">Theme</label>
+        <input id="session-theme" name="theme" maxlength="80" placeholder="Authentication redesign" required>
+        <div class="form-row">
+          <select id="session-mode" name="mode" aria-label="Session mode"><option value="ask">Ask</option><option value="change">Change</option></select>
+          <button class="primary-button" type="submit">Create</button>
+        </div>
+      </form>
+      <nav id="sessions" class="nav-list sessions-list" aria-label="Project sessions"></nav>
+      <div id="sessions-empty" class="empty" hidden><p>No sessions yet.</p></div>
+    </aside>
+
+    <section class="work-pane" aria-labelledby="session-title">
+      <header class="work-head">
+        <div><p id="project-path" class="eyebrow path">Choose a project</p><h2 id="session-title">Open a session</h2><p id="session-meta" class="muted">Sessions keep one theme grounded in one folder.</p></div>
+        <dl id="repository-facts" class="repository-facts"></dl>
+      </header>
+      <div id="notice" class="notice" role="status" hidden></div>
+      <div id="conversation-empty" class="conversation-empty"><p class="eyebrow">One folder · one theme</p><h3>Choose a session, or create one for the work you want to keep together.</h3></div>
+      <section id="conversation" class="conversation" aria-label="Conversation" hidden>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="composer" class="composer">
+          <label class="sr-only" for="prompt">Message</label>
+          <textarea id="prompt" rows="3" placeholder="Ask about this project…" required></textarea>
+          <div class="composer-foot"><span id="composer-scope">Read-only conversation</span><button id="send" class="primary-button" type="submit">Send</button></div>
+        </form>
+      </section>
+      <section class="activity" aria-labelledby="activity-title">
+        <div class="activity-head"><div><p class="eyebrow">Repository lifecycle</p><h3 id="activity-title">Activity</h3></div><span id="activity-count" class="counter">—</span></div>
+        <div id="tasks" class="task-list"></div>
+      </section>
     </section>
-
-    <section class="counters" id="counters" aria-label="Repository summary"></section>
-
-    <section id="diagnostics" class="diagnostics" aria-live="polite" hidden></section>
-
-    <section class="block" aria-labelledby="processes-title">
-      <div class="section-head">
-        <div><p class="eyebrow">Presence</p><h2 id="processes-title">Running processes</h2></div>
-        <p class="muted">Heartbeat presence is advisory; receipts and Git remain authoritative.</p>
-      </div>
-      <div class="table-wrap" id="processes"></div>
-    </section>
-
-    <section class="block" aria-labelledby="tasks-title">
-      <div class="section-head">
-        <div><p class="eyebrow">Lifecycle</p><h2 id="tasks-title">Active changes</h2></div>
-        <p class="muted" id="task-caption"></p>
-      </div>
-      <div class="task-list" id="tasks"></div>
-    </section>
-
-    <section class="block" aria-labelledby="coordination-title">
-      <div class="section-head">
-        <div><p class="eyebrow">Concurrency</p><h2 id="coordination-title">Plans and leases</h2></div>
-        <p class="muted">Temporary ownership against an exact integration ground.</p>
-      </div>
-      <div class="split">
-        <div><h3>Plans</h3><div id="plans"></div></div>
-        <div><h3>Leases</h3><div id="leases" class="table-wrap"></div></div>
-      </div>
-    </section>
-
-    <section class="block" aria-labelledby="governance-title">
-      <div class="section-head">
-        <div><p class="eyebrow">Accepted meaning</p><h2 id="governance-title">Governance</h2></div>
-        <p class="muted" id="governance-caption"></p>
-      </div>
-      <div class="record-list" id="governance"></div>
-    </section>
-
-    <section class="block" aria-labelledby="evidence-title">
-      <div class="section-head">
-        <div><p class="eyebrow">Causal record</p><h2 id="evidence-title">Evidence run-through</h2></div>
-        <p class="muted">Newest first · exact trees and grounds remain visible.</p>
-      </div>
-      <div class="evidence-list" id="evidence"></div>
-    </section>
-
-    <section class="block" aria-labelledby="history-title">
-      <div class="section-head">
-        <div><p class="eyebrow">Local archive</p><h2 id="history-title">Recent landings</h2></div>
-        <p class="muted">Completed task summaries retained in ignored runtime history.</p>
-      </div>
-      <div class="table-wrap" id="history"></div>
-    </section>
-
-    <footer>
-      <span>HTTP snapshot + Server-Sent Events</span>
-      <span id="revision">revision —</span>
-      <span>No chat · no write endpoints</span>
-    </footer>
   </main>
   <script src="/assets/app.js" defer></script>
 </body>
@@ -101,314 +76,162 @@ HTML = """<!doctype html>
 
 
 CSS = """:root {
-  color-scheme: light;
-  --ink: #171717;
-  --muted: #626262;
-  --line: #b8b8b8;
-  --soft: #eeeeec;
-  --paper: #ffffff;
-  --accent: #007f92;
-  --ok: #237a3b;
-  --warn: #9a6700;
-  --bad: #b42318;
-  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color-scheme: light dark;
+  --paper: light-dark(#ffffff, #151515); --surface: light-dark(#f5f5f2, #1d1d1b);
+  --ink: light-dark(#171717, #f0f0eb); --muted: light-dark(#656560, #a3a39c);
+  --line: light-dark(#c8c8c1, #42423d); --strong-line: light-dark(#202020, #deded7);
+  --accent: light-dark(#007f92, #49c2d2); --ok: light-dark(#237a3b, #63c77b);
+  --warn: light-dark(#986800, #e2b64d); --bad: light-dark(#b42318, #ff796f);
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
-
 * { box-sizing: border-box; }
-html { background: var(--paper); color: var(--ink); font-family: var(--sans); }
-body { margin: 0; }
-main { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 34px 0 48px; }
-
-.masthead {
-  align-items: flex-end;
-  border-bottom: 2px solid var(--ink);
-  display: flex;
-  justify-content: space-between;
-  gap: 24px;
-  padding-bottom: 20px;
-}
-.wordmark {
-  color: var(--accent);
-  font: 700 14px/1.05 var(--mono);
-  letter-spacing: 0;
-  margin: 0;
-  white-space: pre;
-}
-.identity p, .stream, .eyebrow, footer, th, dt, .tag, .stage, .meta {
-  font-family: var(--mono);
-}
-.identity p { color: var(--muted); font-size: 11px; margin: 8px 0 0; text-transform: uppercase; }
-.stream { align-items: center; display: flex; flex-wrap: wrap; font-size: 11px; gap: 8px; justify-content: flex-end; }
-.stream-dot { border: 1px solid currentColor; display: inline-block; height: 9px; width: 9px; }
-.stream-dot.live { background: var(--ok); color: var(--ok); }
-.stream-dot.waiting { background: var(--warn); color: var(--warn); }
-.stream-dot.offline { background: var(--bad); color: var(--bad); }
-
-.repository { align-items: end; display: flex; justify-content: space-between; gap: 28px; padding: 34px 0 30px; }
-.eyebrow { color: var(--muted); font-size: 10px; letter-spacing: .08em; margin: 0 0 7px; text-transform: uppercase; }
-h1 { font-size: clamp(27px, 4vw, 42px); letter-spacing: -.035em; line-height: 1.05; margin: 0; }
-h2 { font-size: 22px; letter-spacing: -.02em; margin: 0; }
-h3 { font: 700 12px/1.3 var(--mono); letter-spacing: .04em; margin: 0 0 12px; text-transform: uppercase; }
+html, body { background: var(--paper); color: var(--ink); font-family: var(--sans); margin: 0; min-height: 100%; }
+button, input, select, textarea { color: inherit; font: inherit; } button { cursor: pointer; }
+.masthead { align-items: center; background: var(--paper); border-bottom: 2px solid var(--strong-line); display: flex; height: 70px; justify-content: space-between; padding: 0 22px; }
+.brand { align-items: center; display: flex; gap: 18px; }
+.wordmark { color: var(--accent); font: 700 10px/1.05 var(--mono); margin: 0; white-space: pre; }
+.brand > span { border-left: 1px solid var(--line); color: var(--muted); font: 10px var(--mono); letter-spacing: .08em; padding-left: 18px; text-transform: uppercase; }
+.connection { align-items: center; display: flex; font: 10px var(--mono); gap: 8px; }
+.stream-dot { border: 1px solid currentColor; display: block; height: 8px; width: 8px; }
+.stream-dot.live { background: var(--ok); color: var(--ok); } .stream-dot.waiting { background: var(--warn); color: var(--warn); } .stream-dot.offline { background: var(--bad); color: var(--bad); }
 .muted { color: var(--muted); }
-.path { font: 11px/1.5 var(--mono); margin: 10px 0 0; overflow-wrap: anywhere; }
-.repository-facts { display: grid; gap: 7px 18px; grid-template-columns: auto auto; margin: 0; min-width: 310px; }
-dt { color: var(--muted); font-size: 10px; text-transform: uppercase; }
-dd { font: 12px/1.3 var(--mono); margin: 0; text-align: right; }
-
-.counters { border: 1px solid var(--ink); display: grid; grid-template-columns: repeat(4, 1fr); margin-bottom: 62px; }
-.counter { min-height: 94px; padding: 17px 18px; }
-.counter + .counter { border-left: 1px solid var(--line); }
-.counter strong { display: block; font: 700 28px/1 var(--mono); margin-top: 13px; }
-.counter span { color: var(--muted); font: 10px var(--mono); letter-spacing: .06em; text-transform: uppercase; }
-.diagnostics { border: 1px solid var(--bad); color: var(--bad); font: 11px/1.55 var(--mono); margin: -42px 0 42px; padding: 13px 16px; }
-.diagnostics strong { display: block; margin-bottom: 4px; text-transform: uppercase; }
-.diagnostics p { margin: 0; overflow-wrap: anywhere; }
-
-.block { border-top: 1px solid var(--ink); padding: 23px 0 58px; }
-.section-head { align-items: start; display: flex; gap: 32px; justify-content: space-between; margin-bottom: 22px; }
-.section-head > p { font-size: 13px; line-height: 1.5; margin: 0; max-width: 500px; text-align: right; }
-.split { display: grid; gap: 36px; grid-template-columns: minmax(0, 1.2fr) minmax(320px, .8fr); }
-
-.table-wrap { overflow-x: auto; }
-table { border-collapse: collapse; font-size: 13px; width: 100%; }
-th { background: var(--soft); border-bottom: 1px solid var(--ink); font-size: 10px; letter-spacing: .04em; padding: 10px 12px; text-align: left; text-transform: uppercase; }
-td { border-bottom: 1px solid var(--line); padding: 11px 12px; vertical-align: top; }
-td.mono { font-family: var(--mono); font-size: 11px; }
-.empty { border: 1px dashed var(--line); color: var(--muted); font-size: 13px; margin: 0; padding: 20px; }
-
-.task-list, .record-list, .evidence-list, .plan-list { display: grid; gap: 12px; }
-.task, .plan, .record, .evidence-item { border: 1px solid var(--line); padding: 16px 18px; }
-.task.attention, .plan.attention, .evidence-item.attention { border-color: var(--warn); }
-.task.bad, .plan.bad, .record.bad, .evidence-item.bad { border-color: var(--bad); }
-.unit-head { align-items: baseline; display: flex; gap: 14px; justify-content: space-between; }
-.unit-head strong { font-size: 14px; overflow-wrap: anywhere; }
-.tag { border: 1px solid currentColor; color: var(--muted); font-size: 9px; letter-spacing: .04em; padding: 3px 5px; text-transform: uppercase; white-space: nowrap; }
-.tag.ok { color: var(--ok); }
-.tag.warn { color: var(--warn); }
-.tag.bad { color: var(--bad); }
-.meta { color: var(--muted); display: flex; flex-wrap: wrap; font-size: 10px; gap: 6px 16px; margin-top: 11px; overflow-wrap: anywhere; }
-.summary { font-size: 13px; line-height: 1.5; margin: 11px 0 0; }
-
-.stages { display: grid; grid-template-columns: repeat(5, 1fr); margin-top: 16px; }
-.stage { border-top: 2px solid var(--line); color: var(--muted); font-size: 9px; padding-top: 7px; text-transform: uppercase; }
-.stage.done { border-color: var(--ok); color: var(--ok); }
-.stage.current { border-color: var(--warn); color: var(--warn); font-weight: 700; }
-.stage.bad { border-color: var(--bad); color: var(--bad); }
-
-.plan-units { border-top: 1px solid var(--line); margin-top: 13px; padding-top: 8px; }
-.plan-unit { display: grid; font: 10px/1.45 var(--mono); gap: 9px; grid-template-columns: minmax(100px, 1fr) 90px 1fr; padding: 5px 0; }
-.plan-unit + .plan-unit { border-top: 1px dotted var(--line); }
-.record-list { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-.record p { margin: 9px 0 0; }
-
-.evidence-item { display: grid; gap: 16px; grid-template-columns: minmax(150px, .7fr) minmax(260px, 1.3fr); }
-.evidence-item .summary { margin: 0; }
-.causal { border-left: 1px solid var(--line); font: 10px/1.7 var(--mono); overflow-wrap: anywhere; padding-left: 16px; }
-.causal b { color: var(--muted); display: inline-block; font-weight: 400; min-width: 62px; text-transform: uppercase; }
-
-.ok-text { color: var(--ok); }
-.warn-text { color: var(--warn); }
-.bad-text { color: var(--bad); }
-footer { border-top: 2px solid var(--ink); color: var(--muted); display: flex; flex-wrap: wrap; font-size: 9px; gap: 10px 24px; justify-content: space-between; padding-top: 15px; text-transform: uppercase; }
-
-@media (max-width: 760px) {
-  main { width: min(100% - 28px, 1180px); padding-top: 22px; }
-  .masthead, .repository, .section-head { align-items: start; flex-direction: column; }
-  .stream { justify-content: flex-start; }
-  .repository-facts { min-width: 0; width: 100%; }
-  .counters { grid-template-columns: repeat(2, 1fr); }
-  .counter:nth-child(3) { border-left: 0; border-top: 1px solid var(--line); }
-  .counter:nth-child(4) { border-top: 1px solid var(--line); }
-  .section-head > p { text-align: left; }
-  .split, .record-list { grid-template-columns: 1fr; }
-  .evidence-item { grid-template-columns: 1fr; }
-  .causal { border-left: 0; border-top: 1px solid var(--line); padding: 12px 0 0; }
-}
-
+.workspace { display: grid; grid-template-columns: 220px 280px minmax(0, 1fr); min-height: calc(100vh - 70px); }
+.projects-pane, .sessions-pane { border-right: 1px solid var(--line); min-width: 0; padding: 24px 14px; }
+.sessions-pane { background: var(--surface); } .work-pane { min-width: 0; padding: 28px clamp(22px, 4vw, 54px) 54px; }
+.pane-head { padding: 0 8px 20px; } .session-heading { align-items: end; display: flex; justify-content: space-between; }
+.eyebrow { color: var(--muted); font: 9px/1.4 var(--mono); letter-spacing: .08em; margin: 0 0 6px; text-transform: uppercase; }
+h1, h2, h3 { letter-spacing: -.025em; margin: 0; } h1 { font-size: 24px; } h2 { font-size: 23px; } h3 { font-size: 17px; }
+.path { max-width: 650px; overflow-wrap: anywhere; text-transform: none; }
+.nav-list { display: grid; gap: 2px; }
+.nav-item { background: transparent; border: 1px solid transparent; display: block; padding: 11px 10px; text-align: left; width: 100%; }
+.nav-item:hover { border-color: var(--line); } .nav-item.active { background: var(--paper); border-color: var(--strong-line); }
+.nav-item strong { display: block; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item span { color: var(--muted); display: block; font: 9px/1.5 var(--mono); margin-top: 5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nav-item.unavailable strong { color: var(--bad); }
+.pane-note { border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; line-height: 1.5; margin: 28px 8px 0; padding-top: 14px; }
+.empty { border: 1px dashed var(--line); color: var(--muted); font-size: 12px; line-height: 1.5; margin: 4px 8px; padding: 14px; }
+.empty p { margin: 0; } .empty code { display: block; font: 9px/1.5 var(--mono); margin-top: 9px; overflow-wrap: anywhere; }
+.quiet-button, .primary-button { border: 1px solid var(--strong-line); padding: 7px 11px; }
+.quiet-button { background: transparent; font: 10px var(--mono); } .primary-button { background: var(--ink); color: var(--paper); font: 700 10px var(--mono); text-transform: uppercase; }
+.quiet-button:hover, .primary-button:hover { border-color: var(--accent); color: var(--accent); } .primary-button:disabled { cursor: wait; opacity: .5; }
+.new-session { border-bottom: 1px solid var(--line); display: grid; gap: 8px; margin: 0 8px 12px; padding-bottom: 16px; }
+.new-session label { color: var(--muted); font: 9px var(--mono); text-transform: uppercase; }
+input, select, textarea { background: var(--paper); border: 1px solid var(--line); border-radius: 0; outline: none; padding: 9px 10px; }
+input:focus, select:focus, textarea:focus { border-color: var(--accent); } .form-row { display: grid; gap: 8px; grid-template-columns: 1fr auto; }
+.work-head { align-items: end; border-bottom: 1px solid var(--strong-line); display: flex; gap: 28px; justify-content: space-between; padding-bottom: 20px; }
+.work-head > div { min-width: 0; } #session-meta { font: 10px/1.5 var(--mono); margin: 8px 0 0; }
+.repository-facts { display: grid; gap: 5px 14px; grid-template-columns: auto auto; margin: 0; min-width: 230px; }
+.repository-facts dt { color: var(--muted); font: 9px var(--mono); text-transform: uppercase; } .repository-facts dd { font: 10px var(--mono); margin: 0; text-align: right; }
+.notice { border: 1px solid var(--warn); color: var(--warn); font: 11px/1.5 var(--mono); margin-top: 18px; padding: 11px 13px; }
+.notice.bad { border-color: var(--bad); color: var(--bad); }
+.conversation-empty { display: grid; min-height: 360px; place-content: center; text-align: center; }
+.conversation-empty h3 { font-size: clamp(20px, 3vw, 30px); line-height: 1.25; max-width: 570px; }
+.conversation { border-bottom: 1px solid var(--strong-line); } .messages { display: grid; gap: 26px; min-height: 320px; padding: 34px 0; }
+.message { display: grid; gap: 7px; grid-template-columns: 82px minmax(0, 720px); }
+.message .role { color: var(--muted); font: 9px/1.6 var(--mono); padding-top: 2px; text-transform: uppercase; }
+.message .content { font-size: 14px; line-height: 1.65; margin: 0; white-space: pre-wrap; } .message.user .role { color: var(--accent); }
+.message.system .content { color: var(--muted); font-family: var(--mono); font-size: 11px; } .message.failed .content { color: var(--bad); }
+.composer { border-top: 1px solid var(--line); padding: 18px 0 22px; } .composer textarea { display: block; line-height: 1.5; resize: vertical; width: 100%; }
+.composer-foot { align-items: center; color: var(--muted); display: flex; font: 9px var(--mono); justify-content: space-between; margin-top: 9px; }
+.activity { padding-top: 32px; } .activity-head { align-items: end; display: flex; justify-content: space-between; margin-bottom: 15px; }
+.counter { border: 1px solid var(--line); font: 10px var(--mono); padding: 5px 8px; } .task-list { display: grid; gap: 9px; }
+.task { border: 1px solid var(--line); padding: 13px 15px; } .task.attention { border-color: var(--warn); } .task.bad { border-color: var(--bad); }
+.task-head { align-items: baseline; display: flex; gap: 12px; justify-content: space-between; } .task-head strong { font-size: 12px; overflow-wrap: anywhere; }
+.tag { border: 1px solid currentColor; color: var(--muted); font: 8px var(--mono); padding: 3px 5px; text-transform: uppercase; }
+.tag.ok { color: var(--ok); } .tag.warn { color: var(--warn); } .tag.bad { color: var(--bad); }
+.task-meta { color: var(--muted); display: flex; flex-wrap: wrap; font: 9px/1.5 var(--mono); gap: 4px 14px; margin-top: 9px; }
+.activity-empty { color: var(--muted); font-size: 12px; margin: 0; padding: 16px 0; }
+.sr-only { clip: rect(0, 0, 0, 0); height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; width: 1px; }
+@media (max-width: 900px) { .workspace { grid-template-columns: 190px 240px minmax(0, 1fr); } .work-pane { padding-left: 24px; padding-right: 24px; } .repository-facts { display: none; } }
+@media (max-width: 680px) { .masthead { height: 60px; padding: 0 14px; } .wordmark { font-size: 8px; } .brand > span, #observed-at { display: none; } .workspace { display: block; min-height: calc(100vh - 60px); } .projects-pane, .sessions-pane { border-bottom: 1px solid var(--line); border-right: 0; padding: 15px 10px; } .nav-list { display: flex; overflow-x: auto; } .nav-item { flex: 0 0 170px; } .pane-note { display: none; } .work-pane { padding: 22px 16px 40px; } .message { grid-template-columns: 58px minmax(0, 1fr); } }
 @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
 """
 
 
 JS = r"""const $ = (id) => document.getElementById(id);
-const esc = (value) => String(value ?? "")
-  .replaceAll("&", "&amp;").replaceAll("<", "&lt;")
-  .replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
+const esc = (value) => String(value ?? "").replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#039;");
 const short = (value, size = 10) => value ? String(value).slice(0, size) : "—";
-const list = (value) => Array.isArray(value) && value.length ? value.join(", ") : "—";
+let workspaceState = {projects: [], sessions: []}; let token = "";
+let selectedProject = localStorage.getItem("invariant.project") || ""; let selectedSession = localStorage.getItem("invariant.session") || "";
+let repositorySnapshot = null; let activeSession = null; let events = null; let connectedProject = "";
 
-function tone(value) {
-  const state = String(value || "").toLowerCase();
-  if (["fresh", "valid", "passed", "complete", "completed", "landed", "live", "ready", "accepted"].some(x => state.includes(x))) return "ok";
-  if (["stale", "invalid", "failed", "error", "diverged", "expired", "rejected"].some(x => state.includes(x))) return "bad";
-  if (["waiting", "review", "implement", "planning", "checking", "attention", "active", "uncertain"].some(x => state.includes(x))) return "warn";
-  return "";
+function tone(value) { const state = String(value || "").toLowerCase(); if (["fresh", "valid", "passed", "complete", "landed", "live", "accepted"].some(x => state.includes(x))) return "ok"; if (["stale", "invalid", "failed", "error", "diverged", "expired", "rejected"].some(x => state.includes(x))) return "bad"; if (["waiting", "review", "implement", "planning", "checking", "active", "uncertain"].some(x => state.includes(x))) return "warn"; return ""; }
+function streamState(state, detail = "") { $("stream-state").textContent = state; $("stream-dot").className = `stream-dot ${state === "LIVE" ? "live" : state === "OFFLINE" ? "offline" : "waiting"}`; if (detail) $("observed-at").textContent = detail; }
+function notice(message = "", bad = false) { $("notice").hidden = !message; $("notice").textContent = message; $("notice").className = `notice ${bad ? "bad" : ""}`; }
+function projectSessions() { return (workspaceState.sessions || []).filter(item => item.project_id === selectedProject); }
+function currentProject() { return (workspaceState.projects || []).find(item => item.id === selectedProject) || null; }
+function currentSession() { return activeSession?.id === selectedSession ? activeSession : projectSessions().find(item => item.id === selectedSession) || null; }
+
+function renderProjects() {
+  const projects = workspaceState.projects || []; if (!projects.some(item => item.id === selectedProject)) selectedProject = projects[0]?.id || "";
+  $("projects-empty").hidden = projects.length !== 0;
+  $("projects").innerHTML = projects.map(item => `<button type="button" class="nav-item ${item.id === selectedProject ? "active" : ""} ${item.available && item.initialized ? "" : "unavailable"}" data-project="${esc(item.id)}"><strong>${esc(item.name)}</strong><span>${esc(item.available && item.initialized ? `${item.sessions} sessions` : "folder unavailable")}</span></button>`).join("");
+  $("projects").querySelectorAll("[data-project]").forEach(button => button.addEventListener("click", () => selectProject(button.dataset.project)));
 }
-
-function tag(value) {
-  return `<span class="tag ${tone(value)}">${esc(value || "unknown")}</span>`;
+function renderSessions() {
+  const sessions = projectSessions(); if (!sessions.some(item => item.id === selectedSession)) selectedSession = sessions[0]?.id || "";
+  $("sessions-empty").hidden = sessions.length !== 0;
+  $("sessions").innerHTML = sessions.map(item => `<button type="button" class="nav-item ${item.id === selectedSession ? "active" : ""}" data-session="${esc(item.id)}"><strong>${esc(item.theme)}</strong><span>${esc(item.mode)} · ${item.message_count ?? (item.messages || []).length} messages</span></button>`).join("");
+  $("sessions").querySelectorAll("[data-session]").forEach(button => button.addEventListener("click", () => selectSession(button.dataset.session)));
 }
-
-function empty(message) {
-  return `<p class="empty">${esc(message)}</p>`;
+function renderConversation() {
+  const project = currentProject(); const session = currentSession(); $("project-path").textContent = project?.path || "Choose a project";
+  $("conversation-empty").hidden = Boolean(session); $("conversation").hidden = !session;
+  if (!session) { $("session-title").textContent = project ? "Open a session" : "Register a project"; $("session-meta").textContent = project ? "Sessions keep one theme grounded in one folder." : "Use invariant project add <folder> in a terminal."; return; }
+  $("session-title").textContent = session.theme; $("session-meta").textContent = `${session.id} · ${session.provider || "provider on first turn"} · updated ${session.updated_at || "now"}`;
+  $("composer-scope").textContent = session.mode === "change" ? "Coordinator may start a managed change" : "Read-only repository conversation";
+  $("prompt").placeholder = session.mode === "change" ? "Ask, or request a managed change…" : "Ask about this project…";
+  const messages = session.messages || [];
+  $("messages").innerHTML = messages.length ? messages.map(message => `<article class="message ${esc(message.role)} ${message.state === "failed" ? "failed" : ""}"><span class="role">${esc(message.role)}</span><p class="content">${esc(message.content)}</p></article>`).join("") : `<article class="message system"><span class="role">Ready</span><p class="content">Start this theme with a question or a concrete request.</p></article>`;
 }
-
-function facts(values) {
-  return Object.entries(values).map(([name, value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join("");
+function renderRepository() {
+  const repo = repositorySnapshot?.repository || {};
+  $("repository-facts").innerHTML = repo.name ? [["Branch", repo.branch || "detached"], ["Head", short(repo.head)], ["State", repo.state || "unknown"], ["Authority", repo.authority || "—"]].map(([name, value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join("") : "";
+  const tasks = repositorySnapshot?.tasks || []; $("activity-count").textContent = `${tasks.length} active`;
+  $("tasks").innerHTML = tasks.length ? tasks.map(item => { const state = item.freshness || item.stage; return `<article class="task ${tone(state) === "bad" ? "bad" : tone(state) === "warn" ? "attention" : ""}"><div class="task-head"><strong>${esc(item.id)}</strong><span class="tag ${tone(state)}">${esc(item.stage)}</span></div><div class="task-meta"><span>${esc(item.kind)}</span><span>${esc(item.freshness)}</span><span>target ${esc(item.target || "—")}</span><span>${esc(item.pending_actions)} pending</span></div></article>`; }).join("") : `<p class="activity-empty">No active changes. Repository mechanics are ready.</p>`;
+  const diagnostics = repositorySnapshot?.diagnostics || []; if (diagnostics.length) notice(diagnostics.join(" · "), true);
 }
+function renderAll() { renderProjects(); renderSessions(); renderConversation(); renderRepository(); }
 
-function table(headers, rows) {
-  if (!rows.length) return empty("Nothing active.");
-  return `<table><thead><tr>${headers.map(x => `<th>${esc(x)}</th>`).join("")}</tr></thead><tbody>${rows.join("")}</tbody></table>`;
+async function loadState({quiet = false} = {}) {
+  try { const response = await fetch("/host/v1/state", {cache: "no-store"}); if (!response.ok) throw new Error(`HTTP ${response.status}`); const next = await response.json(); workspaceState = next; token = next.csrf_token || token; renderAll(); const summary = (next.sessions || []).find(item => item.id === selectedSession); const transcriptChanged = summary && summary.updated_at !== activeSession?.updated_at; if (!summary) { activeSession = null; renderConversation(); } if (summary && (!activeSession || transcriptChanged)) await loadSession(); if (!quiet || selectedProject !== connectedProject) connectProject(); }
+  catch (error) { streamState("OFFLINE", `workspace unavailable · ${error.message}`); }
 }
-
-function renderProcesses(processes) {
-  const rows = processes.map(item => `<tr>
-    <td class="mono">${esc(item.pid)}</td>
-    <td>${esc(item.command)}</td>
-    <td>${tag(item.state)}</td>
-    <td class="mono">${esc(item.task || "—")}</td>
-    <td class="mono">${esc(item.started || "—")}</td>
-  </tr>`);
-  $("processes").innerHTML = table(["PID", "Command", "Presence", "Task", "Started"], rows);
+async function loadSession() {
+  if (!selectedSession) { activeSession = null; renderConversation(); return; }
+  try { const response = await fetch(`/host/v1/sessions/${encodeURIComponent(selectedSession)}`, {cache: "no-store"}); const value = await response.json(); if (!response.ok) throw new Error(value.message || `HTTP ${response.status}`); activeSession = value.session; renderConversation(); }
+  catch (error) { activeSession = null; notice(error.message, true); }
 }
-
-const lifecycle = ["brief", "work", "evidence", "review", "land"];
-function stageIndex(stage) {
-  const value = String(stage || "");
-  if (value.includes("brief")) return 0;
-  if (value.includes("implement") || value.includes("branch")) return 1;
-  if (value.includes("review")) return 3;
-  if (value.includes("landing") || value.includes("cleanup") || value.includes("complete")) return 4;
-  return 0;
+async function loadProjectSnapshot() {
+  repositorySnapshot = null; if (!selectedProject) { renderRepository(); return; }
+  try { const response = await fetch(`/host/v1/projects/${encodeURIComponent(selectedProject)}/snapshot`, {cache: "no-store"}); const value = await response.json(); if (!response.ok) throw new Error(value.message || `HTTP ${response.status}`); repositorySnapshot = value; renderRepository(); }
+  catch (error) { notice(error.message, true); }
 }
-
-function renderTasks(tasks) {
-  $("task-caption").textContent = tasks.length ? `${tasks.length} retained lifecycle ${tasks.length === 1 ? "receipt" : "receipts"}.` : "No unfinished changes.";
-  if (!tasks.length) { $("tasks").innerHTML = empty("No active changes. The repository is ready for a managed request."); return; }
-  $("tasks").innerHTML = tasks.map(item => {
-    const current = stageIndex(item.stage);
-    const bad = item.freshness === "stale" || item.freshness === "diverged" || item.stage === "cleanup-required";
-    const stages = lifecycle.map((name, index) => `<span class="stage ${index < current ? "done" : index === current ? (bad ? "bad" : "current") : ""}">${name}</span>`).join("");
-    const problems = Array.isArray(item.stale_reasons) && item.stale_reasons.length ? `<p class="summary bad-text">${esc(item.stale_reasons.join(" · "))}</p>` : "";
-    return `<article class="task ${bad ? "bad" : "attention"}">
-      <div class="unit-head"><strong>${esc(item.id)}</strong><div>${tag(item.stage)} ${tag(item.freshness)}</div></div>
-      <div class="meta"><span>${esc(item.kind)}</span><span>target ${esc(item.target || "—")}</span><span>base ${esc(short(item.base))}</span><span>boundary ${esc(item.boundary || "unresolved")}</span><span>${esc(item.pending_actions)} pending actions</span></div>
-      ${problems}<div class="stages">${stages}</div>
-    </article>`;
-  }).join("");
-}
-
-function renderPlans(plans) {
-  if (!plans.length) { $("plans").innerHTML = empty("No coordination plans."); return; }
-  $("plans").innerHTML = `<div class="plan-list">${plans.map(plan => `<article class="plan ${plan.valid ? "" : "bad"}">
-    <div class="unit-head"><strong>${esc(plan.id)}</strong>${tag(plan.valid ? "valid" : "invalid")}</div>
-    <p class="summary">${esc(plan.summary || "No plan summary.")}</p>
-    ${plan.diagnostics?.length ? `<p class="summary bad-text">${esc(plan.diagnostics.join(" · "))}</p>` : ""}
-    <div class="plan-units">${(plan.units || []).map(unit => `<div class="plan-unit"><span>${esc(unit.id)}</span><span class="${tone(unit.state)}-text">${esc(unit.state)}</span><span>${esc(list(unit.dependencies))}</span></div>`).join("")}</div>
-  </article>`).join("")}</div>`;
-}
-
-function renderLeases(leases) {
-  const rows = leases.map(item => `<tr>
-    <td class="mono">${esc(item.unit)}</td><td>${tag(item.state)}</td>
-    <td class="mono">${esc(item.owner || "—")}</td><td class="mono">${esc(item.expires || "—")}</td>
-  </tr>`);
-  $("leases").innerHTML = table(["Unit", "State", "Owner", "Expires"], rows);
-}
-
-function renderGovernance(governance) {
-  const records = governance.records || [];
-  $("governance-caption").textContent = `${records.length} accepted record ${records.length === 1 ? "projection" : "projections"}; repository state is ${governance.state || "unknown"}.`;
-  if (!records.length) { $("governance").innerHTML = empty("No accepted governance records."); return; }
-  $("governance").innerHTML = records.map(item => `<article class="record ${tone(item.status) === "bad" ? "bad" : ""}">
-    <div class="unit-head"><strong>${esc(item.kind)}:${esc(item.id)}</strong>${tag(item.status || "active")}</div>
-    <p class="summary">${esc(item.summary || item.document || "Accepted repository meaning.")}</p>
-    <div class="meta"><span>${esc(item.authority || "authority unknown")}</span><span>${esc(item.path)}</span></div>
-  </article>`).join("");
-}
-
-function renderEvidence(evidence) {
-  if (!evidence.length) { $("evidence").innerHTML = empty("No captured evidence yet."); return; }
-  $("evidence").innerHTML = evidence.map(item => {
-    const state = item.freshness || item.status || "recorded";
-    const causal = [
-      ["Task", item.task], ["Ground", short(item.ground || item.base)], ["Tree", short(item.tree)],
-      ["Locator", item.locator], ["Captured", item.captured_at], ["Duration", item.duration_ms != null ? `${item.duration_ms} ms` : ""]
-    ].filter(([, value]) => value).map(([name, value]) => `<div><b>${esc(name)}</b>${esc(value)}</div>`).join("");
-    const displayId = String(item.id || "").replace(`${item.kind}:`, "");
-    return `<article class="evidence-item ${tone(state) === "bad" ? "bad" : tone(state) === "warn" ? "attention" : ""}">
-      <div><div class="unit-head"><strong>${esc(item.kind)} · ${esc(displayId)}</strong>${tag(state)}</div><p class="summary">${esc(item.summary || item.command || "Captured exact-tree evidence.")}</p></div>
-      <div class="causal">${causal || "Recorded without additional causal display fields."}</div>
-    </article>`;
-  }).join("");
-}
-
-function renderHistory(history) {
-  const rows = history.map(item => `<tr>
-    <td>${esc(item.task)}</td><td>${tag(item.status || "completed")}</td>
-    <td class="mono">${esc(short(item.commit))}</td><td>${esc(item.boundary || "—")}</td>
-  </tr>`);
-  $("history").innerHTML = table(["Task", "Status", "Landing", "Boundary"], rows);
-}
-
-function render(snapshot) {
-  const repo = snapshot.repository || {};
-  $("repository-title").textContent = repo.name || "Repository";
-  $("repository-path").textContent = repo.path || "";
-  $("repository-facts").innerHTML = facts({
-    Branch: repo.branch || "detached", Integration: repo.integration_branch || "—",
-    Head: short(repo.head), State: repo.state || "unknown", Authority: repo.authority || "—", Execution: repo.execution || "—"
-  });
-  const counters = [
-    ["Running processes", (snapshot.processes || []).filter(x => x.state === "running").length],
-    ["Active changes", (snapshot.tasks || []).length],
-    ["Governance records", snapshot.governance?.records?.length || 0],
-    ["Evidence entries", (snapshot.evidence || []).length]
-  ];
-  $("counters").innerHTML = counters.map(([label, value]) => `<div class="counter"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`).join("");
-  const diagnostics = Array.isArray(snapshot.diagnostics) ? snapshot.diagnostics : [];
-  $("diagnostics").hidden = diagnostics.length === 0;
-  $("diagnostics").innerHTML = diagnostics.length
-    ? `<strong>State diagnostics</strong>${diagnostics.map(item => `<p>${esc(item)}</p>`).join("")}`
-    : "";
-  renderProcesses(snapshot.processes || []);
-  renderTasks(snapshot.tasks || []);
-  renderPlans(snapshot.plans || []);
-  renderLeases(snapshot.leases || []);
-  renderGovernance(snapshot.governance || {});
-  renderEvidence(snapshot.evidence || []);
-  renderHistory(snapshot.history || []);
-  $("observed-at").textContent = snapshot.observed_at ? `observed ${snapshot.observed_at}` : "snapshot received";
-  $("revision").textContent = `revision ${short(snapshot.revision, 12)}`;
-}
-
-function streamState(state, detail) {
-  $("stream-state").textContent = state;
-  $("stream-dot").className = `stream-dot ${state === "LIVE" ? "live" : state === "OFFLINE" ? "offline" : "waiting"}`;
-  if (detail) $("observed-at").textContent = detail;
-}
-
-async function initial() {
-  try {
-    const response = await fetch("/api/v1/snapshot", {cache: "no-store"});
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    render(await response.json());
-  } catch (error) {
-    streamState("OFFLINE", `snapshot failed · ${error.message}`);
-  }
-}
-
-function connect() {
-  const events = new EventSource("/api/v1/events");
+function connectProject() {
+  if (events) events.close(); events = null; connectedProject = selectedProject; if (!selectedProject) { streamState("LIVE", "no project selected"); return; } loadProjectSnapshot();
+  events = new EventSource(`/host/v1/projects/${encodeURIComponent(selectedProject)}/events`);
   events.addEventListener("open", () => streamState("LIVE"));
-  events.addEventListener("snapshot", event => {
-    try { render(JSON.parse(event.data)); streamState("LIVE"); }
-    catch (error) { streamState("RECONNECTING", `invalid event · ${error.message}`); }
-  });
-  events.addEventListener("error", () => streamState("RECONNECTING", "waiting for the local event stream"));
+  events.addEventListener("snapshot", event => { try { repositorySnapshot = JSON.parse(event.data); renderRepository(); streamState("LIVE", repositorySnapshot.observed_at ? `observed ${repositorySnapshot.observed_at}` : "snapshot received"); } catch (error) { streamState("RECONNECTING", `invalid event · ${error.message}`); } });
+  events.addEventListener("error", () => streamState("RECONNECTING", "waiting for project observer"));
 }
+function selectProject(identifier) { selectedProject = identifier; selectedSession = projectSessions()[0]?.id || ""; activeSession = null; localStorage.setItem("invariant.project", selectedProject); localStorage.setItem("invariant.session", selectedSession); notice(); renderAll(); loadSession(); connectProject(); }
+function selectSession(identifier) { selectedSession = identifier; activeSession = null; localStorage.setItem("invariant.session", selectedSession); notice(); renderSessions(); renderConversation(); loadSession().then(() => $("prompt").focus()); }
+async function post(path, body) { const response = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json", "X-Invariant-Token": token}, body: JSON.stringify(body)}); const value = await response.json(); if (!response.ok) throw new Error(value.message || `HTTP ${response.status}`); return value; }
 
-initial();
-connect();
+$("new-session-toggle").addEventListener("click", () => { if (!selectedProject) { notice("Register and select a project before creating a session.", true); return; } $("new-session-form").hidden = !$("new-session-form").hidden; if (!$("new-session-form").hidden) $("session-theme").focus(); });
+$("new-session-form").addEventListener("submit", async event => {
+  event.preventDefault(); const button = event.currentTarget.querySelector("button"); button.disabled = true;
+  try { const value = await post(`/host/v1/projects/${encodeURIComponent(selectedProject)}/sessions`, {theme: $("session-theme").value, mode: $("session-mode").value}); selectedSession = value.session.id; activeSession = value.session; $("session-theme").value = ""; $("new-session-form").hidden = true; await loadState({quiet: true}); localStorage.setItem("invariant.session", selectedSession); renderAll(); $("prompt").focus(); }
+  catch (error) { notice(error.message, true); } finally { button.disabled = false; }
+});
+$("composer").addEventListener("submit", async event => {
+  event.preventDefault(); const session = currentSession(); const message = $("prompt").value.trim(); if (!session || !message) return;
+  $("send").disabled = true; $("prompt").disabled = true; notice("The agent is working in this project…"); session.messages = [...(session.messages || []), {role: "user", content: message, state: "complete"}]; $("prompt").value = ""; renderConversation();
+  try { const value = await post(`/host/v1/sessions/${encodeURIComponent(session.id)}/turns`, {message}); activeSession = value.session; await loadState({quiet: true}); notice(); renderAll(); }
+  catch (error) { notice(error.message, true); await loadState({quiet: true}); }
+  finally { $("send").disabled = false; $("prompt").disabled = false; $("prompt").focus(); }
+});
+$("prompt").addEventListener("keydown", event => { if ((event.metaKey || event.ctrlKey) && event.key === "Enter") $("composer").requestSubmit(); });
+loadState(); window.setInterval(() => loadState({quiet: true}), 3000);
 """

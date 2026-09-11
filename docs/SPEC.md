@@ -434,8 +434,6 @@ integration_branch: auto
 push_remote: off
 adapters:
   intent_brief: off
-server:
-  port: 3000
 ```
 
 Provider selection is deliberately absent from tracked configuration: which coding agent is
@@ -472,10 +470,11 @@ branch as the convergence target. An omitted value is read as `auto` for compati
 - `off` leaves every successful landing local;
 - `on` pushes the exact landed commit to the configured integration branch's existing upstream.
 
-`server.port` is the loopback observation server's TCP port. It defaults to `3000` when omitted and
-must be an integer from 1 through 65535. It grants no network, repository, model, or publication
-authority. The server always binds to `127.0.0.1`; exposing it beyond the local machine belongs to a
-separate, explicitly secured host integration.
+Host address, registered folders, conversation themes, transcripts, provider conversation handles,
+and presentation preferences are machine-local personal state. They are stored in the user's
+Invariant workspace, never in tracked repository configuration or `.invariant/runtime/`, and carry
+no semantic authority. A repository clone therefore does not select a port or register itself on
+another person's machine.
 
 Remote publication requires both the accepted configuration and the verified candidate to say
 `on`. Enabling therefore takes effect only after the enabling configuration reaches the integration
@@ -778,7 +777,10 @@ The executable is named `invariant`. Its primary human surface is:
 LOCAL   invariant init [--defaults] [--agent <auto|codex|claude>]
 GLOBAL  invariant connect [codex|claude] [--default <codex|claude>]
 LOCAL   invariant ask [--using <provider>] [--dry-run] <prompt>
-LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [--server] [<prompt>]
+LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [--session <id> | --theme <theme>] [<prompt>]
+GLOBAL  invariant serve [--port <port>] [--project <folder>]...
+GLOBAL  invariant project <add|list|remove> ...
+LOCAL   invariant session <new|list|show> ...
 LOCAL   invariant change [--using <provider>] [--id <change-id>] [--dry-run] <prompt>
 LOCAL   invariant establish [--using <provider>] [--id <establishment-id>] [--goal <focus>] [--dry-run | --discard]
 LOCAL   invariant status [<change-id>]
@@ -792,12 +794,14 @@ establishes that native connection and switches the machine default. A clone wit
 preference follows it; `invariant set harness PROVIDER` records a clone-local override under
 `.invariant/runtime/`, which is self-ignored and never committed.
 
-`invariant start` owns one foreground console and one or more in-memory conversation handles until
-EOF, `:exit`, or Ctrl-C. Its default local runtime mode is `ask`. `change` mode may answer or route a
-self-contained request into the ordinary public change lifecycle. The conversation process never
-writes the repository directly: every implementation still enters isolated task execution,
-candidate verification, and compare-and-swap landing. `:new`, `:sessions`, and `:switch` manage
-conversations inside a console; starting another console never terminates an existing one.
+`invariant start` is a terminal client for durable project sessions. A session has a host-owned id,
+one project folder, one human theme, an `ask` or `change` mode, a transcript, and an optional opaque
+provider conversation handle. The host id remains stable when a provider handle changes. A bare
+`start` creates a session; `--session` resumes one in the current repository. `change` mode may
+answer or route a self-contained request into the ordinary public change lifecycle. The
+conversation never writes the repository directly: every implementation still enters isolated
+task execution, candidate verification, and compare-and-swap landing. `:new`, `:sessions`, and
+`:switch` create and select the same durable sessions exposed by the browser workspace.
 
 Lifecycle and mechanical commands are composable and non-interactive. Repository bootstrap is the
 deliberate exception: `invariant init` is interactive, while `invariant init --defaults` skips the
@@ -1056,23 +1060,36 @@ beyond the separately configured upstream push belong to the host.
   where the result can be computed without mutation.
 - Repeating an idempotent command with unchanged inputs yields an equivalent result.
 
-### 8.5 Local observation server
+### 8.5 Per-user local host
 
-`invariant start --server` starts a loopback-only HTTP/1.1 server on the configured `server.port`
-for the lifetime of that foreground console session. Ending the console also stops the server. The
-server is an observation surface, not a chat surface or an alternate lifecycle API. It does not
-invoke a model and exposes no write endpoint.
+`invariant serve` starts one loopback-only HTTP/1.1 host for the current OS user. Its default port is
+`3000`; `--port` selects another machine-local port for that invocation. The host owns the personal
+workspace and conversations, not repository truth. `invariant project add <folder>` explicitly
+registers an initialized repository; the host never searches the machine for folders. Observation
+starts lazily when a client opens a registered project.
+
+The browser workspace is a focused client: it switches projects, creates and resumes themed
+sessions, sends turns, and shows repository activity. A session turn is handled by the same
+read-only coordinator as the terminal. When `change` mode classifies a request as implementation,
+the host invokes the public `invariant change --format json` boundary; it never reimplements or
+bypasses lifecycle mechanics.
 
 The stable versioned routes are:
 
 ```text
-GET  /                    CLI-derived local dashboard
-GET  /api/v1/snapshot     coherent JSON projection of current repository state
-GET  /api/v1/events       text/event-stream of changed snapshots
-GET  /healthz             process health and current snapshot revision
+GET  /                    local project and session workspace
+GET  /host/v1/state       registered projects and durable sessions
+GET  /host/v1/sessions/<id>  one session transcript
+GET  /host/v1/projects/<id>/snapshot  coherent projection of one repository
+GET  /host/v1/projects/<id>/events    changed snapshots for one repository
+POST /host/v1/projects/<id>/sessions  create a themed session
+POST /host/v1/sessions/<id>/turns     run one session turn
+GET  /api/v1/snapshot?project=<id>    observer compatibility route
+GET  /api/v1/events?project=<id>      observer compatibility stream
+GET  /healthz             host process health
 ```
 
-The event route uses Server-Sent Events because repository observation is one-way: the server emits
+The event routes use Server-Sent Events because repository observation is one-way: the host emits
 an initial `snapshot` event, emits a new event only when the projected state revision changes, and
 sends comment heartbeats to keep intermediaries from considering an idle connection dead. Clients
 reconnect using ordinary EventSource behavior. HTTP snapshots remain the recovery and non-browser
@@ -1085,9 +1102,11 @@ they execute and remove it on an orderly exit. A missing process or expired hear
 as stale presence, never treated as proof that lifecycle work did or did not complete. Receipts, Git
 state, and evidence remain authoritative.
 
-The dashboard and API are safe to refresh during active work. Snapshot construction is read-only and
+The workspace and APIs are safe to refresh during active work. Snapshot construction is read-only and
 never calls lifecycle continuation, lease renewal, cleanup, or freshness operations that update a
-receipt. Responses use no-store caching and restrictive browser security headers.
+receipt. Responses use no-store caching and restrictive browser security headers. Every write route
+requires a process-random same-origin token, validates the loopback Host and Origin, and accepts no
+repository path from the browser. Loopback reachability by itself grants no repository authority.
 
 ## 9. Reach
 

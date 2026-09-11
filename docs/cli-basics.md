@@ -75,23 +75,27 @@ Start a repository conversation:
 ```bash
 invariant start
 invariant start "Where is retry behavior defined?"
+invariant session new "Retry recovery"
+invariant start --session <session-id>
 invariant set mode change
 ```
 
-The default `ask` mode is read-only. `change` mode still uses a read-only conversational
+Sessions are durable themes within the current project folder. The default `ask` mode is read-only.
+`change` mode still uses a read-only conversational
 coordinator, but it may classify a turn as an implementation request and route that request through
 the ordinary managed-change lifecycle. It may also answer questions. The saved mode is local
 ignored runtime state, not a tracked repository decision.
 
-Each `start` is a foreground console. It does not stop sessions running in other terminals. Within
-one console:
+`start` creates a durable session unless `--session` selects an existing one. Ending the foreground
+console leaves its theme, transcript, and provider context available to another terminal or the
+local browser workspace. Within one console:
 
 | Command | Effect |
 | --- | --- |
 | `:mode ask\|change` | Switch the active conversation's capability. |
-| `:new [message]` | Create and enter another conversation. |
-| `:sessions` | List conversations held by this console. |
-| `:switch N` | Return to a listed conversation. |
+| `:new [theme]` | Create and enter another durable session. |
+| `:sessions` | List this project's sessions. |
+| `:switch ID` | Return to a listed session. |
 | `:status` | Show deterministic repository status without invoking the agent. |
 | `:settings` | Show repository settings. |
 | `:set KEY VALUE` | Update one repository preference. |
@@ -151,19 +155,24 @@ Inspect without model invocation:
 ```bash
 invariant status
 invariant settings
-invariant start --server
+invariant project add .
+invariant serve
 invariant ask --dry-run "Where is retry behavior defined?"
 invariant change --dry-run "Restore active jobs after restart"
 invariant establish --dry-run
 ```
 
-`invariant start --server` keeps a read-only local dashboard running at
-`http://127.0.0.1:3000` while that console session is open. Ending the console stops the server. The
-dashboard shows live Invariant processes, active changes, review and verification state,
-coordination, governance freshness, evidence, and recent landings; it is deliberately not a chat
-interface. The browser receives an initial HTTP snapshot and then change notifications over
-Server-Sent Events. Set another port with `invariant set server.port <port>`; the server remains
-bound to the local machine.
+`invariant serve` runs the local workspace at `http://127.0.0.1:3000` for the current OS user until
+that process stops. Register initialized repositories explicitly with `invariant project add
+<folder>`; `project list` and `project remove` manage that machine-local list. The workspace switches
+between project folders, creates and resumes themed sessions, sends session turns, and shows active
+lifecycle work. It observes only the selected project and receives change notifications through
+Server-Sent Events. Use `invariant serve --port <port>` when the default machine-local port is busy.
+
+Browser session writes require a process-random same-origin token. The browser cannot register an
+arbitrary folder, and a `change` session still delegates implementation to the public managed-change
+command. Project registrations, transcripts, and opaque provider handles live beneath the user's
+Invariant configuration directory; none are repository state or authority.
 
 Drop a preserved establishment and its proposal without starting another:
 

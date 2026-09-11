@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from invariant import __version__, observer
+from invariant import __version__, conversation, host, observer, workspace
 from invariant.cli import app as protocol_cli
 from invariant.cli import style
 from invariant.cli.argv import hoist_global_options, requested_format
@@ -50,6 +50,9 @@ PUBLIC_COMMANDS = {
     "establish",
     "help",
     "init",
+    "project",
+    "serve",
+    "session",
     "set",
     "settings",
     "source",
@@ -138,12 +141,58 @@ def build_parser() -> argparse.ArgumentParser:
         help="override the repository's default session mode",
     )
     start.add_argument(
-        "--server",
-        action="store_true",
-        help="serve the read-only repository observer for this session",
+        "--session",
+        dest="session_id",
+        help="resume a durable project session",
     )
+    start.add_argument("--theme", help="theme for a new durable session")
     start.add_argument("prompt", nargs="?", help="optional first message")
     start.set_defaults(handler=_start)
+
+    serve = commands.add_parser(
+        "serve", help="run the per-user project and session host"
+    )
+    serve.add_argument(
+        "--port",
+        type=_port,
+        default=workspace.DEFAULT_HOST_PORT,
+        help=f"loopback port (default {workspace.DEFAULT_HOST_PORT})",
+    )
+    serve.add_argument(
+        "--project",
+        action="append",
+        default=[],
+        metavar="FOLDER",
+        help="register a repository folder before serving; repeatable",
+    )
+    serve.set_defaults(handler=_serve)
+
+    projects = commands.add_parser("project", help="manage machine-local project folders")
+    project_commands = projects.add_subparsers(
+        dest="project_command", required=True, parser_class=Parser
+    )
+    project_add = project_commands.add_parser("add", help="register a repository folder")
+    project_add.add_argument("path", nargs="?", default=".")
+    project_add.set_defaults(handler=_project_add)
+    project_list = project_commands.add_parser("list", help="list registered projects")
+    project_list.set_defaults(handler=_project_list)
+    project_remove = project_commands.add_parser("remove", help="forget a project and its sessions")
+    project_remove.add_argument("project_id")
+    project_remove.set_defaults(handler=_project_remove)
+
+    sessions = commands.add_parser("session", help="manage durable project sessions")
+    session_commands = sessions.add_subparsers(
+        dest="session_command", required=True, parser_class=Parser
+    )
+    session_new = session_commands.add_parser("new", help="create a themed session")
+    session_new.add_argument("theme")
+    session_new.add_argument("--mode", choices=["ask", "change"])
+    session_new.set_defaults(handler=_session_new)
+    session_list = session_commands.add_parser("list", help="list this project's sessions")
+    session_list.set_defaults(handler=_session_list_command)
+    session_show = session_commands.add_parser("show", help="show one session and its transcript")
+    session_show.add_argument("session_id")
+    session_show.set_defaults(handler=_session_show)
 
     change = commands.add_parser(
         "change", help="implement, check, and land one managed change"
@@ -222,6 +271,16 @@ def _invocation_arguments(parser: argparse.ArgumentParser, *, timeout: int) -> N
         default=timeout,
         help=f"seconds to wait for one agent turn (default {timeout})",
     )
+
+
+def _port(value: str) -> int:
+    try:
+        port = int(value)
+    except ValueError:
+        port = 0
+    if str(port) != value.strip() or not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("use an integer from 1 through 65535")
+    return port
 
 
 def _source_add_arguments(parser: argparse.ArgumentParser) -> None:
@@ -460,26 +519,7 @@ def _connect(args: argparse.Namespace) -> CommandResult:
 
 
 def _resolve_provider(repo: Path, requested: AgentProvider | None) -> AgentProvider:
-    configured = preferences.repo_harness(repo)
-    candidates = (
-        [requested] if requested is not None else preferences.harness_candidates(repo)
-    )
-    for provider in candidates:
-        state = connection_status(provider)
-        if state.installed and state.authenticated:
-            return provider
-    if requested is not None or configured != "auto":
-        provider = requested or AgentProvider(configured)
-        raise InvariantError(
-            f"Invariant: {provider.value} is not connected; "
-            f"run 'invariant connect {provider.value}'",
-            code="agent_not_connected",
-        )
-    raise InvariantError(
-        "Invariant: no coding agent is connected; run 'invariant connect codex' or "
-        "'invariant connect claude'",
-        code="agent_not_connected",
-    )
+    return conversation.resolve_provider(repo, requested)
 
 
 def _provider_name(provider: AgentProvider) -> str:
@@ -768,50 +808,132 @@ def _ask(args: argparse.Namespace) -> CommandResult:
     )
 
 
+def _project_add(args: argparse.Namespace) -> CommandResult:
+    selected = workspace.add_project(Path(args.path))
+    return CommandResult(
+        [
+            f"PROJECT: {selected['id']}",
+            f"NAME: {selected['name']}",
+            f"FOLDER: {selected['path']}",
+            "STATUS: registered",
+        ],
+        {"project": selected},
+    )
+
+
+def _project_list(_: argparse.Namespace) -> CommandResult:
+    projects = workspace.list_projects()
+    lines = [
+        "PROJECT: {id} — {name} — {state} — {sessions} sessions\nFOLDER: {path}".format(
+            id=item["id"],
+            name=item["name"],
+            state="available" if item["available"] and item["initialized"] else "unavailable",
+            sessions=item["sessions"],
+            path=item["path"],
+        )
+        for item in projects
+    ]
+    if not lines:
+        lines = ["STATUS: no registered projects", "NEXT: invariant project add <folder>"]
+    return CommandResult(lines, {"projects": projects})
+
+
+def _project_remove(args: argparse.Namespace) -> CommandResult:
+    removed = workspace.remove_project(args.project_id)
+    return CommandResult(
+        [
+            f"PROJECT: {removed['id']}",
+            f"FOLDER: {removed['path']}",
+            f"SESSIONS: {removed['removed_sessions']} removed",
+            "STATUS: forgotten — repository files unchanged",
+        ],
+        {"project": removed},
+    )
+
+
+def _session_new(args: argparse.Namespace) -> CommandResult:
+    repo = git.root()
+    mode = args.mode or preferences.session_mode(repo)
+    selected = workspace.new_session(repo, args.theme, mode=mode)
+    return CommandResult(
+        [
+            f"SESSION: {selected['id']}",
+            f"THEME: {selected['theme']}",
+            f"MODE: {selected['mode']}",
+            f"NEXT: invariant start --session {selected['id']}",
+        ],
+        {"session": selected},
+    )
+
+
+def _session_list_command(_: argparse.Namespace) -> CommandResult:
+    repo = git.root()
+    selected_project = workspace.add_project(repo)
+    sessions = workspace.list_sessions(project_id=str(selected_project["id"]))
+    lines = [
+        "SESSION: {id} — {mode} — {theme} — {messages} messages".format(
+            id=item["id"],
+            mode=item["mode"],
+            theme=item["theme"],
+            messages=len(item.get("messages", [])),
+        )
+        for item in sessions
+    ]
+    if not lines:
+        lines = ["STATUS: no sessions", 'NEXT: invariant session new "<theme>"']
+    return CommandResult(lines, {"project": selected_project, "sessions": sessions})
+
+
+def _session_show(args: argparse.Namespace) -> CommandResult:
+    repo = git.root()
+    selected = workspace.require_session_project(args.session_id, repo)
+    lines = [
+        f"SESSION: {selected['id']}",
+        f"THEME: {selected['theme']}",
+        f"MODE: {selected['mode']}",
+        f"PROVIDER: {selected.get('provider') or 'not selected'}",
+    ]
+    for message in selected.get("messages", []):
+        role = str(message.get("role") or "message").upper()
+        content = str(message.get("content") or "").replace("\n", " ")
+        lines.append(f"{role}: {content}")
+    return CommandResult(lines, {"session": selected})
+
+
+def _serve(args: argparse.Namespace) -> CommandResult:
+    if args.format == "json":
+        raise UsageError("Invariant: serve is a foreground text command")
+    for folder in args.project:
+        workspace.add_project(Path(folder))
+    if not workspace.list_projects():
+        try:
+            repo = git.root()
+        except InvariantError:
+            repo = None
+        if repo is not None and config.initialized(repo):
+            workspace.add_project(repo)
+    address = f"http://127.0.0.1:{args.port}"
+    rendered = style.panel(
+        "Local host",
+        [
+            f"ADDRESS: {address}",
+            "ACCESS: this OS user — loopback only",
+            "LIFETIME: until this process stops",
+        ],
+        branded=False,
+    )
+    if rendered:
+        print(rendered, flush=True)
+    host.serve(args.port)
+    return CommandResult([], {"address": address})
+
+
 @dataclass
 class _ConsoleSession:
-    identifier: int
+    identifier: str
     mode: str
+    theme: str
     provider_session_id: str = ""
-
-
-def _session_schema(mode: str) -> dict[str, Any]:
-    properties: dict[str, Any] = {
-        "message": {"type": "string", "minLength": 1}
-    }
-    required = ["message"]
-    if mode == "change":
-        properties["action"] = {"type": "string", "enum": ["answer", "change"]}
-        required.insert(0, "action")
-    return {
-        "$schema": "https://json-schema.org/draft/2020-12/schema",
-        "type": "object",
-        "additionalProperties": False,
-        "required": required,
-        "properties": properties,
-    }
-
-
-def _session_prompt(repo: Path, mode: str, message: str) -> str:
-    if mode == "ask":
-        instruction = (
-            "Answer the user's repository question. This is a persistent conversation, so use "
-            "relevant context from earlier turns."
-        )
-    else:
-        instruction = (
-            "Act as a read-only coordinator. Choose action=answer for questions, explanation, "
-            "or exploration. Choose action=change only when the user asks to modify repository "
-            "state. For a change, message must be a self-contained implementation request for "
-            "Invariant's managed change lifecycle. For an answer, message is the answer."
-        )
-    return (
-        "You are working through an Invariant repository session. Inspect the repository when "
-        "useful, but do not modify files, create commits, or change external state in this "
-        "conversation. Return exactly one JSON object matching the supplied schema.\n\n"
-        f"Session mode: {mode}\n{instruction}\n\nUser message:\n{message.strip()}\n"
-        f"{_grounding_prompt(repo)}"
-    )
 
 
 def _show(title: str, lines: list[str], *, critical: bool = False) -> None:
@@ -845,63 +967,93 @@ def _session_turn(
     model: str | None,
     timeout: int,
 ) -> None:
-    turn = style.turn(provider.value)
-    try:
-        with turn:
-            result = invoke_session(
-                provider,
-                repo,
-                _session_prompt(repo, session.mode, message),
-                _session_schema(session.mode),
-                session_id=session.provider_session_id or None,
-                model=model,
-                timeout=timeout,
+    with workspace.session_lock(session.identifier):
+        saved = workspace.session_private(session.identifier)
+        session.mode = str(saved.get("mode") or session.mode)
+        session.provider_session_id = str(saved.get("provider_session_id") or "")
+        workspace.append_message(session.identifier, "user", message)
+        turn = style.turn(provider.value)
+        try:
+            with turn:
+                result = invoke_session(
+                    provider,
+                    repo,
+                    conversation.prompt(repo, session.mode, message),
+                    conversation.schema(session.mode),
+                    session_id=session.provider_session_id or None,
+                    model=model,
+                    timeout=timeout,
+                )
+        except AgentInvocationError as exc:
+            workspace.append_message(
+                session.identifier,
+                "system",
+                exc.message,
+                state="failed",
             )
-    except AgentInvocationError as exc:
-        raise _agent_error(exc) from exc
-    session.provider_session_id = result.session_id
-    response = result.response.get("message")
-    if not isinstance(response, str) or not response.strip():
-        raise InvariantError(
-            f"Invariant: {provider.value} omitted its session response",
-            code="invalid_agent_output",
+            raise _agent_error(exc) from exc
+        session.provider_session_id = result.session_id
+        response = result.response.get("message")
+        if not isinstance(response, str) or not response.strip():
+            workspace.append_message(
+                session.identifier,
+                "system",
+                f"{provider.value} omitted its session response",
+                state="failed",
+            )
+            raise InvariantError(
+                f"Invariant: {provider.value} omitted its session response",
+                code="invalid_agent_output",
+            )
+        action = "answer" if session.mode == "ask" else str(result.response.get("action") or "")
+        workspace.update_session(
+            session.identifier,
+            provider=provider.value,
+            provider_session_id=result.session_id,
         )
-    if session.mode == "ask" or result.response.get("action") == "answer":
+        workspace.append_message(
+            session.identifier,
+            "assistant",
+            response.strip(),
+            action=action,
+        )
+        if action == "answer":
+            _show_agent(provider, response.strip(), heading=not turn.rendered)
+            return
+        if action != "change":
+            raise InvariantError(
+                f"Invariant: {provider.value} returned an invalid session action",
+                code="invalid_agent_output",
+            )
         _show_agent(provider, response.strip(), heading=not turn.rendered)
-        return
-    if result.response.get("action") != "change":
-        raise InvariantError(
-            f"Invariant: {provider.value} returned an invalid session action",
-            code="invalid_agent_output",
+        changed = _change(
+            argparse.Namespace(
+                using=provider,
+                model=model,
+                timeout=max(timeout, 1800),
+                change_id=None,
+                boundary="unresolved",
+                path=[],
+                interface=[],
+                domain=[],
+                dry_run=False,
+                prompt=response.strip(),
+            )
         )
-    _show_agent(provider, response.strip(), heading=not turn.rendered)
-    changed = _change(
-        argparse.Namespace(
-            using=provider,
-            model=model,
-            timeout=max(timeout, 1800),
-            change_id=None,
-            boundary="unresolved",
-            path=[],
-            interface=[],
-            domain=[],
-            dry_run=False,
-            prompt=response.strip(),
-        )
-    )
-    rendered = style.render("change", changed.lines, branded=False)
-    if rendered:
-        print(rendered)
+        rendered = style.render("change", changed.lines, branded=False)
+        if rendered:
+            print(rendered)
 
 
 def _session_list(
     sessions: list[_ConsoleSession], active: _ConsoleSession, provider: AgentProvider
 ) -> None:
     lines = [
-        "SESSION: {identifier} — {state} — {mode} — {context}".format(
+        "SESSION: {identifier} — {state} — {mode} — {theme} — {context}".format(
             identifier=session.identifier,
             state="active" if session is active else "available",
             mode=session.mode,
+            theme=session.theme,
             context=(
                 f"{provider.value} context ready"
                 if session.provider_session_id
@@ -917,13 +1069,46 @@ def _start(args: argparse.Namespace) -> CommandResult:
     if args.format == "json":
         raise UsageError("Invariant: start is an interactive text command")
     repo = git.root()
-    provider = _resolve_provider(repo, args.using)
-    if args.server:
-        port = config.resolve(repo).server.port
-        server_url = f"http://127.0.0.1:{port}"
-        with observer.running_server(repo, port):
-            return _console_session(args, repo, provider, server_url=server_url)
-    return _console_session(args, repo, provider)
+    pending = args.prompt.strip() if isinstance(args.prompt, str) else ""
+    if args.session_id:
+        if args.theme:
+            raise UsageError("Invariant: --theme cannot be used with --session")
+        saved = workspace.require_session_project(args.session_id, repo)
+        stored_provider = str(saved.get("provider") or "")
+        requested = args.using or (AgentProvider(stored_provider) if stored_provider else None)
+        provider = _resolve_provider(repo, requested)
+        private = workspace.session_private(args.session_id)
+        if stored_provider and stored_provider != provider.value:
+            workspace.update_session(
+                args.session_id,
+                provider=provider.value,
+                provider_session_id="",
+            )
+            private["provider_session_id"] = ""
+        active = _ConsoleSession(
+            args.session_id,
+            str(saved["mode"]),
+            str(saved["theme"]),
+            str(private.get("provider_session_id") or ""),
+        )
+    else:
+        provider = _resolve_provider(repo, args.using)
+        theme = args.theme or (pending[:80] if pending else "General")
+        saved = workspace.new_session(
+            repo,
+            theme,
+            mode=args.mode or preferences.session_mode(repo),
+            provider=provider.value,
+        )
+        active = _ConsoleSession(
+            str(saved["id"]),
+            str(saved["mode"]),
+            str(saved["theme"]),
+        )
+    if args.mode and args.mode != active.mode:
+        active.mode = args.mode
+        workspace.update_session(active.identifier, mode=args.mode)
+    return _console_session(args, repo, provider, active=active, pending=pending)
 
 
 def _console_session(
@@ -931,23 +1116,26 @@ def _console_session(
     repo: Path,
     provider: AgentProvider,
     *,
-    server_url: str = "",
+    active: _ConsoleSession,
+    pending: str = "",
 ) -> CommandResult:
-    default_mode = args.mode or preferences.session_mode(repo)
-    sessions = [_ConsoleSession(1, default_mode)]
-    active = sessions[0]
-    pending = args.prompt.strip() if isinstance(args.prompt, str) else ""
-    print(style.session_intro(provider.value, active.mode, active.identifier))
-    if server_url:
-        _show(
-            "Observation server",
-            [
-                f"ADDRESS: {server_url}",
-                "PROTOCOL: HTTP/1.1 snapshots + Server-Sent Events",
-                "ACCESS: loopback only — read only",
-                "LIFETIME: this console session",
-            ],
+    selected_project = workspace.add_project(repo)
+    sessions = []
+    for item in workspace.list_sessions(project_id=str(selected_project["id"])):
+        private = workspace.session_private(str(item["id"]))
+        sessions.append(
+            _ConsoleSession(
+                str(item["id"]),
+                str(item["mode"]),
+                str(item["theme"]),
+                str(private.get("provider_session_id") or ""),
+            )
         )
+    active = next(
+        (item for item in sessions if item.identifier == active.identifier),
+        active,
+    )
+    print(style.session_intro(provider.value, active.mode, active.identifier))
     try:
         while True:
             if pending:
@@ -978,7 +1166,7 @@ def _console_session(
                         "Session commands",
                         [
                             "COMMAND: :mode ask|change — switch this session",
-                            "COMMAND: :new [message] — open and switch to a new session",
+                            "COMMAND: :new [theme] — create and switch to a durable session",
                             "COMMAND: :sessions — list sessions in this console",
                             "COMMAND: :switch N — return to a listed session",
                             "COMMAND: :status — show deterministic repository status",
@@ -994,28 +1182,43 @@ def _console_session(
                         _show("Session", ["USAGE: :mode ask|change"])
                         continue
                     active.mode = value
+                    workspace.update_session(active.identifier, mode=value)
                     _show(
                         "Session",
                         [f"SESSION: {active.identifier}", f"MODE: {active.mode}"],
                     )
                     continue
                 if command == "new":
-                    active = _ConsoleSession(len(sessions) + 1, active.mode)
+                    created = workspace.new_session(
+                        repo,
+                        value or "New session",
+                        mode=active.mode,
+                        provider=provider.value,
+                    )
+                    active = _ConsoleSession(
+                        str(created["id"]),
+                        str(created["mode"]),
+                        str(created["theme"]),
+                    )
                     sessions.append(active)
                     _show(
                         "Session",
                         [f"SESSION: {active.identifier}", f"MODE: {active.mode}"],
                     )
-                    pending = value
                     continue
                 if command == "sessions":
                     _session_list(sessions, active, provider)
                     continue
                 if command == "switch":
                     try:
-                        identifier = int(value)
+                        ordinal = int(value)
                     except ValueError:
-                        identifier = 0
+                        ordinal = 0
+                    identifier = (
+                        sessions[ordinal - 1].identifier
+                        if ordinal and ordinal <= len(sessions)
+                        else value
+                    )
                     selected = next(
                         (
                             session
@@ -1074,6 +1277,7 @@ def _console_session(
                         )
                         if values[0] == "mode":
                             active.mode = values[1]
+                            workspace.update_session(active.identifier, mode=values[1])
                         rendered = style.render("set", result.lines, branded=False)
                         if rendered:
                             print(rendered)
@@ -3659,7 +3863,6 @@ def _settings(_: argparse.Namespace) -> CommandResult:
         f"LANDING-BRANCH: {landing_branch}",
         f"PUBLISHING: {'off' if settings.get('push_remote') == 'off' else 'existing upstream'}",
         f"INTENT-BRIEF: {settings.get('adapter_intent_brief', 'off')}",
-        f"SERVER: http://127.0.0.1:{resolved.server.port}",
     ]
     return CommandResult(
         public_lines,
@@ -3722,7 +3925,7 @@ def run(argv: list[str] | None = None) -> int:
         args = build_parser().parse_args(values)
         format_name = args.format
         verbose = args.verbose
-        if args.command not in {"connect", "help", "init"}:
+        if args.command not in {"connect", "help", "init", "project", "serve"}:
             config.require_initialized(git.root())
         tracked = (
             selected_command in {"start", "change", "establish", "source"}

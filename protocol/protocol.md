@@ -65,6 +65,13 @@ but never outside the Invariant namespace:
 Loss of the runtime loses active tasks and nothing else: no accepted record, no landed commit, and
 no archived history depends on it.
 
+A host may also retain a per-user **workspace** outside every repository. A workspace may register
+repository folders and retain conversation themes, transcripts, provider handles, and presentation
+preferences. Workspace state is personal coordination state: it is not part of a kernel, carries no
+semantic authority, supplies no landing evidence, and is never required to inspect or execute the
+repository lifecycle. A logical conversation identity belongs to the host and must not be equated
+with an opaque provider session handle.
+
 ### 1.3 Standing
 
 | Object | Standing | Lifetime |
@@ -78,6 +85,7 @@ no archived history depends on it.
 | Active receipt | cache integrity only | active task |
 | Git tree and commit | causal implementation fact | repository history |
 | Verification result | reproducible observation for one exact tree | ignored cache until explicit cleanup |
+| Host workspace, project registration, conversation | personal coordination only | local user profile |
 
 Only accepted governance binds future work. Evidence can motivate governance but cannot become
 authority without explicit adoption through the lifecycle in §3.
@@ -729,7 +737,8 @@ Codes are stable identifiers. Messages are for humans and may change.
 | `missing_agent`, `agent_not_connected`, `agent_login_failed` | no usable provider |
 | `agent_timeout` | the provider did not finish within the configured time |
 | `invalid_agent_output`, `invalid_protocol_output`, `invalid_invariant_output`, `unsupported_output_schema` | the provider's structured result is unusable |
-| `missing_session_id`, `invalid_session_mode`, `missing_adapter` | console session errors |
+| `missing_session_id`, `missing_session`, `invalid_session_mode`, `invalid_session_theme`, `missing_adapter` | host conversation errors |
+| `missing_project`, `project_unavailable`, `invalid_workspace`, `host_unavailable`, `host_forbidden` | local workspace or host errors |
 | `invalid_harness_preference`, `invalid_default_harness`, `default_harness_overridden` | provider preference errors |
 | `remote_upstream_missing`, `remote_upstream_invalid`, `remote_push_failed` | publication errors; a local landing is never undone by them |
 

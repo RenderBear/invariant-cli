@@ -100,24 +100,25 @@ Diagrams are semantic HTML laid out with Grid or Flexbox; never raster images.
 - Wide diagrams and tables scroll horizontally rather than compressing text.
 - Reading order matches DOM order.
 
-## Observation dashboard
+## Local workspace
 
-The local `start --server` dashboard translates the terminal language into a continuously updated
-read surface for the owning console session. It uses the document palette on Paper, with cyan
-reserved for the Invariant wordmark and live-connection mark. Green, amber, and red retain their
-terminal meanings for healthy, waiting, and invalid or stale state. No state relies on colour alone.
+The `invariant serve` workspace translates the terminal language into a continuously updated
+project-and-session surface. It uses the document palette on Paper, with cyan reserved for the
+Invariant wordmark, user turns, and live-connection mark. Green, amber, and red retain their terminal
+meanings for healthy, waiting, and invalid or stale state. No state relies on colour alone.
 
-- The page is one centred column without a sidebar, application launcher, chat composer, or write
-  control.
-- Repository identity and stream state form a ruled header; compact counters summarize processes,
-  tasks, governance, and evidence.
-- Active changes use bordered units and a monospace lifecycle trail. Plans and leases remain tables
-  because their dependency and ownership fields are comparative.
-- Evidence is a chronological reading sequence with causal ground, exact tree, verifier, review,
-  and freshness facts visible as text.
+- The application shell has three semantic columns: explicitly registered project folders, themed
+  sessions in the selected project, and the active conversation with repository activity.
+- Project and session navigation is compact and text-first. The browser never offers a raw path
+  field; folder registration remains an explicit CLI operation.
+- The active session leads with its theme, mode, provider, transcript, and one composer. `ask` and
+  `change` capability are stated beside the composer rather than encoded only by colour.
+- Active lifecycle tasks sit below the conversation as bordered units with stage, freshness, target,
+  and pending action count. Repository identity and stream state remain continuously visible.
 - The page updates in place without decorative motion. A quiet timestamp and explicit `LIVE`,
   `RECONNECTING`, or `OFFLINE` label communicate stream state.
-- Narrow layouts preserve the same reading order and scroll wide tables horizontally.
+- Narrow layouts preserve the same reading order, turning project and session columns into horizontal
+  selectors above the conversation.
 
 ## Document exclusions
 

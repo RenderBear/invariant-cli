@@ -19,7 +19,6 @@ SETTABLE_KEYS = {
     "integration_branch",
     "push_remote",
     "adapters.intent_brief",
-    "server.port",
 }
 CODING_AGENT_CHOICES = {"claude", "codex"}
 
@@ -75,11 +74,6 @@ class VerificationOptions:
 
 
 @dataclass(frozen=True)
-class ServerOptions:
-    port: int = 3000
-
-
-@dataclass(frozen=True)
 class Config:
     authority: str
     execution: str
@@ -91,7 +85,6 @@ class Config:
     unborn: bool
     adapters: AdapterOptions
     verification: VerificationOptions
-    server: ServerOptions = ServerOptions()
 
 
 def _current(repo: Path) -> tuple[str, str]:
@@ -125,7 +118,6 @@ def _from_raw(
         "push_remote",
         "adapters",
         "verification",
-        "server",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
@@ -217,22 +209,6 @@ def _from_raw(
             )
         runners.append(VerifierRunner(name, tuple(command), cwd, cache, timeout))
     verification = VerificationOptions(tuple(runners), default_timeout)
-    server_raw = raw.get("server", {})
-    if not isinstance(server_raw, dict):
-        raise InvariantError("Invariant: .invariant/config.yml server must be a mapping")
-    server_unknown = sorted(set(server_raw) - {"port"})
-    if server_unknown:
-        raise InvariantError(
-            f"Invariant: .invariant/config.yml has unknown server field '{server_unknown[0]}'"
-        )
-    server_port = server_raw.get("port", 3000)
-    if (
-        not isinstance(server_port, int)
-        or isinstance(server_port, bool)
-        or not 1 <= server_port <= 65535
-    ):
-        raise InvariantError("Invariant: server.port must be an integer from 1 through 65535")
-    server = ServerOptions(server_port)
     configured = raw.get("integration_branch", "auto")
     if not isinstance(configured, str) or not configured:
         raise InvariantError("Invariant: integration_branch must be auto or a non-empty branch name")
@@ -255,7 +231,6 @@ def _from_raw(
         branch_source,
         adapters,
         verification,
-        server,
     )
 
 
@@ -331,7 +306,6 @@ def initialize(
         "integration_branch": branch_setting,
         "push_remote": push_remote if push_remote is not None else "off",
         "adapters": {"intent_brief": "on" if intent_brief is True else "off"},
-        "server": {"port": 3000},
     }
     _from_raw(
         repo,
@@ -379,21 +353,6 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
         adapter_values = dict(adapter_values)
         adapter_values[key.removeprefix("adapters.")] = value
         document["adapters"] = adapter_values
-    elif key == "server.port":
-        try:
-            port = int(value)
-        except ValueError:
-            port = 0
-        if str(port) != value.strip() or not 1 <= port <= 65535:
-            raise InvariantError(
-                "Invariant: server.port must be an integer from 1 through 65535",
-                code="invalid_config_value",
-            )
-        server_values = document.get("server", {})
-        if not isinstance(server_values, dict):
-            raise InvariantError("Invariant: .invariant/config.yml server must be a mapping")
-        document["server"] = {**server_values, "port": port}
-
     _from_raw(
         repo,
         document,
@@ -416,7 +375,6 @@ def _finish(
     branch_source: str,
     adapters: AdapterOptions,
     verification: VerificationOptions,
-    server: ServerOptions,
 ) -> Config:
     unborn = not git.branch_exists(repo, branch)
     if unborn:
@@ -440,7 +398,6 @@ def _finish(
         unborn,
         adapters,
         verification,
-        server,
     )
 
 
@@ -454,7 +411,6 @@ def lines(config: Config) -> list[str]:
         f"source: {config.source}",
         f"integration_branch_resolved: {config.integration_branch}",
         f"branch_source: {config.branch_source}",
-        f"server_port: {config.server.port}",
         *[
             f"adapter_{name}: {'on' if enabled else 'off'}"
             for name, enabled in config.adapters.values

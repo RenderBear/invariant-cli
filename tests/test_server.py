@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import socket
 import subprocess
 import time
@@ -12,7 +13,7 @@ from typing import BinaryIO
 
 import yaml
 
-from lifecycle_support import CLI, git, implement, invariant, repository
+from lifecycle_support import CLI, git, invariant, repository
 
 
 def _available_port() -> int:
@@ -25,13 +26,35 @@ def _fake_codex(path: Path) -> Path:
     executable = path / "codex"
     executable.write_text(
         "#!/bin/sh\n"
-        "if [ \"${1:-}\" = \"--version\" ]; then\n"
-        "  echo 'codex-cli server-test'\n"
-        "fi\n",
+        "set -eu\n"
+        "if [ \"${1:-}\" = \"--version\" ]; then echo 'codex-cli host-test'; exit 0; fi\n"
+        "if [ \"${1:-}\" = \"login\" ] && [ \"${2:-}\" = \"status\" ]; then echo 'Logged in'; exit 0; fi\n"
+        "output=\n"
+        "while [ \"$#\" -gt 0 ]; do\n"
+        "  if [ \"$1\" = \"--output-last-message\" ]; then shift; output=$1; fi\n"
+        "  shift\n"
+        "done\n"
+        "cat >/dev/null\n"
+        "[ -n \"$output\" ] || exit 3\n"
+        "printf '%s\\n' '{\"message\":\"The durable host session answered.\"}' >\"$output\"\n"
+        "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"host-session\"}'\n"
+        "printf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}'\n",
         encoding="utf-8",
     )
     executable.chmod(0o755)
     return executable
+
+
+def _cli(repo: Path, home: Path, *arguments: str) -> tuple[int, dict]:
+    completed = subprocess.run(
+        [str(CLI), "--format", "json", *arguments],
+        cwd=repo,
+        env={**os.environ, "INVARIANT_HOME": str(home)},
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return completed.returncode, json.loads(completed.stdout)
 
 
 def _wait_for_json(url: str, process: subprocess.Popen[str]) -> dict:
@@ -41,7 +64,7 @@ def _wait_for_json(url: str, process: subprocess.Popen[str]) -> dict:
         if process.poll() is not None:
             stdout, stderr = process.communicate()
             raise AssertionError(
-                f"server exited {process.returncode}: stdout={stdout!r} stderr={stderr!r}"
+                f"host exited {process.returncode}: stdout={stdout!r} stderr={stderr!r}"
             )
         try:
             with urllib.request.urlopen(url, timeout=1) as response:
@@ -49,7 +72,24 @@ def _wait_for_json(url: str, process: subprocess.Popen[str]) -> dict:
         except (OSError, urllib.error.URLError) as exc:
             last_error = exc
             time.sleep(0.1)
-    raise AssertionError(f"server did not become ready: {last_error}")
+    raise AssertionError(f"host did not become ready: {last_error}")
+
+
+def _post(url: str, value: dict, *, token: str | None = None) -> tuple[int, dict]:
+    headers = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["X-Invariant-Token"] = token
+    request = urllib.request.Request(
+        url,
+        data=json.dumps(value).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            return response.status, json.load(response)
+    except urllib.error.HTTPError as exc:
+        return exc.code, json.load(exc)
 
 
 def _next_snapshot(stream: BinaryIO) -> dict:
@@ -64,85 +104,62 @@ def _next_snapshot(stream: BinaryIO) -> dict:
             return json.loads(data)
 
 
-def test_server_port_is_tracked_configuration(tmp_path: Path) -> None:
+def test_projects_and_sessions_are_machine_local_cli_state(tmp_path: Path) -> None:
     repo = repository(tmp_path / "repo")
+    home = tmp_path / "invariant-home"
 
-    code, payload = invariant(repo, "settings")
-    assert code == 0, payload
-    assert payload["result"]["settings"]["server_port"] == "3000"
-
-    code, payload = invariant(repo, "set", "server.port", "43123")
-    assert code == 0, payload
     config = yaml.safe_load((repo / ".invariant" / "config.yml").read_text())
-    assert config["server"]["port"] == 43123
-
-    code, payload = invariant(repo, "set", "server.port", "0")
+    assert "server" not in config
+    code, payload = invariant(repo, "set", "server.port", "43123")
     assert code == 2
-    assert payload["diagnostics"][0]["code"] == "invalid_config_value"
-    assert yaml.safe_load((repo / ".invariant" / "config.yml").read_text())["server"][
-        "port"
-    ] == 43123
+    assert payload["diagnostics"][0]["code"] == "invalid_config_key"
 
-    code, payload = invariant(repo, "--server")
-    assert code == 2
-    assert payload["outcome"] == "failed"
-
-
-def test_server_exposes_read_only_snapshot_and_changed_sse_events(tmp_path: Path) -> None:
-    repo = repository(tmp_path / "repo")
-    port = _available_port()
-    code, payload = invariant(repo, "set", "server.port", str(port))
+    code, payload = _cli(repo, home, "project", "add", ".")
     assert code == 0, payload
+    project = payload["result"]["project"]
+    assert project["path"] == str(repo)
+    assert git(repo, "status", "--porcelain") == ""
+
+    code, payload = _cli(repo, home, "session", "new", "Authentication redesign", "--mode", "change")
+    assert code == 0, payload
+    session = payload["result"]["session"]
+    assert session["project_id"] == project["id"]
+    assert session["theme"] == "Authentication redesign"
+    assert session["mode"] == "change"
+    assert "provider_session_id" not in session
+
+    code, payload = _cli(repo, home, "session", "list")
+    assert code == 0, payload
+    assert [item["id"] for item in payload["result"]["sessions"]] == [session["id"]]
+    assert (home / "workspace.yml").is_file()
+    assert git(repo, "status", "--porcelain") == ""
+
+
+def test_per_user_host_serves_projects_sessions_turns_and_observation(tmp_path: Path) -> None:
+    first_repo = repository(tmp_path / "first")
+    second_repo = repository(tmp_path / "second")
+    home = tmp_path / "invariant-home"
     fake = _fake_codex(tmp_path)
-    domain = repo / ".invariant" / "records" / "domain" / "observer.yml"
-    domain.parent.mkdir(parents=True)
-    domain.write_text(
-        "version: 1\n"
-        "id: observer\n"
-        "responsibility: Presents local lifecycle and evidence state.\n"
-        "authority: user:task:server-test#decision\n"
-    )
-    git(repo, "add", ".invariant/config.yml", ".invariant/records/domain/observer.yml")
-    git(repo, "commit", "-qm", "configure observer")
-
-    code, payload = invariant(
-        repo,
-        "task",
-        "begin",
-        "landed-change",
-        "--goal",
-        "Create observable completed evidence.",
-        "--boundary",
-        "no-record",
-    )
-    assert code == 0, payload
-    landed_worktree = Path(payload["result"]["task"]["work"]["worktree"])
-    implement(landed_worktree, "src/landed.txt", "landed\n")
-    code, payload = invariant(repo, "task", "finish", "landed-change")
-    assert code == 0, payload
-
-    code, payload = invariant(
-        repo,
-        "task",
-        "begin",
-        "observed-change",
-        "--goal",
-        "Observe this active change.",
-        "--boundary",
-        "no-record",
-    )
-    assert code == 0, payload
-
+    port = _available_port()
     process = subprocess.Popen(
-        [str(CLI), "start", "--server", "--using", "codex"],
-        cwd=repo,
+        [
+            str(CLI),
+            "serve",
+            "--port",
+            str(port),
+            "--project",
+            str(first_repo),
+            "--project",
+            str(second_repo),
+        ],
+        cwd=first_repo,
         env={
             **os.environ,
             "INVARIANT_CODEX": str(fake),
-            "INVARIANT_HOME": str(tmp_path / "invariant-home"),
+            "INVARIANT_HOME": str(home),
+            "INVARIANT_DEFAULT_HARNESS": "codex",
             "PYTHONUNBUFFERED": "1",
         },
-        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -150,90 +167,102 @@ def test_server_exposes_read_only_snapshot_and_changed_sse_events(tmp_path: Path
     base_url = f"http://127.0.0.1:{port}"
     stream = None
     try:
-        snapshot = _wait_for_json(f"{base_url}/api/v1/snapshot", process)
-        assert snapshot["version"] == 1
-        assert snapshot["repository"]["name"] == "repo"
-        assert snapshot["repository"]["state"] == "valid"
-        assert [item["id"] for item in snapshot["tasks"]] == ["observed-change"]
-        assert snapshot["governance"]["records"][0]["id"] == "observer"
-        assert snapshot["history"][0]["task"] == "landed-change"
-        assert snapshot["history"][0]["boundary"] == "no-record"
-        assert any(item.get("task") == "landed-change" for item in snapshot["evidence"])
-        assert snapshot["tasks"][0]["freshness"] == "fresh"
-        assert any(
-            item["command"] == "start" and item["state"] == "running"
-            for item in snapshot["processes"]
+        state = _wait_for_json(f"{base_url}/host/v1/state", process)
+        assert [item["name"] for item in state["projects"]] == ["second", "first"]
+        assert state["csrf_token"]
+        first = next(item for item in state["projects"] if item["path"] == str(first_repo))
+
+        duplicate = subprocess.run(
+            [str(CLI), "serve", "--port", str(_available_port())],
+            cwd=first_repo,
+            env={**os.environ, "INVARIANT_HOME": str(home)},
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
-        assert {"plans", "leases", "governance", "evidence", "history"}.issubset(
-            snapshot
-        )
+        assert duplicate.returncode == 2
+        assert "already running for this OS user" in duplicate.stderr
 
         with urllib.request.urlopen(f"{base_url}/", timeout=2) as response:
             page = response.read().decode("utf-8")
             assert response.headers["Content-Security-Policy"]
-            assert "Repository observer · read only" in page
-            assert "No chat · no write endpoints" in page
+            assert "Invariant · Local workspace" in page
+            assert "Project themes" in page
+            assert 'id="composer"' in page
 
-        request = urllib.request.Request(f"{base_url}/api/v1/snapshot", method="POST")
+        code, payload = _post(
+            f"{base_url}/host/v1/projects/{first['id']}/sessions",
+            {"theme": "Host architecture", "mode": "ask"},
+        )
+        assert code == 403
+        assert payload["error"] == "host_forbidden"
+
+        code, payload = _post(
+            f"{base_url}/host/v1/projects/{first['id']}/sessions",
+            {"theme": "Host architecture", "mode": "ask"},
+            token=state["csrf_token"],
+        )
+        assert code == 201, payload
+        session = payload["session"]
+
+        code, payload = _post(
+            f"{base_url}/host/v1/sessions/{session['id']}/turns",
+            {"message": "What owns the server?"},
+            token=state["csrf_token"],
+        )
+        assert code == 201, payload
+        assert payload["response"]["action"] == "answer"
+        assert payload["response"]["message"] == "The durable host session answered."
+        assert [item["role"] for item in payload["session"]["messages"]] == ["user", "assistant"]
+
+        with urllib.request.urlopen(f"{base_url}/host/v1/state", timeout=2) as response:
+            refreshed = json.load(response)
+        summary = next(item for item in refreshed["sessions"] if item["id"] == session["id"])
+        assert summary["message_count"] == 2
+        assert "messages" not in summary
+
+        with urllib.request.urlopen(
+            f"{base_url}/host/v1/projects/{first['id']}/snapshot", timeout=2
+        ) as response:
+            snapshot = json.load(response)
+        assert snapshot["repository"]["name"] == "first"
+
+        request = urllib.request.Request(f"{base_url}/api/v1/snapshot")
         try:
             urllib.request.urlopen(request, timeout=2)
         except urllib.error.HTTPError as exc:
-            assert exc.code == 405
-            assert exc.headers["Allow"] == "GET, HEAD"
+            assert exc.code == 404
         else:
-            raise AssertionError("server accepted a write method")
+            raise AssertionError("multi-project observer route did not require a project")
 
-        stream = urllib.request.urlopen(f"{base_url}/api/v1/events", timeout=5)
-        first = _next_snapshot(stream)
-        assert first["revision"] == snapshot["revision"]
-
+        stream = urllib.request.urlopen(
+            f"{base_url}/host/v1/projects/{first['id']}/events", timeout=5
+        )
+        before = _next_snapshot(stream)
         code, payload = invariant(
-            repo,
+            first_repo,
             "task",
             "begin",
-            "second-change",
+            "host-observed-change",
             "--goal",
-            "Emit a changed snapshot.",
+            "Emit a changed host snapshot.",
             "--boundary",
             "no-record",
         )
         assert code == 0, payload
-        second = _next_snapshot(stream)
-        assert second["revision"] != first["revision"]
-        assert {item["id"] for item in second["tasks"]} == {
-            "observed-change",
-            "second-change",
-        }
-
-        config_path = repo / ".invariant" / "config.yml"
-        valid_config = config_path.read_text()
-        config_path.write_text(valid_config.replace(f"port: {port}", "port: invalid"))
-        invalid = _next_snapshot(stream)
-        assert invalid["repository"]["state"] == "invalid"
-        assert "server.port" in invalid["diagnostics"][0]
-        config_path.write_text(valid_config)
-        recovered = _next_snapshot(stream)
-        assert recovered["repository"]["state"] == "valid"
+        after = _next_snapshot(stream)
+        assert after["revision"] != before["revision"]
+        assert [item["id"] for item in after["tasks"]] == ["host-observed-change"]
     finally:
         if stream is not None:
             stream.close()
         if process.poll() is None:
-            stdout, stderr = process.communicate(input=":exit\n", timeout=10)
-        else:
-            stdout, stderr = process.communicate(timeout=10)
+            process.send_signal(signal.SIGINT)
+        stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 0, (stdout, stderr)
         assert f"http://127.0.0.1:{port}" in stdout
-        assert "SESSION: ended" in stdout
-        assert "Fatal Python error" not in stderr
 
-    try:
-        urllib.request.urlopen(f"{base_url}/healthz", timeout=1)
-    except urllib.error.URLError:
-        pass
-    else:
-        raise AssertionError("server outlived its owning console session")
-
-    process_files = list(
-        (repo / ".invariant" / "runtime" / "processes").glob("*.yml")
-    )
-    assert process_files == []
+    code, payload = _cli(first_repo, home, "session", "show", session["id"])
+    assert code == 0, payload
+    assert len(payload["result"]["session"]["messages"]) == 2

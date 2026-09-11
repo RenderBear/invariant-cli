@@ -21,7 +21,7 @@ def _write(path: Path, value: str) -> None:
         temporary_path.unlink(missing_ok=True)
 
 
-def _global_root() -> Path:
+def global_root() -> Path:
     configured = os.environ.get("INVARIANT_HOME")
     if configured:
         return Path(configured).expanduser()
@@ -32,7 +32,7 @@ def _global_root() -> Path:
 
 
 def _default_path() -> Path:
-    return _global_root() / "default-harness"
+    return global_root() / "default-harness"
 
 
 def default_harness() -> AgentProvider:

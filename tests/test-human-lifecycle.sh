@@ -111,7 +111,7 @@ EOF
 chmod +x "$fake_bin/claude"
 
 help=$($cli --help)
-printf '%s\n' "$help" | grep -q '{init,connect,ask,start,change,establish,status,settings,set,source,help}' ||
+printf '%s\n' "$help" | grep -q '{init,connect,ask,start,serve,project,session,change,establish,status,settings,set,source,help}' ||
   die "primary help omitted the coherent lifecycle"
 if printf '%s\n' "$help" | grep -Eq '^    (task|governance|doctor) '; then
   die "primary help exposed protocol vocabulary"
@@ -210,7 +210,7 @@ conversation=$(printf '%s\n' 'Follow-up question' ':new' ':sessions' ':switch 1'
   "$cli" start "Initial question"))
 printf '%s\n' "$conversation" | grep -q '^MODE: change$' ||
   die "start did not use the local session mode"
-printf '%s\n' "$conversation" | grep -q '^SESSION: 2 — active — change — no messages yet$' ||
+printf '%s\n' "$conversation" | grep -q ' — active — change — New session — no messages yet$' ||
   die "session list did not expose the new active conversation"
 printf '%s\n' "$conversation" | grep -q 'Hello from the persistent Invariant session.' ||
   die "start did not render the session answer"

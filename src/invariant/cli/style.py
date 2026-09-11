@@ -276,7 +276,7 @@ def agent_message(
     return f"{head}\n{body}\n"
 
 
-def session_intro(name: str, mode: str, identifier: int) -> str:
+def session_intro(name: str, mode: str, identifier: str | int) -> str:
     if not interactive():
         return "\n".join(
             [
