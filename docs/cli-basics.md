@@ -88,11 +88,17 @@ This is composition, not a separate interaction model. `establish` starts a norm
 themed “Repository records” and seeds it with `:establish`.
 
 With agent authority, the audit, delegated authority review when needed, projection, checking, and
-landing continue automatically. With human authority, Invariant may tentatively prepare the exact
-candidate but cannot land it. It presents the recordable findings, their evidence, projected records,
-and changed files in the conversation. The user can discuss the proposal for as long as needed.
-Discussion does not accept or mutate it; entering `:record` accepts that exact candidate with user
-authority and continues verification and landing.
+landing continue automatically. Repository policy is the exception: if the establishment candidate
+changes `.invariant/config.yml`, or covers earlier unattested history that did, Invariant keeps agent
+authority for the record choices and asks the user only to attest that policy boundary. With human
+authority, the complete proposal requires the same user acceptance.
+
+Whenever acceptance is needed, the conversation shows a compact summary and writes a readable
+`.invariant/runtime/tasks/<task-id>/review.md` containing the reason, findings and evidence,
+projected records, changed files, verification results, and exact candidate tree. The user can
+discuss it for as long as needed. Discussion does not accept or mutate it; entering `:record`
+accepts that exact candidate with user authority and continues landing. If the candidate changes,
+Invariant presents a new review instead of carrying the acceptance forward.
 
 Leaving the conversation preserves the proposal. Running `establish` later resumes the newest
 compatible attempt in another durable conversation. When unfinished establishment work exists, the

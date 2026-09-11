@@ -37,7 +37,7 @@ from invariant.harness.providers import (
 )
 from invariant.harness import preferences
 from invariant.lifecycle import bootstrap
-from invariant.mechanics import config, coordinate, git, receipts
+from invariant.mechanics import config, coordinate, git, landing, receipts
 from invariant.mechanics import governance
 from invariant.mechanics.documents import dump_yaml, load_yaml
 from invariant.semantics import sources
@@ -2161,6 +2161,45 @@ def _human_finding_decision(repo: Path, change_id: str) -> None:
         print("  Choose all, none, or one or more listed numbers.")
 
 
+def _pending_candidate_review(
+    repo: Path, change_id: str
+) -> tuple[str, dict[str, Any]]:
+    task = _task(repo, change_id)
+    for item in task.get("actions", []):
+        if not isinstance(item, dict) or not item.get("id"):
+            continue
+        action_id = str(item["id"])
+        action = _result(
+            _core(repo, "task", "action", change_id, action_id), "action"
+        )
+        if isinstance(action, dict) and action.get("kind") == "review_semantics":
+            context = (
+                action.get("context")
+                if isinstance(action.get("context"), dict)
+                else {}
+            )
+            return action_id, dict(context)
+    return "", {}
+
+
+def _establishment_review_outdated(repo: Path, change_id: str) -> bool:
+    receipt = receipts.load(repo, change_id)
+    target = str(receipt.get("integration_target") or "")
+    reviewed_head = str(receipt.get("review_integration_head") or "")
+    current_head = git.resolve(repo, f"refs/heads/{target}") or "unborn"
+    if reviewed_head and reviewed_head != current_head:
+        return True
+    lifecycle = (
+        receipt.get("lifecycle")
+        if isinstance(receipt.get("lifecycle"), dict)
+        else {}
+    )
+    branch = str(lifecycle.get("branch") or "")
+    reviewed_branch = str(receipt.get("review_branch_head") or "")
+    current_branch = git.resolve(repo, f"refs/heads/{branch}") or ""
+    return bool(reviewed_branch and reviewed_branch != current_branch)
+
+
 def _human_candidate_decisions(
     repo: Path,
     change_id: str,
@@ -2168,82 +2207,72 @@ def _human_candidate_decisions(
     next_step: str = "continue in this conversation",
     accept: bool = False,
 ) -> None:
-    for _ in range(12):
-        task = _task(repo, change_id)
-        actions = [
-            item
-            for item in task.get("actions", [])
-            if isinstance(item, dict) and item.get("id")
-        ]
-        if not actions:
-            return
-        if not accept and not sys.stdin.isatty():
-            raise _human_decision_blocked(
-                "accept or reject the exact proposed governed change",
-                next_step=next_step,
-            )
-        action_id = str(actions[0]["id"])
-        action = _result(_core(repo, "task", "action", change_id, action_id), "action")
-        if not isinstance(action, dict) or action.get("kind") != "review_semantics":
-            raise _human_decision_blocked(
-                f"resolve the pending decision '{action_id}'",
-                next_step=next_step,
-            )
-        context = action.get("context") if isinstance(action.get("context"), dict) else {}
-        references = [
-            str(item)
-            for item in context.get("governance", [])
-            if isinstance(item, str)
-        ]
-        changed = [
-            str(item)
-            for item in context.get("changed_paths", [])
-            if isinstance(item, str)
-        ]
-        proposal = ["The exact proposal is ready."]
-        if references:
-            proposal.extend(["", "Records", *[f"  {item}" for item in references]])
-        if changed:
-            proposal.extend(["", "Files", *[f"  {item}" for item in changed]])
-        if accept:
-            summary = "Accepted the exact proposed repository records with :record."
-        else:
-            print(style.decision("Accept governed change", proposal))
-            accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
-            if accepted not in {"y", "yes"}:
-                raise _ProposalDeclined()
-            summary = input(style.prompt("decide") + "Reason (optional): ").strip()
-        prepared = load_yaml(receipts.task_root(repo, change_id) / "prepared-assessment.yml")
-        boundary = prepared.get("boundary") if isinstance(prepared, dict) else {}
-        disposition = (
-            str(boundary.get("disposition") or "no-record")
-            if isinstance(boundary, dict)
-            else "no-record"
+    action_id, context = _pending_candidate_review(repo, change_id)
+    if not action_id:
+        return
+    if not accept and not sys.stdin.isatty():
+        raise _human_decision_blocked(
+            "accept or reject the exact proposed governed change",
+            next_step=next_step,
         )
-        response = {
-            "version": 1,
-            "review_id": str(context.get("review_id") or ""),
-            "candidate_tree": str(context.get("candidate_tree") or ""),
-            "verdict": "accepted",
-            "summary": summary or "Accepted the exact proposed repository records.",
-            "semantic_effect": disposition,
-            "authority": f"user:task:{change_id}#review",
-            "review_mode": "independent",
-            "candidate_defects": [],
-            "retained_discoveries": [
-                str(item)
-                for item in context.get("retained_discoveries", [])
-                if isinstance(item, str)
-            ],
-        }
-        with tempfile.TemporaryDirectory(prefix="invariant-human-decision.") as directory:
-            source = Path(directory) / "review.json"
-            source.write_text(json.dumps(response), encoding="utf-8")
-            _core(repo, "task", "respond", change_id, action_id, "--input", str(source))
-    raise Blocked(
-        "Invariant: repository records still need a decision",
-        code="action_limit_reached",
+    references = [
+        str(item)
+        for item in context.get("governance", [])
+        if isinstance(item, str)
+    ]
+    changed = [
+        str(item)
+        for item in context.get("changed_paths", [])
+        if isinstance(item, str)
+    ]
+    proposal = ["The exact proposal is ready."]
+    if references:
+        proposal.extend(["", "Records", *[f"  {item}" for item in references]])
+    if changed:
+        proposal.extend(["", "Files", *[f"  {item}" for item in changed]])
+    if accept:
+        summary = "Accepted the exact proposed repository records with :record."
+    else:
+        print(style.decision("Accept governed change", proposal))
+        accepted = (
+            input(style.prompt("decide") + "Accept this proposal? [y/N]: ")
+            .strip()
+            .lower()
+        )
+        if accepted not in {"y", "yes"}:
+            raise _ProposalDeclined()
+        summary = input(style.prompt("decide") + "Reason (optional): ").strip()
+    prepared = load_yaml(
+        receipts.task_root(repo, change_id) / "prepared-assessment.yml"
     )
+    boundary = prepared.get("boundary") if isinstance(prepared, dict) else {}
+    disposition = (
+        str(boundary.get("disposition") or "no-record")
+        if isinstance(boundary, dict)
+        else "no-record"
+    )
+    response = {
+        "version": 1,
+        "review_id": str(context.get("review_id") or ""),
+        "candidate_tree": str(context.get("candidate_tree") or ""),
+        "verdict": "accepted",
+        "summary": summary or "Accepted the exact proposed repository records.",
+        "semantic_effect": disposition,
+        "authority": f"user:task:{change_id}#review",
+        "review_mode": "independent",
+        "candidate_defects": [],
+        "retained_discoveries": [
+            str(item)
+            for item in context.get("retained_discoveries", [])
+            if isinstance(item, str)
+        ],
+    }
+    with tempfile.TemporaryDirectory(
+        prefix="invariant-human-decision."
+    ) as directory:
+        source = Path(directory) / "review.json"
+        source.write_text(json.dumps(response), encoding="utf-8")
+        _core(repo, "task", "respond", change_id, action_id, "--input", str(source))
 
 
 def _establishment_findings(repo: Path, change_id: str) -> list[dict[str, Any]]:
@@ -2288,50 +2317,357 @@ def _prepare_human_establishment(repo: Path, change_id: str) -> list[dict[str, A
     return findings
 
 
+def _establishment_policy_decision(
+    repo: Path, change_id: str, context: dict[str, Any]
+) -> dict[str, Any]:
+    receipt = receipts.load(repo, change_id)
+    changed = {
+        str(item)
+        for item in context.get("changed_paths", [])
+        if isinstance(item, str)
+    }
+    policy_paths = {
+        str(item)
+        for item in context.get("policy_paths", [])
+        if isinstance(item, str)
+    }
+    policy_paths.update(governance.USER_OWNED_PATHS.intersection(changed))
+    covered_range = str(context.get("covered_range") or "")
+    if context.get("policy_change") and not covered_range:
+        head = str(receipt.get("review_integration_head") or "")
+        last = landing.last_attested(repo, head) if head and head != "unborn" else None
+        if last and last != head:
+            covered_range = f"{last}..{head}"
+    if covered_range:
+        old, separator, new = covered_range.partition("..")
+        if separator and old and new:
+            policy_paths.update(
+                governance.USER_OWNED_PATHS.intersection(
+                    git.history_changed_paths(repo, old, new)
+                )
+            )
+    if context.get("policy_change") and not policy_paths:
+        policy_paths.add(governance.POLICY_PATH)
+
+    commits: dict[str, dict[str, Any]] = {}
+    if covered_range:
+        for path in sorted(policy_paths):
+            history = git.run(
+                [
+                    "log",
+                    "--first-parent",
+                    "--format=%H%x09%s",
+                    covered_range,
+                    "--",
+                    path,
+                ],
+                cwd=repo,
+                check=False,
+            )
+            for line in history.stdout.splitlines():
+                commit, separator, subject = line.partition("\t")
+                if not separator or not commit:
+                    continue
+                row = commits.setdefault(
+                    commit,
+                    {"commit": commit, "subject": subject, "paths": []},
+                )
+                row["paths"].append(path)
+    return {
+        "required": bool(context.get("policy_change")),
+        "paths": sorted(policy_paths),
+        "covered_range": covered_range,
+        "commits": list(commits.values()),
+        "direct": sorted(governance.USER_OWNED_PATHS.intersection(changed)),
+    }
+
+
+def _markdown_cell(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value)).strip().replace("|", "\\|")
+
+
+def _write_establishment_review(
+    repo: Path,
+    change_id: str,
+    context: dict[str, Any],
+    findings: list[dict[str, Any]],
+    policy: dict[str, Any],
+) -> Path:
+    receipt = receipts.load(repo, change_id)
+    governance_run = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    coverage = (
+        governance_run.get("coverage")
+        if isinstance(governance_run.get("coverage"), dict)
+        else {}
+    )
+    coverage_findings = (
+        coverage.get("findings")
+        if isinstance(coverage.get("findings"), dict)
+        else {}
+    )
+    selected = {
+        str(item)
+        for item in governance_run.get("selected_findings", [])
+        if isinstance(item, str)
+    }
+    authority = config.resolve(repo).authority
+    assurance = (
+        receipt.get("assurance") if isinstance(receipt.get("assurance"), dict) else {}
+    )
+    structural = (
+        assurance.get("structural")
+        if isinstance(assurance.get("structural"), dict)
+        else {}
+    )
+    behavioral = (
+        assurance.get("behavioral")
+        if isinstance(assurance.get("behavioral"), dict)
+        else {}
+    )
+    audit_id = str(governance_run.get("audit") or "")
+    projected = [
+        str(item)
+        for item in coverage.get("projected_records", [])
+        if isinstance(item, str)
+    ]
+    changed = [
+        str(item)
+        for item in context.get("changed_paths", [])
+        if isinstance(item, str)
+    ]
+    checks = [
+        str(item)
+        for item in context.get("will_run", [])
+        if isinstance(item, str)
+    ]
+    lines = [
+        "# Establishment review",
+        "",
+        f"- **Status:** Awaiting user acceptance",
+        f"- **Configured authority:** `{authority}`",
+        f"- **Task:** `{change_id}`",
+        f"- **Audit:** `.invariant/audits/{audit_id}.yml`" if audit_id else "- **Audit:** unavailable",
+        f"- **Candidate tree:** `{context.get('candidate_tree') or 'not constructed'}`",
+        f"- **Reach:** `{context.get('reach') or 'unknown'}`",
+        "",
+        "## Why you are being asked",
+        "",
+    ]
+    if authority == "agent" and policy.get("required"):
+        lines.extend(
+            [
+                "The agent has already exercised the repository's delegated authority over the record choices.",
+                "Only the policy boundary below requires user authority; accepting it does not change",
+                "`authority: agent`.",
+            ]
+        )
+    elif authority == "human":
+        lines.append(
+            "This repository reserves establishment authority for the user, so the exact record proposal requires your acceptance."
+        )
+    else:
+        lines.append("The exact governed candidate requires an attributable user decision.")
+    if policy.get("required"):
+        direct = policy.get("direct", [])
+        if direct:
+            lines.extend(
+                [
+                    "",
+                    "The candidate directly changes user-owned policy:",
+                    *[f"- `{path}`" for path in direct],
+                ]
+            )
+        elif policy.get("covered_range"):
+            lines.extend(
+                [
+                    "",
+                    "The record candidate does not edit policy itself. Its landing must also attest an",
+                    f"earlier, otherwise-unattested integration range: `{policy['covered_range']}`.",
+                ]
+            )
+        if policy.get("paths"):
+            lines.extend(
+                [
+                    "",
+                    "User-owned paths in that boundary:",
+                    *[f"- `{path}`" for path in policy["paths"]],
+                ]
+            )
+        commits = policy.get("commits", [])
+        if commits:
+            lines.extend(
+                [
+                    "",
+                    "| Commit | Change | User-owned paths |",
+                    "| --- | --- | --- |",
+                    *[
+                        "| `{}` | {} | {} |".format(
+                            str(row["commit"])[:10],
+                            _markdown_cell(row["subject"]),
+                            ", ".join(f"`{path}`" for path in row["paths"]),
+                        )
+                        for row in commits
+                    ],
+                ]
+            )
+
+    lines.extend(
+        [
+            "",
+            "## Audit findings",
+            "",
+            "| Finding | Disposition | Result | Summary | Evidence |",
+            "| --- | --- | --- | --- | --- |",
+        ]
+    )
+    for finding in findings:
+        identifier = str(finding.get("id") or "unknown")
+        evidence = [
+            str(item) for item in finding.get("evidence", []) if isinstance(item, str)
+        ]
+        lines.append(
+            "| `{}` | `{}` | {} | {} | {} |".format(
+                _markdown_cell(identifier),
+                _markdown_cell(finding.get("disposition") or "unknown"),
+                "projected as records" if identifier in selected else "retained as evidence",
+                _markdown_cell(finding.get("summary") or ""),
+                "<br>".join(f"`{_markdown_cell(item)}`" for item in evidence) or "—",
+            )
+        )
+
+    lines.extend(
+        [
+            "",
+            "## Projected records",
+            "",
+            "| Record | From finding |",
+            "| --- | --- |",
+        ]
+    )
+    if projected:
+        owners: dict[str, str] = {}
+        for finding_id, value in coverage_findings.items():
+            if not isinstance(value, dict):
+                continue
+            for reference in value.get("records", []):
+                if isinstance(reference, str):
+                    owners[reference] = str(finding_id)
+        lines.extend(
+            f"| `{reference}` | `{owners.get(reference, 'generated')}` |"
+            for reference in projected
+        )
+    else:
+        lines.append("| _None_ | — |")
+
+    lines.extend(
+        [
+            "",
+            "## Candidate files",
+            "",
+            *([f"- `{path}`" for path in changed] or ["- No repository files proposed."]),
+            "",
+            "## Verification",
+            "",
+            f"- Structural validation: **{structural.get('status') or 'pending'}**",
+            f"- Behavioral verification: **{behavioral.get('status') or 'pending'}**",
+            "- Semantic review: **pending this decision**",
+        ]
+    )
+    if checks:
+        check_status = "passed" if behavioral.get("status") == "passed" else "pending"
+        lines.extend(
+            [
+                "",
+                "| Check | Status |",
+                "| --- | --- |",
+                *[f"| `{check}` | {check_status} |" for check in checks],
+            ]
+        )
+    lines.extend(
+        [
+            "",
+            "## Decision",
+            "",
+            "Discuss any concern in the establishment conversation. Enter `:record` there to accept",
+            "this exact candidate. If the candidate changes, Invariant must present a new review.",
+            "",
+        ]
+    )
+    path = receipts.task_root(repo, change_id) / "review.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
 def _human_record_packet(repo: Path, change_id: str) -> CommandResult:
-    findings = _recordable_establishment_findings(repo, change_id)
-    task = _task(repo, change_id)
-    actions = [
-        item
-        for item in task.get("actions", [])
-        if isinstance(item, dict) and item.get("id")
+    findings = _establishment_findings(repo, change_id)
+    receipt = receipts.load(repo, change_id)
+    governance_run = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    selected_findings = [
+        str(item)
+        for item in governance_run.get("selected_findings", [])
+        if isinstance(item, str)
     ]
     references: list[str] = []
     changed: list[str] = []
     candidate_tree = ""
-    if actions:
-        action_id = str(actions[0]["id"])
-        action = _result(_core(repo, "task", "action", change_id, action_id), "action")
-        context = action.get("context") if isinstance(action, dict) else {}
-        if isinstance(context, dict):
-            candidate_tree = str(context.get("candidate_tree") or "")
-            references = [
-                str(item)
-                for item in context.get("governance", [])
-                if isinstance(item, str)
-            ]
-            changed = [
-                str(item)
-                for item in context.get("changed_paths", [])
-                if isinstance(item, str)
-            ]
+    _, context = _pending_candidate_review(repo, change_id)
+    if context:
+        candidate_tree = str(context.get("candidate_tree") or "")
+        references = [
+            str(item)
+            for item in context.get("governance", [])
+            if isinstance(item, str)
+        ]
+        changed = [
+            str(item)
+            for item in context.get("changed_paths", [])
+            if isinstance(item, str)
+        ]
+    policy = _establishment_policy_decision(repo, change_id, context)
+    review_path = _write_establishment_review(
+        repo, change_id, context, findings, policy
+    )
+    try:
+        review_display = str(review_path.relative_to(repo))
+    except ValueError:
+        review_display = str(review_path)
+    selected_count = len(selected_findings)
+    check_count = len(
+        [item for item in context.get("will_run", []) if isinstance(item, str)]
+    )
+    authority = config.resolve(repo).authority
     lines = [
         f"ESTABLISH: {change_id}",
         "STATUS: needs-your-decision",
-        f"FINDINGS: {len(findings)}",
+        f"AUTHORITY: {authority} — record choices already delegated"
+        if authority == "agent"
+        else "AUTHORITY: human — your acceptance governs these records",
+        f"PROPOSAL: {selected_count} of {len(findings)} findings → {len(references)} records in {len(changed)} files",
     ]
-    for index, finding in enumerate(findings, start=1):
-        summary = re.sub(r"\s+", " ", str(finding.get("summary") or "")).strip()
-        evidence = ", ".join(str(item) for item in finding.get("evidence", []))
-        lines.append(f"FINDING-{index}: {summary or finding['id']}")
-        if evidence:
-            lines.append(f"EVIDENCE-{index}: {evidence}")
+    if policy.get("required"):
+        if policy.get("covered_range") and not policy.get("direct"):
+            reason = "user attestation needed only for covered policy history"
+        else:
+            reason = "user attestation needed only for repository policy"
+        lines.append(f"DECISION: {reason}")
+        for row in policy.get("commits", []):
+            lines.append(
+                f"POLICY-CHANGE: {str(row['commit'])[:10]} — {row['subject']}"
+            )
     lines.extend(
         [
+            f"VERIFICATION: {check_count} checks passed; structural validation passed",
+            f"REVIEW: {review_display}",
             f"CANDIDATE-TREE: {candidate_tree or 'not constructed'}",
-            f"RECORDS: {', '.join(references) or 'none proposed'}",
-            f"FILES: {', '.join(changed) or 'audit evidence only'}",
-            "REQUEST: discuss the proposal here, then enter :record to accept the exact candidate",
+            "REQUEST: review or discuss the proposal here, then enter :record to accept this exact candidate",
         ]
     )
     return CommandResult(
@@ -2341,9 +2677,12 @@ def _human_record_packet(repo: Path, change_id: str) -> CommandResult:
             "operation": "establish",
             "status": "needs-your-decision",
             "findings": findings,
+            "selected_findings": selected_findings,
             "candidate_tree": candidate_tree,
             "records": references,
             "changed_paths": changed,
+            "policy_decision": policy,
+            "review": review_display,
         },
     )
 
@@ -3854,26 +4193,75 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                         step.done = "Verified and landed repository records"
             task = _task(repo, change_id)
             if task.get("stage") != "completed":
-                if config.resolve(repo).authority == "human":
-                    if conversation_flow == "record":
+                authority = config.resolve(repo).authority
+                if conversation_flow in {"prepare", "record"} and (
+                    _establishment_review_outdated(repo, change_id)
+                ):
+                    with style.activity(
+                        "Refreshing the changed record candidate",
+                        done="Refreshed and reverified the record candidate",
+                    ):
+                        _core(
+                            repo,
+                            "task",
+                            "finish",
+                            change_id,
+                            "--subject",
+                            "Establish repository records",
+                        )
+                    return _human_record_packet(repo, change_id)
+                if conversation_flow == "record":
+                    try:
                         _human_candidate_decisions(
                             repo,
                             change_id,
                             next_step="enter :record in this conversation",
                             accept=True,
                         )
-                    elif conversation_flow == "prepare":
+                    except Blocked as exc:
+                        if exc.code not in {
+                            "concurrent_ref_movement",
+                            "semantic_review_required",
+                        }:
+                            raise
+                        with style.activity(
+                            "Refreshing the changed record candidate",
+                            done="Refreshed and reverified the record candidate",
+                        ):
+                            _core(
+                                repo,
+                                "task",
+                                "finish",
+                                change_id,
+                                "--subject",
+                                "Establish repository records",
+                            )
+                        return _human_record_packet(repo, change_id)
+                    task = _task(repo, change_id)
+                    if task.get("stage") != "completed":
+                        return _human_record_packet(repo, change_id)
+                elif authority == "human":
+                    if conversation_flow == "prepare":
+                        return _human_record_packet(repo, change_id)
+                    _human_candidate_decisions(repo, change_id)
+                else:
+                    _, review_context = _pending_candidate_review(repo, change_id)
+                    if conversation_flow == "prepare" and review_context.get(
+                        "policy_change"
+                    ):
                         return _human_record_packet(repo, change_id)
                     else:
-                        _human_candidate_decisions(repo, change_id)
-                else:
-                    with style.activity(
-                        f"{_provider_name(provider)} is reviewing the result",
-                        done=f"{_provider_name(provider)} reviewed the result",
-                    ):
-                        _resolve_actions(
-                            repo, change_id, provider, model=args.model, timeout=args.timeout
-                        )
+                        with style.activity(
+                            f"{_provider_name(provider)} is reviewing the result",
+                            done=f"{_provider_name(provider)} reviewed the result",
+                        ):
+                            _resolve_actions(
+                                repo,
+                                change_id,
+                                provider,
+                                model=args.model,
+                                timeout=args.timeout,
+                            )
         task = _task(repo, change_id)
     except _ProposalDeclined:
         return CommandResult(

@@ -364,6 +364,7 @@ Generated local state is shared by linked worktrees and self-ignored at its root
 
 ```text
 .invariant/runtime/briefs/<task-id>.yml
+.invariant/runtime/tasks/<task-id>/review.md
 .invariant/runtime/tasks/<task-id>/...
 .invariant/runtime/history/tasks/<task-id>/<landed-commit>/...
 .invariant/runtime/verifications/<evidence-id>.*
@@ -494,12 +495,22 @@ A full audit is read-only investigation, so `execution` does not gate it. The co
 persisted under `.invariant/audits/` with its exact ground and tree before adoption. Adoption keeps
 the two controls separate: `authority` determines who approves the findings, while `execution`
 determines whether the resulting task branch, verification, and landing advance automatically.
-With agent authority, audit through adoption is one autonomous governance pass. With human authority,
-the host tentatively prepares an exact candidate, then presents its findings, evidence, projected
-records, and changed files inside the durable conversation that requested establishment. The user
-may discuss that packet normally; only `:record` accepts the exact candidate and supplies the
-attributable `user:` review authority. Leaving the conversation preserves the pending proposal. The
-user is never handed task, action, worktree, or governance-protocol commands.
+With agent authority, audit through adoption is one autonomous governance pass. That delegation does
+not include repository policy. If the exact establishment candidate changes the policy file, or
+covers an unattested integration range that did, the host retains the agent's record decisions and
+asks the user only for the policy attestation. It does not invoke another agent merely to receive a
+predictable `policy_review_required` rejection. With human authority, the complete proposal requires
+the user's acceptance.
+
+For either user-decision path, the host writes
+`.invariant/runtime/tasks/<task-id>/review.md` and presents its path with a compact conversational
+summary. The Markdown packet contains the configured authority, reason for the decision, direct or
+covered policy paths and commits, every audit finding and its evidence disposition, projected
+records, candidate files, verification status, and exact candidate tree. The user may discuss that
+packet normally; only `:record` accepts the exact candidate and supplies the attributable `user:`
+review authority. Leaving the conversation preserves the pending proposal. A changed candidate
+requires a newly presented packet and another `:record`. The user is never handed task, action,
+worktree, or governance-protocol commands.
 
 If an audit produced under agent authority classifies findings as `needs-authority`, the host sends
 exactly those findings to a fresh, read-only secondary agent before deciding that nothing is ready
@@ -808,7 +819,9 @@ keep inspection and configuration inside the flow.
 `invariant establish` composes the same surface rather than creating a second interaction model. It
 starts a session themed “Repository records” and seeds it with `:establish`. With human authority,
 the control turn prepares and displays the exact proposal, normal messages discuss it, and `:record`
-accepts it. With agent authority, the lifecycle completes without a routine decision stop.
+accepts it. With agent authority, the lifecycle completes without a routine decision stop; if a
+policy change still requires the user, the same proposal and `:record` flow is used for that boundary
+only.
 
 Repository bootstrap is interactive, while `invariant init --defaults` skips the policy questionnaire.
 If `start` or `establish` finds no configuration, it runs the same guided initialization and then

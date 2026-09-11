@@ -1413,6 +1413,8 @@ def _request_packet(
         "retained_discoveries": retained_discoveries,
         "review_requirement": analysis.get("review_requirement", "self-attested"),
         "policy_change": bool(analysis.get("policy_change")),
+        "policy_paths": list(analysis.get("policy_paths", [])),
+        "covered_range": str(analysis.get("covered_range") or ""),
         "retired": list(assessment.get("retired", [])),
     }
     review_id = git.hash_text(repo, repr(packet_body))
@@ -1589,6 +1591,18 @@ def _prepare_finish_once(
         ):
             analysis["policy_change"] = True
             analysis["required"] = [*analysis.get("required", []), _POLICY_REQUIREMENT]
+    policy_paths = governance.USER_OWNED_PATHS.intersection(
+        str(item) for item in assessment.get("paths", [])
+    )
+    if candidate.covers:
+        covered_old, _, covered_new = candidate.covers.partition("..")
+        policy_paths = policy_paths.union(
+            governance.USER_OWNED_PATHS.intersection(
+                governance.governed_material(repo, covered_old, covered_new)
+            )
+        )
+    analysis["policy_paths"] = sorted(policy_paths)
+    analysis["covered_range"] = candidate.covers or ""
     exact_reviews = list(candidate_context.reviews)
     analysis["reach"] = candidate_context.reach.value
     analysis["reach_records"] = candidate_context.lines
@@ -1696,7 +1710,14 @@ def _prepare_finish_once(
         evidence=tuple(item.as_dict() for item in evidence),
         retained_discoveries=tuple(retained_discoveries),
     )
-    requests = adapters.pending(receipt)
+    requests = [
+        item
+        for item in adapters.pending(receipt)
+        if not (
+            item.get("adapter") == "core"
+            and item.get("kind") == "review_semantics"
+        )
+    ]
     semantic_required = bool(analysis.get("required")) or disposition == "recorded"
     completion_assessment = prepared
     if semantic_required and reusable is not None:

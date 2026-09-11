@@ -241,19 +241,25 @@ Unit:
 Decision:
 
 ```text
-  Your decision                                        compact title and border in Warn
+  Repository records                                  compact title and border in Warn
 
 ╭────────────────────────────────────────────────╮
 │                                                │
-│  The agent found these recordable facts:       │
-│                                                │
-│  1. The scheduler owns recovery after restart  │
-│  2. Persisted records use the JSON envelope    │
+│  Status       needs your decision               │
+│  Authority    agent · records already delegated│
+│  Proposal     4 findings → 6 records            │
+│  Decision     attest covered policy history     │
+│  Review       .invariant/runtime/…/review.md    │
 │                                                │
 ╰────────────────────────────────────────────────╯
 
 (change) › :record _                                  explicit authority in the conversation
 ```
+
+Decision panels summarize; they do not make the user evaluate an opaque failure. The associated
+`review.md` carries the full findings, evidence, projected records, policy cause, verification, and
+exact candidate identity. When agent authority encounters a user-owned policy boundary, the panel
+says that record choices remain delegated and identifies the user decision as policy-only.
 
 Failure:
 

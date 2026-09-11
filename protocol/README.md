@@ -33,6 +33,10 @@ Evidence never becomes authority merely because an agent found or saved it. A hu
 agent adopts it through the repository's configured establishment policy. That separation lets an
 agent investigate freely without silently turning an observation into a rule.
 
+Agent authority can govern records, but never repository policy. If a candidate changes
+`.invariant/config.yml` or must attest earlier history that did, the record work remains delegated
+and only that policy boundary returns to the user for explicit acceptance.
+
 Records and their evidence are tracked in four thin registries over ordinary Markdown:
 
 - **Domains** name stable responsibilities and point at the architecture prose that explains them.

@@ -254,6 +254,16 @@ binds the resulting review to an attributable `user:` locator and may continue v
 landing. Ordinary discussion is not acceptance, and leaving the conversation preserves the pending
 proposal without weakening the authority boundary.
 
+Agent establishment authority does not include repository policy. When an otherwise autonomous
+establishment candidate changes the policy file, or covers an unattested integration range that did,
+the host MUST preserve `authority: agent` for the record decisions and request only the required
+policy attestation from the user. This is a pending decision, not an agent failure. The host persists
+and presents a human-readable packet containing the reason for the exception, the policy path and
+covered range when applicable, audited findings and evidence, projected records, changed files,
+verification status, and exact candidate tree. The same conversation's explicit accept action binds
+a `user:` review to that tree; it does not change the repository's configured establishment
+authority.
+
 When a later establishment conversation finds an unfinished saved attempt, the host MUST show when
 that attempt was last saved and summarize its causal freshness against the current integration head
 and mechanics. It MUST ask whether to continue that attempt or begin a fresh establishment rather
@@ -383,7 +393,8 @@ Rules:
 11. A candidate that changes the policy file (§1.1), or that covers an integration range which
     changed it (§4.5), requires an accepted review whose `authority` is a `user:` locator. Any other
     authority is refused as `policy_review_required`. Independence does not substitute for the
-    user here.
+    user here. A conversational establishment host presents this as the scoped decision described
+    in §2.6 and accepts it through that conversation's ordinary explicit accept action.
 
 Responses are submitted by action id. Editing runtime files is not a response.
 
