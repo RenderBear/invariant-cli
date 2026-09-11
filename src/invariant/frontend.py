@@ -14,6 +14,7 @@ import tempfile
 import time
 import traceback
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -924,9 +925,12 @@ def _session_establishment(
     *,
     accept: bool,
 ) -> None:
-    change_id = session.establishment_id or (_latest_establishment(repo) if accept else None)
+    change_id = session.establishment_id or None
+    fresh = False
     if accept and change_id is None:
         raise UsageError("Invariant: there is no record proposal to accept; enter :establish first")
+    if not accept and change_id is None:
+        change_id, fresh = _establishment_resume_choice(repo)
     result = _establish(
         argparse.Namespace(
             using=provider,
@@ -937,6 +941,7 @@ def _session_establishment(
             dry_run=False,
             discard=False,
             verbose=False,
+            fresh=fresh,
             conversation_flow="record" if accept else "prepare",
         )
     )
@@ -1329,8 +1334,12 @@ def _console_session(
 
 def _show_session_error(exc: InvariantError) -> None:
     if exc.lines:
-        _show("Stopped", exc.lines, critical=True)
-    print(style.error(exc.message), file=sys.stderr)
+        lines = list(exc.lines)
+        if not any(line.startswith("PROBLEM: ") for line in lines):
+            lines.append(f"PROBLEM: {exc.message.removeprefix('Invariant: ')}")
+        _show("Stopped", lines, critical=True)
+    else:
+        print(style.error(exc.message), file=sys.stderr)
     if sys.stdin.isatty() and sys.stdout.isatty():
         print(file=sys.stderr)
 
@@ -1840,12 +1849,123 @@ class _ProposalDeclined(Exception):
 
 
 def _latest_establishment(repo: Path) -> str | None:
+    attempt = _latest_establishment_attempt(repo)
+    return str(attempt[1].get("task") or attempt[0].stem) if attempt else None
+
+
+def _latest_establishment_attempt(
+    repo: Path,
+) -> tuple[Path, dict[str, Any]] | None:
     candidates = [
-        (path.stat().st_mtime_ns, str(receipt.get("task") or path.stem))
+        (path.stat().st_mtime_ns, path, receipt)
         for path, receipt in _active_receipts(repo)
         if _is_establishment(receipt) and not receipt.get("superseded_by")
     ]
-    return max(candidates)[1] if candidates else None
+    if not candidates:
+        return None
+    _, path, receipt = max(candidates, key=lambda item: item[0])
+    return path, receipt
+
+
+def _saved_age(saved_at: float) -> str:
+    seconds = max(0, int(time.time() - saved_at))
+    if seconds < 60:
+        return "less than a minute ago"
+    if seconds < 3600:
+        minutes = seconds // 60
+        return f"{minutes} minute{'s' if minutes != 1 else ''} ago"
+    if seconds < 86400:
+        hours = seconds // 3600
+        return f"{hours} hour{'s' if hours != 1 else ''} ago"
+    days = seconds // 86400
+    return f"{days} day{'s' if days != 1 else ''} ago"
+
+
+def _establishment_freshness(
+    repo: Path, receipt: dict[str, Any]
+) -> tuple[bool, str]:
+    target = str(receipt.get("integration_target") or "")
+    configured = config.resolve(repo).integration_branch
+    if target != configured:
+        return (
+            False,
+            f"stale — landing target changed from {target or 'unknown'} to {configured}",
+        )
+    if receipt.get("mechanics_digest") != receipts.mechanics_digest():
+        return False, "stale — Invariant's repository mechanics changed since this attempt"
+    try:
+        identity = receipts.repository_identity(repo, target)
+    except InvariantError as exc:
+        return False, f"unknown — {exc.message.removeprefix('Invariant: ')}"
+    if receipt.get("repository") != identity:
+        return (
+            False,
+            "stale — the landing branch no longer belongs to the captured repository history",
+        )
+    captured = str(receipt.get("integration_head") or "")
+    current = receipts.integration_head(repo, target)
+    if captured == current:
+        return True, f"current — {target} is still at {current[:10]}"
+    if "unborn" in {captured, current} or not captured:
+        return False, "stale — the landing branch birth state changed"
+    if not git.is_ancestor(repo, captured, current):
+        return False, "stale — the landing branch diverged from the captured Git ground"
+    count = git.run(
+        ["rev-list", "--count", f"{captured}..{current}"], cwd=repo
+    ).stdout
+    commits = int(count or "0")
+    return (
+        True,
+        f"may be stale — {target} advanced by {commits} "
+        f"commit{'s' if commits != 1 else ''}; continuation will revalidate",
+    )
+
+
+def _establishment_resume_choice(repo: Path) -> tuple[str | None, bool]:
+    attempt = _latest_establishment_attempt(repo)
+    if attempt is None:
+        return None, False
+    path, receipt = attempt
+    saved_at = path.stat().st_mtime
+    timestamp = (
+        datetime.fromtimestamp(saved_at).astimezone().isoformat(timespec="seconds")
+    )
+    compatible, freshness = _establishment_freshness(repo, receipt)
+    lifecycle = (
+        receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    )
+    failure = (
+        receipt.get("last_failure")
+        if isinstance(receipt.get("last_failure"), dict)
+        else {}
+    )
+    details = [
+        f"Last saved  {timestamp} ({_saved_age(saved_at)})",
+        f"Stage       {lifecycle.get('stage') or 'unknown'}",
+        f"Freshness   {freshness}",
+    ]
+    if failure.get("message"):
+        details.append(f"Last stop   {failure['message']}")
+    details.extend(
+        [
+            "",
+            "Yes continues this saved attempt.",
+            "No starts fresh and supersedes it.",
+        ]
+    )
+    print(style.decision("Saved establishment", details))
+    default = "yes" if compatible else "no"
+    hint = "Y/n" if compatible else "y/N"
+    while True:
+        answer = input(
+            style.prompt("change") + f"Continue saved work? [{hint}]: "
+        ).strip().lower()
+        answer = answer or default
+        if answer in {"y", "yes"}:
+            return str(receipt.get("task") or path.stem), False
+        if answer in {"n", "no"}:
+            return None, True
+        print("  Answer yes to continue or no to start fresh.")
 
 
 def _discard_establishment(repo: Path, change_id: str | None) -> CommandResult:
@@ -3609,7 +3729,12 @@ def _establish(args: argparse.Namespace) -> CommandResult:
         "Establish or reconcile the repository's durable responsibilities, decisions, "
         "contracts, and constraints from grounded evidence."
     )
-    resumed_id = None if args.change_id else _resumable_establishment(repo, goal)
+    start_fresh = bool(getattr(args, "fresh", False))
+    resumed_id = (
+        None
+        if args.change_id or start_fresh
+        else _resumable_establishment(repo, goal)
+    )
     change_id = args.change_id or resumed_id or _identifier("establish", goal)
     preview = {
         "id": change_id,

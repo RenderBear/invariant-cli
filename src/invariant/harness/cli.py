@@ -150,7 +150,15 @@ def _repo() -> Path:
 
 def _invariant(repo: Path, *arguments: str) -> dict[str, Any]:
     completed = subprocess.run(
-        [sys.executable, "-P", "-m", "invariant", "--format", "json", *arguments],
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "invariant.cli.app",
+            "--format",
+            "json",
+            *arguments,
+        ],
         cwd=repo,
         check=False,
         capture_output=True,

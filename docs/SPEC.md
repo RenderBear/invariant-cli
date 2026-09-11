@@ -519,6 +519,13 @@ session to adoption. `invariant establish` starts a durable conversation and see
 newest compatible unfinished pass. Human status and recovery are explained in that conversation,
 not as a request to run another lifecycle command.
 
+When an unfinished pass exists, the conversation presents its last-saved local timestamp, lifecycle
+stage, last stopping reason, and causal freshness. An unchanged captured head is current; a
+descendant head is identified as potentially stale with the intervening commit count; a changed
+target, mechanics digest, repository identity, branch birth state, or divergent head is stale. The
+user explicitly answers yes to continue or no to create a fresh pass which supersedes the saved one.
+Compatible work defaults to continue and stale work defaults to fresh.
+
 Projection uses the record projections carried by selected findings. When a selected finding
 carries none, `governance project` writes the adoption draft and reports incomplete coverage; the
 establishment command then runs one authoring pass (`invariant-agent governance author`) in which

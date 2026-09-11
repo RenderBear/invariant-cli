@@ -95,7 +95,10 @@ Discussion does not accept or mutate it; entering `:record` accepts that exact c
 authority and continues verification and landing.
 
 Leaving the conversation preserves the proposal. Running `establish` later resumes the newest
-compatible attempt in another durable conversation.
+compatible attempt in another durable conversation. When unfinished establishment work exists, the
+conversation first shows when it was last saved and whether its captured Git ground and mechanics
+are current, advanced, or stale. A yes-or-no prompt lets the user continue it or start fresh; Invariant
+never chooses silently.
 
 ## Add grounding evidence
 

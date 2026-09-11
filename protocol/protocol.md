@@ -254,6 +254,12 @@ binds the resulting review to an attributable `user:` locator and may continue v
 landing. Ordinary discussion is not acceptance, and leaving the conversation preserves the pending
 proposal without weakening the authority boundary.
 
+When a later establishment conversation finds an unfinished saved attempt, the host MUST show when
+that attempt was last saved and summarize its causal freshness against the current integration head
+and mechanics. It MUST ask whether to continue that attempt or begin a fresh establishment rather
+than choosing silently. Beginning fresh supersedes the saved attempt; it does not reinterpret or
+adopt its evidence.
+
 The resulting audit remains evidence; selected records become authority only through the ordinary
 candidate review and landing lifecycle.
 
