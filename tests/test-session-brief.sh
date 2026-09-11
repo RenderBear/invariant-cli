@@ -19,11 +19,11 @@ git -C "$fixture" init -qb main
 git -C "$fixture" config user.name test
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
-mkdir -p "$fixture/.invariant/discoveries" "$fixture/docs" "$fixture/src"
+mkdir -p "$fixture/.invariant/discoveries" "$fixture/.invariant/records/domain" "$fixture/docs" "$fixture/src"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Source boundary
+## Source boundary {#source-boundary}
 
 Source behavior remains isolated.
 EOF
@@ -33,13 +33,12 @@ version: 1
 authority: human
 integration_branch: main
 EOF
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/source.yml" <<'EOF'
 version: 1
-domains:
-  - id: source
-    responsibility: Owns source behavior.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#source-boundary]
+id: source
+responsibility: Owns source behavior.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#source-boundary]
 EOF
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm seed
@@ -128,13 +127,13 @@ EOF
 (cd "$fixture" && session check task-1 --goal "Change source safely" >/dev/null) || die "non-authoritative evidence invalidated governance"
 ok "non-authoritative discoveries stay outside brief freshness"
 
-cp "$fixture/.invariant/DOMAINS.yml" "$fixture/.invariant/DOMAINS.saved"
-sed 's/Owns source behavior/Owns isolated source behavior/' "$fixture/.invariant/DOMAINS.saved" >"$fixture/.invariant/DOMAINS.yml"
+cp "$fixture/.invariant/records/domain/source.yml" "$fixture/.invariant/records/domain/source.saved"
+sed 's/Owns source behavior/Owns isolated source behavior/' "$fixture/.invariant/records/domain/source.saved" >"$fixture/.invariant/records/domain/source.yml"
 if out=$(cd "$fixture" && session check task-1 --goal "Change source safely" 2>&1); then
   die "changed selected governance reused a stale brief"
 fi
 printf '%s\n' "$out" | grep -q '^STALE: selected governance changed$' || die "governance staleness lacks a precise reason"
-mv "$fixture/.invariant/DOMAINS.saved" "$fixture/.invariant/DOMAINS.yml"
+mv "$fixture/.invariant/records/domain/source.saved" "$fixture/.invariant/records/domain/source.yml"
 ok "selected governance digest guards semantic reuse"
 
 git -C "$fixture" worktree add -q -b linked "$linked"

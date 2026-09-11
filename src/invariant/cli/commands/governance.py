@@ -269,14 +269,6 @@ def _adopt(args: argparse.Namespace) -> list[str]:
     ]
 
 
-_REGISTRIES = {
-    "semantic": (".invariant/SEMANTICS.yml", "records"),
-    "domain": (".invariant/DOMAINS.yml", "domains"),
-    "contract": (".invariant/CONTRACTS.yml", "contracts"),
-    "constraint": (".invariant/CONSTRAINTS.yml", "constraints"),
-}
-
-
 def _coverage_value(
     audit_id: str,
     selected: list[str],
@@ -463,30 +455,10 @@ def _project(args: argparse.Namespace) -> CommandResult:
 
     documents: dict[Path, dict[str, object]] = {}
     for reference, value in projected.items():
-        kind, _ = reference.split(":", 1)
-        relative, collection = _REGISTRIES[kind]
+        kind, identifier = reference.split(":", 1)
+        relative = mechanics_governance.record_relative(kind, identifier)
         path = candidate / relative
-        if path in documents:
-            raw = documents[path]
-        elif path.is_file():
-            raw = load_yaml(path)
-        else:
-            raw = {"version": 1, collection: []}
-        if not isinstance(raw, dict) or raw.get("version") != 1:
-            raise InvariantError(f"Invariant: cannot project into invalid {relative}")
-        rows = raw.get(collection, [])
-        if not isinstance(rows, list):
-            raise InvariantError(f"Invariant: {relative} {collection} must be a list")
-        updated = [
-            row
-            for row in rows
-            if not isinstance(row, dict) or str(row.get("id") or "") != str(value.get("id"))
-        ]
-        updated.append(value)
-        documents[path] = {
-            **raw,
-            collection: sorted(updated, key=lambda row: str(row.get("id", ""))),
-        }
+        documents[path] = {"version": 1, **value}
 
     backups = {path: path.read_bytes() if path.is_file() else None for path in documents}
     try:

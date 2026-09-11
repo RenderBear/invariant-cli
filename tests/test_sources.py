@@ -14,12 +14,13 @@ from invariant.semantics import sources
 def _write_catalog(repo: Path) -> None:
     invariant = repo / ".invariant"
     invariant.mkdir(parents=True, exist_ok=True)
-    (invariant / "DOMAINS.yml").write_text(
+    domain = invariant / "records" / "domain" / "backend.yml"
+    domain.parent.mkdir(parents=True, exist_ok=True)
+    domain.write_text(
         """version: 1
-domains:
-  - id: backend
-    responsibility: Owns server-side behavior.
-    authority: user:task:seed#turn-1
+id: backend
+responsibility: Owns server-side behavior.
+authority: user:task:seed#turn-1
 """,
         encoding="utf-8",
     )
@@ -50,7 +51,7 @@ adapters:
 """,
         encoding="utf-8",
     )
-    _git(tmp_path, "add", ".invariant/config.yml", ".invariant/DOMAINS.yml")
+    _git(tmp_path, "add", ".invariant/config.yml", ".invariant/records/domain/backend.yml")
     _git(tmp_path, "commit", "-q", "-m", "seed")
     source_path = tmp_path / ".invariant" / "sources" / "backend.md"
     source_path.parent.mkdir(parents=True)

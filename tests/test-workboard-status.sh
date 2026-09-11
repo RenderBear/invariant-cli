@@ -47,7 +47,7 @@ units:
   - id: protocol
     objective: Establish the protocol.
     dependencies: []
-    paths: [.invariant/CONTRACTS.yml]
+    paths: [.invariant/records/contract/demo.boundary.yml]
     governance: [contract:demo.boundary]
     provides: [contract:demo.boundary]
     verifies: [command:checks/protocol]

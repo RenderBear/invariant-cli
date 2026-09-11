@@ -276,7 +276,7 @@ def fresh(repo: Path, locator: str, head: str = "HEAD") -> list[str]:
         for candidate in changed:
             if governance.paths_related(candidate, watched_path):
                 raise Blocked(f"STALE: changed evidence {candidate}", code="stale_evidence")
-    if domains and any(path in governance.GOVERNANCE_FILES for path in changed):
+    if domains and any(governance.is_governance_path(path) for path in changed):
         raise Blocked("STALE: selected-domain governance changed since the audited tree", code="stale_evidence")
     return ["FRESH: head differs only outside the recorded scope and evidence"]
 

@@ -17,7 +17,7 @@ git -C "$fixture" config user.name test
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
 mkdir -p "$fixture/src" "$fixture/docs" "$fixture/checks"
-mkdir -p "$fixture/.invariant"
+mkdir -p "$fixture/.invariant/records/semantic"
 cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
 authority: agent
@@ -30,12 +30,12 @@ printf 'release\n' >"$fixture/src/release.txt"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Legacy ownership
+## Legacy ownership {#legacy-ownership}
 
 The application was once treated as externally owned. That interpretation is retained only as
 superseded history.
 
-## Application ownership
+## Application ownership {#application-ownership}
 
 The application is maintained as ordinary repository-owned source. This interpretation follows
 from the absence of external Git ownership, the repository build, and the user's adoption decision.
@@ -44,7 +44,7 @@ Assumption: ordinary tracked files represent repository ownership.
 
 Alternative considered: retain the application as a submodule.
 
-## Release reliance
+## Release reliance {#release-reliance}
 
 Release construction relies on the accepted source-ownership interpretation.
 EOF
@@ -59,36 +59,41 @@ git -C "$fixture" commit -qm seed
 
 out=$(cd "$fixture" && "$cli" task begin establish-meaning \
   --goal "Record repository ownership as an auditable interpretation" \
-  --boundary recorded --path .invariant/SEMANTICS.yml)
+  --boundary recorded --path .invariant/records/semantic/repository-application-ownership.yml)
 worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
-mkdir -p "$worktree/.invariant"
-cat >"$worktree/.invariant/SEMANTICS.yml" <<'EOF'
+mkdir -p "$worktree/.invariant/records/semantic"
+cat >"$worktree/.invariant/records/semantic/external-application-ownership.yml" <<'EOF'
 version: 1
-records:
-  - id: external-application-ownership
-    document: architecture:docs/architecture.md#legacy-ownership
-    authority: user:task:establish-meaning#goal
-    status: superseded
-    applies_to: [repo:src/app.txt]
-  - id: repository-application-ownership
-    document: architecture:docs/architecture.md#application-ownership
-    authority: user:task:establish-meaning#goal
-    applies_to: [repo:src/app.txt]
-    revisit_on: [repo:.gitmodules, interface:source-ownership]
-    verifies: [command:checks/ordinary-source.sh]
-    supersedes: [external-application-ownership]
-    relations:
-      challenges: [semantic:external-application-ownership]
-    facets:
-      confidence: accepted
-      vocabulary: [repository-owned source]
-  - id: release-ownership-reliance
-    document: architecture:docs/architecture.md#release-reliance
-    authority: user:task:establish-meaning#goal
-    applies_to: [repo:src/release.txt]
-    revisit_on: [semantic:repository-application-ownership]
+id: external-application-ownership
+document: architecture:docs/architecture.md#legacy-ownership
+authority: user:task:establish-meaning#goal
+status: superseded
+applies_to: [repo:src/app.txt]
 EOF
-git -C "$worktree" add .invariant/SEMANTICS.yml
+cat >"$worktree/.invariant/records/semantic/repository-application-ownership.yml" <<'EOF'
+version: 1
+id: repository-application-ownership
+document: architecture:docs/architecture.md#application-ownership
+authority: user:task:establish-meaning#goal
+applies_to: [repo:src/app.txt]
+revisit_on: [repo:.gitmodules, interface:source-ownership]
+verifies: [command:checks/ordinary-source.sh]
+supersedes: [external-application-ownership]
+relations:
+  challenges: [semantic:external-application-ownership]
+facets:
+  confidence: accepted
+  vocabulary: [repository-owned source]
+EOF
+cat >"$worktree/.invariant/records/semantic/release-ownership-reliance.yml" <<'EOF'
+version: 1
+id: release-ownership-reliance
+document: architecture:docs/architecture.md#release-reliance
+authority: user:task:establish-meaning#goal
+applies_to: [repo:src/release.txt]
+revisit_on: [semantic:repository-application-ownership]
+EOF
+git -C "$worktree" add .invariant/records/semantic
 git -C "$worktree" commit -qm "record application ownership"
 
 out=$(cd "$worktree" && "$cli" context reach --path src/app.txt)
@@ -140,7 +145,7 @@ printf '%s\n' "$attestation" |
 ok "landing attests the indexed envelope and canonical prose without typing the argument body"
 
 awk '
-  /^## Release reliance$/ { print "The ownership interpretation now also governs packaging."; print "" }
+  /^## Release reliance \{#release-reliance\}$/ { print "The ownership interpretation now also governs packaging."; print "" }
   { print }
 ' "$fixture/docs/architecture.md" >"$fixture/docs/architecture.md.next"
 mv "$fixture/docs/architecture.md.next" "$fixture/docs/architecture.md"
@@ -152,12 +157,17 @@ printf '%s\n' "$out" | grep -q '^AFFECTED: semantic:release-ownership-reliance (
 git -C "$fixture" restore docs/architecture.md
 ok "semantic dependency invalidation propagates without treating ordinary code changes as meaning changes"
 
+forged_parent=$(git -C "$fixture" rev-parse HEAD)
 git -C "$fixture" commit --allow-empty -q -m "forge stale semantic binding" -m \
 "Invariant-Unit: forged
 Invariant-Scope: area.root
 Invariant-Boundary: recorded
+Invariant-Landing-Parent: $forged_parent
 Invariant-Governance: semantic:repository-application-ownership
-Invariant-Semantic: repository-application-ownership@0000000000000000000000000000000000000000000000000000000000000000"
+Invariant-Semantic: repository-application-ownership@0000000000000000000000000000000000000000000000000000000000000000
+Invariant-Review-Authority: user:task:forged#review
+Invariant-Review-Mode: independent
+Invariant-Review-Digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 if out=$(cd "$fixture" && "$cli" state validate --landing 2>&1); then
   die "state validation accepted a stale semantic attestation"
 fi

@@ -41,7 +41,7 @@ def test_audits_can_propose_semantic_records(tmp_path: Path) -> None:
     worktree = Path(records["WORKTREE"])
     (worktree / "docs").mkdir()
     (worktree / "docs" / "architecture.md").write_text(
-        "# Architecture\n\n## Source ownership\n\nThe source module owns its value.\n"
+        "# Architecture\n\n## Source ownership {#source-ownership}\n\nThe source module owns its value.\n"
     )
     findings = tmp_path / "findings.yml"
     findings.write_text(

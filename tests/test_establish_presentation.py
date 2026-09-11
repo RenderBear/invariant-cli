@@ -74,7 +74,7 @@ def test_declining_the_proposal_is_a_neutral_outcome(tmp_path: Path) -> None:
     assert code == 0, output
     # The proposal names what it changes before asking for acceptance.
     assert output.index("Records") < output.index("domain:source") < output.index("Accept this proposal?")
-    assert ".invariant/DOMAINS.yml" in output
+    assert ".invariant/records/domain/source.yml" in output
     assert "not accepted" in output
     assert "×" not in output
     assert "invariant establish --discard" in output
@@ -102,4 +102,6 @@ def test_accepting_the_proposal_lands_it(tmp_path: Path) -> None:
     assert code == 0, output
     assert "Records established" in output
     assert "domain:source" in output
-    assert "id: source" in (repo / ".invariant" / "DOMAINS.yml").read_text()
+    assert "id: source" in (
+        repo / ".invariant" / "records" / "domain" / "source.yml"
+    ).read_text()

@@ -32,17 +32,19 @@ through the primary worktree.
 
 ```text
 .invariant/config.yml          repository policy
-.invariant/SEMANTICS.yml       semantic records (§2.1)
-.invariant/DOMAINS.yml         domain projections (§2.2)
-.invariant/CONTRACTS.yml       contract projections (§2.3)
-.invariant/SOURCES.yml         grounding-source origins and scopes (§2.4)
+.invariant/records/semantic/<id>.yml semantic records (§2.1)
+.invariant/records/domain/<id>.yml   domain projections (§2.2)
+.invariant/records/contract/<id>.yml contract projections (§2.3)
+.invariant/records/constraint/<id>.yml constraint projections (§2.4)
+.invariant/SOURCES.yml         grounding-source origins and scopes (§2.5)
 .invariant/sources/<material>  repository-held source material
 .invariant/audits/<id>.yml     saved audits: evidence, not rules
 .invariant/discoveries/<id>.yml
 ```
 
-Initialization creates `config.yml` only. Registries exist only once accepted records exist; an
-implementation never manufactures empty semantic authority.
+Initialization creates `config.yml` only. Record directories exist only once accepted records
+exist; there is no tracked aggregate index. Implementations derive indexes deterministically from
+the record files and never manufacture empty semantic authority.
 
 ### 1.2 Runtime
 
@@ -56,6 +58,7 @@ but never outside the Invariant namespace:
 .invariant/runtime/verifications/<evidence-id>.*
 .invariant/runtime/plans/<id>.yml
 .invariant/runtime/leases/<unit>.yml
+.invariant/runtime/history-validation/<target>.yml
 .invariant/runtime/worktrees/<task-id>-<nonce>/...
 ```
 
@@ -97,8 +100,9 @@ Every cross-reference in tracked state is a typed locator:
 | `runner:<name>` | a configured named runner |
 
 An implementation validates that every locator resolves in the tree it is evaluated against. An
-`architecture:` anchor resolves to a Markdown heading either by an explicit `{#anchor}` suffix on
-the heading or, absent one, by the heading's slug. A record whose `architecture:` anchor no longer
+`architecture:` locator carried by accepted governance resolves only to a Markdown heading with an
+explicit `{#anchor}` suffix. Human-facing lookup may recognize heading slugs, but mutable heading
+text is never a durable record identity. A record whose explicit `architecture:` anchor no longer
 exists in its document is invalid state, and invalid state blocks every landing until it is
 repaired.
 
@@ -106,27 +110,26 @@ repaired.
 
 ## 2. Records
 
-Ordinary Markdown is the source of truth. The YAML registries are a thin, deterministic envelope
+Ordinary Markdown is the source of truth. The YAML record files are a thin, deterministic envelope
 for retrieval, authority, and verification. An implementation never parses canonical prose into a
 closed claim taxonomy.
 
-### 2.1 Semantic records — `SEMANTICS.yml`
+### 2.1 Semantic records — `records/semantic/<id>.yml`
 
 ```yaml
 version: 1
-records:
-  - id: processor-source-ownership
-    document: architecture:docs/architecture.md#processor-source-ownership
-    authority: user:task:import-processor#turn-3
-    status: active
-    applies_to: [repo:services/document-processor, interface:processor-source]
-    revisit_on: [repo:.gitmodules, semantic:processor-external-ownership]
-    verifies: [command:checks/ordinary-processor-source.sh]
-    supersedes: [processor-external-ownership]
-    relations:
-      challenges: [semantic:processor-external-ownership]
-    facets:
-      confidence: accepted
+id: processor-source-ownership
+document: architecture:docs/architecture.md#processor-source-ownership
+authority: user:task:import-processor#turn-3
+status: active
+applies_to: [repo:services/document-processor, interface:processor-source]
+revisit_on: [repo:.gitmodules, semantic:processor-external-ownership]
+verifies: [command:checks/ordinary-processor-source.sh]
+supersedes: [processor-external-ownership]
+relations:
+  challenges: [semantic:processor-external-ownership]
+facets:
+  confidence: accepted
 ```
 
 Fixed fields and their meaning:
@@ -143,6 +146,8 @@ Fixed fields and their meaning:
 | `supersedes` | ids this record replaces |
 | `relations`, `facets` | open vocabularies; never given mechanical behavior implicitly |
 
+The filename is `<id>.yml` and must equal the enclosed `id`. One file contains exactly one record.
+
 `revisit_on: semantic:<id>` is an explicit dependency edge. Retrieval follows those edges so a
 dependent record is present whenever its premise is. Invalidation propagates only when the
 premise's envelope or canonical prose changes, not when ordinary code covered by the premise
@@ -152,43 +157,49 @@ Every record has a **digest**: SHA-256 over the normalized envelope and the exac
 Markdown section in the tree being evaluated. Retrieval returns the digest with the record.
 Landing binds the digest into the commit (§4.4).
 
-### 2.2 Domains — `DOMAINS.yml`
+### 2.2 Domains — `records/domain/<id>.yml`
 
 ```yaml
 version: 1
-domains:
-  - id: ocr.orchestrator
-    responsibility: Selects OCR engines and distributes work.
-    authority: user:task:ocr-architecture#turn-4
-    parent: ocr
-    architecture: [architecture:docs/architecture.md#ocr-orchestration]
-    contracts: [ocr.engine-protocol.v1]
+id: ocr.orchestrator
+responsibility: Selects OCR engines and distributes work.
+authority: user:task:ocr-architecture#turn-4
+parent: ocr
+architecture: [architecture:docs/architecture.md#ocr-orchestration]
+contracts: [ocr.engine-protocol.v1]
 ```
 
 A domain is a stable responsibility and a retrieval index, not a directory or an ownership lock.
 Validation covers identifiers, parent references, cycles, contract references, and architecture
-anchors. Unknown fields are rejected.
+anchors. Unknown fields are rejected. The filename is `<id>.yml` and one file contains exactly one
+domain projection.
 
-### 2.3 Contracts — `CONTRACTS.yml`
+### 2.3 Contracts — `records/contract/<id>.yml`
 
 ```yaml
 version: 1
-contracts:
-  - id: ocr.engine-protocol.v1
-    assertion: Every engine accepts OcrRequest and returns OcrResult.
-    authority: user:task:ocr-architecture#turn-4
-    between: [ocr.orchestrator, ocr.engine.external]
-    surfaces: [interface:OcrEngine, repo:schemas/ocr-engine.json]
-    architecture: [architecture:docs/architecture.md#ocr-engine-protocol]
-    verifies: [command:scripts/verify-ocr-engine-protocol]
+id: ocr.engine-protocol.v1
+assertion: Every engine accepts OcrRequest and returns OcrResult.
+authority: user:task:ocr-architecture#turn-4
+between: [ocr.orchestrator, ocr.engine.external]
+surfaces: [interface:OcrEngine, repo:schemas/ocr-engine.json]
+architecture: [architecture:docs/architecture.md#ocr-engine-protocol]
+verifies: [command:scripts/verify-ocr-engine-protocol]
 ```
 
 A contract requires identifiable reliance (`between`), referenced architecture, and at least one
 executable verifier. A verifier passing is evidence for the contract, not proof of every
 interpretation. A promise with no stable observable consequence is recorded as architecture or a
-constraint, not as a contract.
+constraint, not as a contract. The filename is `<id>.yml` and one file contains exactly one
+contract projection.
 
-### 2.4 Sources — `SOURCES.yml`
+### 2.4 Constraints — `records/constraint/<id>.yml`
+
+A constraint is an accepted repository restriction with an attributable authority, at least one
+domain in `applies_to`, defining `material`, and optional surfaces and executable verifiers. It
+uses the same direct `<id>.yml` identity rule as every other record projection.
+
+### 2.5 Sources — `SOURCES.yml`
 
 A grounding source is attributable evidence attached to an existing scope: exactly one origin
 (`url` or `path` beneath `.invariant/sources/`) and exactly one scope (`domain:<id>`,
@@ -196,7 +207,7 @@ A grounding source is attributable evidence attached to an existing scope: exact
 origin. Source content is presented to agents as untrusted evidence; it can never create or modify
 records, and never authorizes work.
 
-### 2.5 Validation
+### 2.6 Validation
 
 Tracked state is validated on every read that depends on it and before every landing. Malformed
 YAML, unknown fields, unresolved locators, dangling anchors, cycles, and unattested integration
@@ -281,7 +292,7 @@ Each persisted **action** has:
 Normal lifecycle output carries only this reference. Expanding an action returns its `prompt`,
 `input_schema`, and `context`; the candidate-review context contains the task, goal digest,
 candidate tree, reach, changed paths, affected semantics, inferred governance, checks to run,
-evidence ids, retained discoveries, and a `review_id`.
+evidence ids, retained discoveries, any independent-review requirement, and a `review_id`.
 
 Rules:
 
@@ -303,6 +314,10 @@ Rules:
 8. A review separates blocking `candidate_defects` from non-blocking `retained_discoveries`.
    `review_mode` is `self-attested` unless the host actually routed the action to an independent
    reviewer; the implementation records provenance and never invents it.
+9. A candidate with `gated` reach, or with `open` reach to a contract, requires either attributable
+   human acceptance or `review_mode: independent`. An independent reviewer did not author any
+   candidate work item and receives the exact candidate in a fresh review session. Self-attestation
+   is refused for this boundary. Review cannot override a failed verifier.
 
 Responses are submitted by action id. Editing runtime files is not a response.
 
@@ -334,6 +349,9 @@ one. An acknowledgement is an attributable assertion, not proof of comprehension
 binds it to an exact tree and preserves who asserted what, and cannot tell careful reasoning from a
 rubber stamp.
 
+The review has a digest: SHA-256 over the normalized version, review id, candidate tree, verdict,
+summary, semantic effect, authority, review mode, candidate defects, and retained discoveries.
+
 ### 3.5 When a change is routine
 
 A candidate whose changed paths, interfaces, and domains touch no accepted record, whose
@@ -343,7 +361,7 @@ would otherwise be authored is inferred. Any of the following removes a change f
 path and produces a `candidate.evidenced` action or a blocking diagnostic:
 
 - a changed path is covered by a record's `applies_to`;
-- the candidate touches a record's canonical prose or a registry;
+- the candidate touches a record's canonical prose or record file;
 - the integration range contains commits not landed through the lifecycle that touched governed
   prose (§4.5);
 - tracked state is invalid;
@@ -413,7 +431,7 @@ the integration branch is unchanged.
 
 Standalone verification never updates a ref.
 
-**Reach** classifies how far a candidate's effect extends: `local`, `bounded`, or `open`.
+**Reach** classifies how far a candidate's effect extends: `local`, `bounded`, `open`, or `gated`.
 
 **Evidence** is addressed by stable id: `candidate:<sha256>` for the constructed candidate and
 `state:<sha256>` for a tracked-state validation, plus verifier-specific ids. Evidence is reusable
@@ -430,8 +448,9 @@ version, verifier identities, and governance versions. It then:
 2. resolves an already-configured upstream before mutation when publication is enabled;
 3. confirms the integration worktree can be synchronized safely;
 4. applies the local ref update atomically, as a compare-and-swap against the captured head;
-5. releases explicitly associated leases only after success;
-6. pushes the exact landed commit to the upstream when enabled; a rejected push leaves the verified
+5. may write a disposable successful-history checkpoint; checkpoint failure cannot fail a landing;
+6. releases explicitly associated leases only after success;
+7. pushes the exact landed commit to the upstream when enabled; a rejected push leaves the verified
    local landing intact and reports it.
 
 Any conflict, failed check, changed candidate, missing review, stale assessment, or concurrent
@@ -457,12 +476,20 @@ The landing commit is the durable, greppable record of the change. It carries tr
 | `Invariant-Domain: <id>` | each affected domain |
 | `Invariant-Plan: <id>` | the coordination plan, when one applied |
 | `Invariant-Boundary: <disposition>` | `no-record`, `audit:<id>`, or `recorded` |
+| `Invariant-Landing-Parent: <commit>` | the original first parent, or `unborn` for a root landing |
 | `Invariant-Covers: <old>..<new>` | an integration range the landing attests (§4.5) |
 | `Invariant-Governance: <locator>` | each accepted governance reference the change is owned by |
 | `Invariant-Semantic: <id>@<sha256>` | for each `semantic:` reference, the record digest in the landed tree |
 | `Invariant-Architecture: <locator>` | each architecture section acknowledged by review |
+| `Invariant-Review-Authority: <locator>` | the human or agent authority that accepted the exact candidate |
+| `Invariant-Review-Mode: <mode>` | `self-attested` or `independent` |
+| `Invariant-Review-Digest: <sha256>` | digest of the accepted candidate review |
 
-Landing-history validation rejects missing, malformed, or stale `Invariant-Semantic` bindings.
+Every attested landing binds its original first parent with `Invariant-Landing-Parent`; validation
+therefore detects copied or rewritten landing commits. The three review trailers appear together
+whenever a candidate review was required. Landing-history
+validation rejects incomplete review provenance and missing, malformed, or stale
+`Invariant-Semantic` bindings.
 
 ### 4.5 Attestation of the integration range
 
@@ -475,6 +502,18 @@ non-empty, the next landing carries `Invariant-Covers: <old>..<new>`. If nothing
 touched governed prose or registries, coverage is automatic and the change stays routine. If it did,
 the affected sections are added to the next candidate's review, whatever that candidate changed.
 Until then, validation reports the unattested range as invalid state.
+
+A cherry-pick does not preserve lifecycle identity: copied `Invariant-*` trailers describe the
+original first-parent candidate and MUST be removed before the commit is introduced out of band.
+The next ordinary landing then covers the cherry-picked commit. A backport that must retain an
+Invariant attestation is performed as a new task against the backport branch and receives a new
+exact-tree review and landing commit.
+
+An implementation MAY retain a disposable history-validation checkpoint after a successful
+landing. It may reuse that checkpoint only when its target, validated head, mechanics version, and
+first-parent ancestry still match; otherwise it performs the complete history validation. A
+read-only operation never creates or updates the checkpoint, and absence or loss of the checkpoint
+changes performance only.
 
 ---
 

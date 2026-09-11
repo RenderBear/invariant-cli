@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import pty
 import subprocess
 from pathlib import Path
 
@@ -214,3 +215,84 @@ def test_public_change_keeps_a_small_edit_single(tmp_path: Path) -> None:
     assert log.read_text().splitlines() == ["plan", "write:single"]
     assert (repo / "src" / "a.txt").read_text().endswith("small change\n")
     assert not (repo / ".invariant" / "runtime" / "plans").exists()
+
+
+def test_human_change_resumes_review_without_reimplementing(tmp_path: Path) -> None:
+    repo = repository(tmp_path / "repo")
+    fake = _fake_codex(tmp_path)
+    log = tmp_path / "agent.log"
+    barrier = tmp_path / "barrier"
+    config = repo / ".invariant" / "config.yml"
+    config.write_text(
+        config.read_text(encoding="utf-8").replace("authority: agent", "authority: human"),
+        encoding="utf-8",
+    )
+    architecture = repo / "docs" / "architecture.md"
+    architecture.parent.mkdir(parents=True)
+    architecture.write_text(
+        "# Architecture\n\n## Source boundary {#source-boundary}\n\nThe source value stays repository-owned.\n",
+        encoding="utf-8",
+    )
+    domain = repo / ".invariant" / "records" / "domain" / "source.yml"
+    domain.parent.mkdir(parents=True)
+    domain.write_text(
+        "version: 1\nid: source\nresponsibility: Owns source behavior.\n"
+        "authority: user:task:test#decision\n"
+        "architecture: [architecture:docs/architecture.md#source-boundary]\n",
+        encoding="utf-8",
+    )
+    git(repo, "add", "-A")
+    git(repo, "commit", "-qm", "configure human source authority")
+    environment = {
+        **os.environ,
+        "INVARIANT_CODEX": str(fake),
+        "INVARIANT_HOME": str(tmp_path / "invariant-home"),
+        "FAKE_AGENT_LOG": str(log),
+        "FAKE_BARRIER": str(barrier),
+    }
+    command = [
+        str(CLI),
+        "change",
+        "--id",
+        "human-source",
+        "--boundary",
+        "no-record",
+        "--domain",
+        "source",
+        "Append one human-reviewed marker.",
+    ]
+
+    first = subprocess.run(
+        command,
+        cwd=repo,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    assert first.returncode == 1
+    assert "STATUS: needs-your-decision" in first.stdout
+    assert log.read_text().splitlines() == ["plan", "write:single"]
+
+    master, slave = pty.openpty()
+    try:
+        resumed = subprocess.Popen(
+            command,
+            cwd=repo,
+            env=environment,
+            stdin=slave,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        os.close(slave)
+        os.write(master, b"y\nAccepted after inspecting the exact candidate.\n")
+        stdout, stderr = resumed.communicate(timeout=30)
+    finally:
+        os.close(master)
+
+    assert resumed.returncode == 0, (stdout, stderr)
+    assert "STATUS: complete" in stdout
+    assert log.read_text().splitlines() == ["plan", "write:single"]
+    assert git(repo, "show", "HEAD:src/a.txt").endswith("small change")

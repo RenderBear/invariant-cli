@@ -13,18 +13,24 @@ from invariant.errors import InvariantError, UsageError
 from invariant.mechanics import git
 from invariant.protocol import Reach
 from invariant.semantics.domains import Domain, DomainIndex
-from invariant.semantics.records import SemanticRecord, parse_document
+from invariant.semantics.records import SemanticRecord
 
 
-GOVERNANCE_FILES = (
-    ".invariant/SEMANTICS.yml",
-    ".invariant/DOMAINS.yml",
-    ".invariant/CONTRACTS.yml",
-    ".invariant/CONSTRAINTS.yml",
-)
+RECORD_ROOT = ".invariant/records"
+RECORD_DIRECTORIES = {
+    "semantic": f"{RECORD_ROOT}/semantic",
+    "domain": f"{RECORD_ROOT}/domain",
+    "contract": f"{RECORD_ROOT}/contract",
+    "constraint": f"{RECORD_ROOT}/constraint",
+}
+OBSOLETE_RECORD_FILES = {
+    "semantic": ".invariant/SEMANTICS.yml",
+    "domain": ".invariant/DOMAINS.yml",
+    "contract": ".invariant/CONTRACTS.yml",
+    "constraint": ".invariant/CONSTRAINTS.yml",
+}
 TEST_DIRECTORIES = {"tests", "test", "spec", "__tests__"}
 PACKAGE_MARKERS = {"package.json", "pyproject.toml", "Cargo.toml", "go.mod"}
-_MISSING = object()
 
 
 def refs(value: Any) -> list[str]:
@@ -38,34 +44,77 @@ def refs(value: Any) -> list[str]:
     return []
 
 
-def _load_document(repo: Path, relative: str, at: str | None = None) -> Any:
+def record_relative(kind: str, identifier: str) -> str:
+    if kind not in RECORD_DIRECTORIES or not git.valid_id(identifier):
+        raise InvariantError(f"Invariant: invalid {kind} record id '{identifier}'")
+    return f"{RECORD_DIRECTORIES[kind]}/{identifier}.yml"
+
+
+def record_kind(relative: str) -> str | None:
+    for kind, directory in RECORD_DIRECTORIES.items():
+        if relative.startswith(f"{directory}/"):
+            return kind
+    return None
+
+
+def is_governance_path(relative: str, kind: str | None = None) -> bool:
+    if kind is not None:
+        directory = RECORD_DIRECTORIES[kind]
+        return relative.startswith(f"{directory}/")
+    return record_kind(relative) is not None
+
+
+def _record_documents(
+    repo: Path, kind: str, at: str | None = None
+) -> list[tuple[str, dict[str, Any]]]:
+    directory = RECORD_DIRECTORIES[kind]
+    obsolete = OBSOLETE_RECORD_FILES[kind]
+    obsolete_exists = (
+        git.run(["cat-file", "-e", f"{at}:{obsolete}"], cwd=repo, check=False).returncode
+        == 0
+        if at
+        else (repo / obsolete).is_file()
+    )
+    if obsolete_exists:
+        raise InvariantError(
+            f"Invariant: obsolete aggregate record file '{obsolete}'; "
+            f"use one {directory}/<id>.yml file per record"
+        )
+    documents: list[tuple[str, dict[str, Any]]] = []
     if at:
-        result = git.run(["show", f"{at}:{relative}"], cwd=repo, check=False)
-        if result.returncode:
-            return _MISSING
+        sources = git.tree_text_files(repo, at, directory)
+        values = sorted(sources.items())
+    else:
+        root = repo / directory
+        values = [
+            (path.relative_to(repo).as_posix(), path.read_text(encoding="utf-8"))
+            for path in sorted(root.glob("*.yml"))
+        ] if root.is_dir() else []
+    for relative, content in values:
         try:
-            return yaml.safe_load(result.stdout)
+            raw = yaml.safe_load(content)
         except yaml.YAMLError as exc:
-            raise InvariantError(f"Invariant: invalid YAML in {relative} at {at}: {exc}") from exc
-    path = repo / relative
-    if not path.is_file():
-        return _MISSING
-    try:
-        return yaml.safe_load(path.read_text(encoding="utf-8"))
-    except yaml.YAMLError as exc:
-        raise InvariantError(f"Invariant: invalid YAML in {relative}: {exc}") from exc
-
-
-def _load(repo: Path, relative: str, at: str | None = None) -> dict[str, Any]:
-    raw = _load_document(repo, relative, at)
-    return raw if isinstance(raw, dict) else {}
+            raise InvariantError(f"Invariant: invalid YAML in {relative}: {exc}") from exc
+        if not isinstance(raw, dict) or raw.get("version") != 1:
+            raise InvariantError(f"Invariant: {relative} must be a version-1 record mapping")
+        row = {name: value for name, value in raw.items() if name != "version"}
+        identifier = str(row.get("id") or "")
+        if not git.valid_id(identifier) or Path(relative).stem != identifier:
+            raise InvariantError(
+                f"Invariant: {relative} filename must match its valid record id"
+            )
+        documents.append((relative, row))
+    return documents
 
 
 def domain_index(repo: Path, at: str | None = None) -> DomainIndex:
     """Load the domain projection once as a validated semantic index."""
 
-    raw = _load_document(repo, ".invariant/DOMAINS.yml", at)
-    return DomainIndex() if raw is _MISSING else DomainIndex.parse_document(raw)
+    entries = [
+        Domain.parse(raw, index)
+        for index, (_, raw) in enumerate(_record_documents(repo, "domain", at))
+    ]
+    return DomainIndex.from_entries(entries)
 
 
 def domains(repo: Path, at: str | None = None) -> list[Domain]:
@@ -86,20 +135,18 @@ def _expanded_domain_ids(
 
 
 def contracts(repo: Path, at: str | None = None) -> list[dict[str, Any]]:
-    value = _load(repo, ".invariant/CONTRACTS.yml", at).get("contracts", [])
-    return value if isinstance(value, list) else []
+    return [raw for _, raw in _record_documents(repo, "contract", at)]
 
 
 def constraints(repo: Path, at: str | None = None) -> list[dict[str, Any]]:
-    value = _load(repo, ".invariant/CONSTRAINTS.yml", at).get("constraints", [])
-    return value if isinstance(value, list) else []
+    return [raw for _, raw in _record_documents(repo, "constraint", at)]
 
 
 def semantic_records(repo: Path, at: str | None = None) -> list[SemanticRecord]:
-    raw = _load(repo, ".invariant/SEMANTICS.yml", at)
-    if not raw:
-        return []
-    return parse_document(raw)
+    return [
+        SemanticRecord.parse(raw, index)
+        for index, (_, raw) in enumerate(_record_documents(repo, "semantic", at))
+    ]
 
 
 def semantic_record_digest(repo: Path, identifier: str, at: str | None = None) -> str:
@@ -111,9 +158,24 @@ def semantic_record_digest(repo: Path, identifier: str, at: str | None = None) -
     )
     if record is None:
         raise InvariantError(f"Invariant: unknown semantic record '{identifier}'")
+    return digest_semantic_record(repo, record, at)
+
+
+def digest_semantic_record(
+    repo: Path,
+    record: SemanticRecord,
+    at: str | None = None,
+    content_cache: dict[str, str] | None = None,
+) -> str:
+    """Digest an already parsed record without reopening its record collection."""
+
     document = record.document.removeprefix("architecture:")
     path, _, anchor = document.partition("#")
-    content = _content(repo, at, path)
+    cache = content_cache if content_cache is not None else {}
+    content = cache.get(path)
+    if content is None:
+        content = _content(repo, at, path)
+        cache[path] = content
     bounds = _section_bounds(content, anchor) if anchor else None
     body = (
         "\n".join(content.splitlines()[bounds[0] - 1 : bounds[1]])
@@ -292,7 +354,10 @@ def _section_bounds(content: str, anchor: str) -> tuple[int, int] | None:
     for number, line in enumerate(lines, 1):
         match = re.match(r"^(#{1,6})\s+(.+?)\s*#*\s*$", line)
         if match:
-            headings.append((number, len(match.group(1)), _heading_slug(match.group(2))))
+            heading = match.group(2)
+            explicit = re.search(r"\{#([A-Za-z0-9][A-Za-z0-9._-]*)\}\s*$", heading)
+            found = explicit.group(1) if explicit else _heading_slug(heading)
+            headings.append((number, len(match.group(1)), found))
     for index, (start, level, found) in enumerate(headings):
         if found != anchor:
             continue
@@ -508,14 +573,20 @@ def compile_affected(
     def add(item: Affected) -> None:
         key = (item.kind, item.identifier)
         existing = affected.get(key)
-        if existing is None or item.level == Reach.OPEN:
+        priority = {
+            Reach.LOCAL: 0,
+            Reach.BOUNDED: 1,
+            Reach.OPEN: 2,
+            Reach.GATED: 3,
+        }
+        if existing is None or priority[item.level] > priority[existing.level]:
             affected[key] = item
 
     semantic_rows = semantic_records(repo, at)
     changed_semantic_meaning: set[str] = set()
     for record in semantic_rows:
         if (
-            ".invariant/SEMANTICS.yml" in changed
+            any(is_governance_path(path, "semantic") for path in changed)
             and base_semantics.get(record.identifier) != record
         ) or path_hits(
             repo,
@@ -604,7 +675,10 @@ def compile_affected(
         architecture = row.get("architecture", row.get("material"))
         verifies = tuple(refs(row.get("verifies")))
         level: Reach | None = None
-        if ".invariant/CONTRACTS.yml" in changed and base_contracts.get(identifier) != row:
+        if (
+            any(is_governance_path(path, "contract") for path in changed)
+            and base_contracts.get(identifier) != row
+        ):
             level = Reach.OPEN
         if not level and (
             selected.intersection(between)
@@ -637,7 +711,10 @@ def compile_affected(
         identifier = domain.identifier
         for locator in domain.architecture:
             level: Reach | None = Reach.BOUNDED if identifier in selected else None
-            if ".invariant/DOMAINS.yml" in changed and base_domains.get(identifier) != domain:
+            if (
+                any(is_governance_path(path, "domain") for path in changed)
+                and base_domains.get(identifier) != domain
+            ):
                 level = Reach.OPEN
             if path_hits(repo, changed, [locator], base, tip):
                 level = Reach.OPEN
@@ -659,7 +736,10 @@ def compile_affected(
         verifies = tuple(refs(row.get("verifies")))
         level: Reach | None = None
         identifier = str(row.get("id", ""))
-        if ".invariant/CONSTRAINTS.yml" in changed and base_constraints.get(identifier) != row:
+        if (
+            any(is_governance_path(path, "constraint") for path in changed)
+            and base_constraints.get(identifier) != row
+        ):
             level = Reach.OPEN
         if not level and (
             selected.intersection(applies)
@@ -683,22 +763,20 @@ def compile_affected(
 
 
 def _governance_change_class(repo: Path, paths: list[str], base: str | None, tip: str | None = None) -> str:
-    if not any(path in GOVERNANCE_FILES for path in paths):
+    changed_records = [path for path in paths if is_governance_path(path)]
+    if not changed_records:
         return "none"
     if not base:
-        existing_change = False
-        for relative in GOVERNANCE_FILES:
-            tracked = git.run(["ls-files", "--error-unmatch", relative], cwd=repo, check=False).returncode == 0
-            if tracked and git.run(["diff", "--quiet", "HEAD", "--", relative], cwd=repo, check=False).returncode:
-                existing_change = True
+        existing_change = any(
+            git.run(["ls-files", "--error-unmatch", relative], cwd=repo, check=False).returncode == 0
+            for relative in changed_records
+        )
         return "gated" if existing_change else "open"
-    args = ["diff", "--unified=0", base]
-    if tip:
-        args.append(tip)
-    args.extend(["--", *GOVERNANCE_FILES])
-    diff = git.run(args, cwd=repo, check=False).stdout
-    removed = any(line.startswith("-") and not line.startswith("---") for line in diff.splitlines())
-    return "gated" if removed else "open"
+    existing_change = any(
+        git.run(["cat-file", "-e", f"{base}:{relative}"], cwd=repo, check=False).returncode == 0
+        for relative in changed_records
+    )
+    return "gated" if existing_change else "open"
 
 
 def _discovery_records(repo: Path) -> list[tuple[Path, dict[str, Any]]]:
@@ -913,12 +991,19 @@ def verifiers(
     ).verifier_lines
 
 
-def governing_rows(repo: Path, selected: Iterable[str], at: str | None = None) -> list[str]:
+def governing_rows(
+    repo: Path,
+    selected: Iterable[str],
+    at: str | None = None,
+    *,
+    include_semantic: bool = True,
+) -> list[str]:
     catalog = domain_index(repo, at)
     expanded = set(_expanded_domain_ids(catalog, selected))
     selected_contracts = _domain_contract_ids(catalog, expanded)
     rows: list[str] = []
-    for record in semantic_records(repo, at):
+    content_cache: dict[str, str] = {}
+    for record in semantic_records(repo, at) if include_semantic else ():
         applies_domains = {
             item.removeprefix("domain:")
             for item in record.applies_to
@@ -928,7 +1013,7 @@ def governing_rows(repo: Path, selected: Iterable[str], at: str | None = None) -
             continue
         if not applies_domains and expanded:
             continue
-        rows.append(_semantic_row(repo, record, at))
+        rows.append(_semantic_row(repo, record, at, content_cache))
     for domain in catalog:
         if domain.identifier not in expanded:
             continue
@@ -972,7 +1057,12 @@ def governing_rows(repo: Path, selected: Iterable[str], at: str | None = None) -
     return sorted(rows)
 
 
-def _semantic_row(repo: Path, record: SemanticRecord, at: str | None = None) -> str:
+def _semantic_row(
+    repo: Path,
+    record: SemanticRecord,
+    at: str | None = None,
+    content_cache: dict[str, str] | None = None,
+) -> str:
     return "SEMANTIC|{id}|{status}|{document}|{applies}|{revisit}|{verifies}|{authority}|{digest}".format(
         id=record.identifier,
         status=record.status,
@@ -981,7 +1071,7 @@ def _semantic_row(repo: Path, record: SemanticRecord, at: str | None = None) -> 
         revisit=" ".join(record.revisit_on),
         verifies=" ".join(record.verifies),
         authority=record.authority,
-        digest=semantic_record_digest(repo, record.identifier, at),
+        digest=digest_semantic_record(repo, record, at, content_cache),
     )
 
 
@@ -1080,9 +1170,10 @@ def context_digest(
 
     if at and not git.resolve(repo, at):
         raise InvariantError(f"Invariant: governance commit '{at}' does not resolve")
-    legacy = [row for row in governing_rows(repo, selected, at) if not row.startswith("SEMANTIC|")]
+    legacy = governing_rows(repo, selected, at, include_semantic=False)
+    content_cache: dict[str, str] = {}
     semantic = [
-        _semantic_row(repo, record, at)
+        _semantic_row(repo, record, at, content_cache)
         for record in applicable_semantic_records(
             repo,
             paths=paths,

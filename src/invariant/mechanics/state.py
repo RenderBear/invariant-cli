@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+import os
 import re
 from datetime import datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any, Iterable
 
-from invariant.errors import UsageError
+from invariant.errors import InvariantError, UsageError
 from invariant.mechanics import config, git, governance
-from invariant.mechanics.documents import load_yaml
+from invariant.mechanics.documents import dump_yaml, load_yaml
 from invariant.mechanics.governance import architecture_refs, refs
 from invariant.semantics.adoption import ProjectedRecord
 from invariant.semantics.discovery import Discovery, validate_shape
 from invariant.semantics.domains import Domain, DomainIndex
-from invariant.semantics.records import SemanticRecord, parse_document
+from invariant.semantics.records import SemanticRecord
 from invariant.semantics import sources
 
 
@@ -20,11 +22,72 @@ def _valid_id(value: Any) -> bool:
     return isinstance(value, str) and git.valid_id(value)
 
 
+def _history_mechanics_digest() -> str:
+    package = Path(__file__).resolve().parent
+    digest = sha256()
+    for name in ("git.py", "governance.py", "landing.py", "state.py"):
+        digest.update(name.encode())
+        digest.update(b"\0")
+        digest.update((package / name).read_bytes())
+        digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _history_checkpoint_path(repo: Path, target: str) -> Path:
+    safe_target = target.replace("/", "%")
+    return (
+        git.primary_worktree(repo)
+        / ".invariant"
+        / "runtime"
+        / "history-validation"
+        / f"{safe_target}.yml"
+    )
+
+
+def _history_checkpoint(repo: Path, target: str, head: str) -> str | None:
+    path = _history_checkpoint_path(repo, target)
+    if not path.is_file():
+        return None
+    try:
+        raw = load_yaml(path)
+    except (OSError, InvariantError):
+        return None
+    if not isinstance(raw, dict) or raw.get("version") != 1:
+        return None
+    checkpoint = str(raw.get("head") or "")
+    if (
+        raw.get("target") != target
+        or raw.get("mechanics") != _history_mechanics_digest()
+        or not checkpoint
+        or not git.is_first_parent_ancestor(repo, checkpoint, head)
+    ):
+        return None
+    return checkpoint
+
+
+def write_history_checkpoint(repo: Path, target: str, head: str) -> None:
+    """Persist a disposable successful-validation boundary after a ref update."""
+
+    path = _history_checkpoint_path(repo, target)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    runtime = path.parents[1]
+    marker = runtime / ".gitignore"
+    if not marker.exists():
+        marker.write_text("*\n", encoding="utf-8")
+    dump_yaml(
+        path,
+        {
+            "version": 1,
+            "target": target,
+            "head": head,
+            "mechanics": _history_mechanics_digest(),
+        },
+    )
+
+
 def _markdown_anchor(path: Path, anchor: str) -> bool:
     if not path.is_file() or path.suffix.lower() not in {".md", ".markdown"}:
         return False
-    from invariant.mechanics.governance import _heading_slug
-
     for line in path.read_text(encoding="utf-8").splitlines():
         match = re.match(r"^#{1,6}\s+(.+?)\s*#*\s*$", line)
         if not match:
@@ -34,9 +97,6 @@ def _markdown_anchor(path: Path, anchor: str) -> bool:
         if explicit:
             if explicit.group(1) == anchor:
                 return True
-            heading = heading[: explicit.start()].rstrip()
-        if _heading_slug(heading) == anchor:
-            return True
     return False
 
 
@@ -62,7 +122,10 @@ def _architecture(repo: Path, value: str, label: str) -> list[str]:
     if not candidate.is_file():
         return [f"{label} architecture '{path}' does not exist"]
     if not _markdown_anchor(candidate, anchor):
-        return [f"{label} architecture anchor '#{anchor}' does not exist in {path}"]
+        return [
+            f"{label} architecture anchor '#{anchor}' must be an explicit "
+            f"{{#{anchor}}} heading id in {path}"
+        ]
     return []
 
 
@@ -332,33 +395,62 @@ def _yaml_files(repo: Path, named: Iterable[str] = ()) -> list[Path]:
 
 def _landing_history(repo: Path) -> list[str]:
     errors: list[str] = []
-    if git.resolve(repo, "HEAD") is None:
+    head = git.resolve(repo, "HEAD")
+    if head is None:
         return ["landing history HEAD does not resolve"]
+    target = (
+        os.environ.get("INVARIANT_INTEGRATION_TARGET")
+        or git.current_branch(repo)
+        or "HEAD"
+    )
+    checkpoint = _history_checkpoint(repo, target, head)
+    if checkpoint == head:
+        return errors
     # History before the first attested landing can never carry lifecycle trailers, so the
     # walk starts at the oldest commit whose message names the boundary key at all.
-    mentions = git.commits_mentioning(repo, "HEAD", "Invariant-Boundary")
-    if not mentions:
-        return errors
-    oldest = mentions[-1]
-    parent = git.resolve(repo, f"{oldest}^1")
+    if checkpoint:
+        parent = checkpoint
+        adopted = True
+        last = checkpoint
+    else:
+        mentions = git.commits_mentioning(repo, "HEAD", "Invariant-Boundary")
+        if not mentions:
+            return errors
+        oldest = mentions[-1]
+        parent = git.resolve(repo, f"{oldest}^1")
+        adopted = False
+        last = ""
     history = git.trailer_history(
         repo,
         "HEAD",
-        ("Invariant-Boundary", "Invariant-Governance", "Invariant-Semantic", "Invariant-Covers"),
+        (
+            "Invariant-Boundary",
+            "Invariant-Landing-Parent",
+            "Invariant-Governance",
+            "Invariant-Semantic",
+            "Invariant-Covers",
+            "Invariant-Architecture",
+            "Invariant-Review-Authority",
+            "Invariant-Review-Mode",
+            "Invariant-Review-Digest",
+        ),
         after=parent,
     )
     if history is None:
         return ["landing history HEAD does not resolve"]
-    adopted = False
-    last = ""
     gap = False
     gap_tip = ""
     for entry in history:
         commit = entry.commit
         boundary = list(entry.trailers["Invariant-Boundary"])
+        landing_parents = list(entry.trailers["Invariant-Landing-Parent"])
         governance_refs = list(entry.trailers["Invariant-Governance"])
         semantic_attestations = list(entry.trailers["Invariant-Semantic"])
         covers = list(entry.trailers["Invariant-Covers"])
+        architecture_reviews = list(entry.trailers["Invariant-Architecture"])
+        review_authorities = list(entry.trailers["Invariant-Review-Authority"])
+        review_modes = list(entry.trailers["Invariant-Review-Mode"])
+        review_digests = list(entry.trailers["Invariant-Review-Digest"])
         label = f"landing history commit {commit[:12]}"
         if not adopted and boundary:
             adopted = True
@@ -373,12 +465,37 @@ def _landing_history(repo: Path) -> list[str]:
         if len(boundary) > 1:
             errors.append(f"{label} has multiple Invariant-Boundary trailers")
             continue
+        expected_parent = entry.parents[0] if entry.parents else "unborn"
+        if len(landing_parents) != 1:
+            errors.append(f"{label} must carry exactly one Invariant-Landing-Parent")
+        elif landing_parents[0] != expected_parent:
+            errors.append(
+                f"{label} was copied or rewritten: Invariant-Landing-Parent "
+                f"is {landing_parents[0]} but first parent is {expected_parent}"
+            )
         value = boundary[0]
         if value not in {"no-record", "recorded"} and not re.fullmatch(r"audit:[A-Za-z0-9._-]+", value):
             errors.append(f"{label} has an invalid Invariant-Boundary disposition")
             continue
         if value == "recorded" and not governance_refs:
             errors.append(f"{label} uses Invariant-Boundary recorded without Invariant-Governance")
+        review_required = value == "recorded" or bool(architecture_reviews)
+        review_counts = (
+            len(review_authorities),
+            len(review_modes),
+            len(review_digests),
+        )
+        if review_required and review_counts != (1, 1, 1):
+            errors.append(f"{label} is missing complete durable review provenance")
+        elif any(review_counts) and review_counts != (1, 1, 1):
+            errors.append(f"{label} has incomplete durable review provenance")
+        if len(review_modes) == 1 and review_modes[0] not in {
+            "self-attested",
+            "independent",
+        }:
+            errors.append(f"{label} has invalid Invariant-Review-Mode")
+        if len(review_digests) == 1 and not re.fullmatch(r"[0-9a-f]{64}", review_digests[0]):
+            errors.append(f"{label} has invalid Invariant-Review-Digest")
         semantic_refs = {
             reference.removeprefix("semantic:")
             for reference in governance_refs
@@ -397,12 +514,29 @@ def _landing_history(repo: Path) -> list[str]:
             if identifier in parsed_attestations:
                 errors.append(f"{label} attests semantic record '{identifier}' more than once")
             parsed_attestations[identifier] = digest
+        records_at_commit: dict[str, SemanticRecord] = {}
+        content_cache: dict[str, str] = {}
+        if semantic_refs:
+            try:
+                records_at_commit = {
+                    record.identifier: record
+                    for record in governance.semantic_records(repo, commit)
+                }
+            except InvariantError as exc:
+                errors.append(f"{label} {exc.message.removeprefix('Invariant: ')}")
         for identifier in sorted(semantic_refs):
             if identifier not in parsed_attestations:
                 errors.append(f"{label} does not bind semantic:{identifier} to canonical prose")
                 continue
             try:
-                expected_digest = governance.semantic_record_digest(repo, identifier, commit)
+                record = records_at_commit.get(identifier)
+                if record is None:
+                    raise InvariantError(
+                        f"Invariant: unknown semantic record '{identifier}'"
+                    )
+                expected_digest = governance.digest_semantic_record(
+                    repo, record, commit, content_cache
+                )
             except InvariantError as exc:
                 errors.append(f"{label} {exc.message.removeprefix('Invariant: ')}")
                 continue
@@ -469,6 +603,7 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
     observation_rows: list[tuple[Path, dict[str, Any]]] = []
     semantic_rows: list[SemanticRecord] = []
     source_documents: list[dict[str, Any]] = []
+    record_locations: dict[tuple[str, str], str] = {}
 
     for path, raw in parsed.items():
         relative = path.relative_to(repo).as_posix() if repo in path.parents else path.as_posix()
@@ -477,30 +612,32 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
                 config.resolve(repo)
             except Exception as exc:
                 failures.append(f"{relative} {str(exc).removeprefix('Invariant: ')}")
-        elif relative == ".invariant/SEMANTICS.yml":
-            try:
-                semantic_rows.extend(parse_document(raw))
-            except InvariantError as exc:
-                failures.append(f"{relative} {exc.message.removeprefix('Invariant: ')}")
-        elif relative == ".invariant/DOMAINS.yml":
-            try:
-                domain_rows.extend(DomainIndex.parse_document(raw))
-            except UsageError as exc:
+        elif kind := governance.record_kind(relative):
+            expected_parent = Path(governance.RECORD_DIRECTORIES[kind])
+            if Path(relative).parent != expected_parent or Path(relative).suffix != ".yml":
                 failures.append(
-                    f"{relative} {exc.message.removeprefix('Invariant: ')}"
+                    f"{relative} must be a direct <id>.yml child of {expected_parent.as_posix()}"
                 )
-        elif relative == ".invariant/CONTRACTS.yml":
-            values = raw.get("contracts")
-            if not isinstance(values, list) or not values:
-                failures.append(f"{relative} contains no contracts; remove it")
-            else:
-                contract_rows.extend(item for item in values if isinstance(item, dict))
-        elif relative == ".invariant/CONSTRAINTS.yml":
-            values = raw.get("constraints")
-            if not isinstance(values, list) or not values:
-                failures.append(f"{relative} contains no constraints; remove it")
-            else:
-                constraint_rows.extend(item for item in values if isinstance(item, dict))
+                continue
+            row = {name: value for name, value in raw.items() if name != "version"}
+            identifier = str(row.get("id") or "")
+            if not _valid_id(identifier):
+                failures.append(f"{relative} has invalid {kind} id '{identifier}'")
+                continue
+            if Path(relative).stem != identifier:
+                failures.append(f"{relative} filename must be {identifier}.yml")
+            record_locations[(kind, identifier)] = relative
+            try:
+                if kind == "semantic":
+                    semantic_rows.append(SemanticRecord.parse(row))
+                elif kind == "domain":
+                    domain_rows.append(Domain.parse(row))
+                elif kind == "contract":
+                    contract_rows.append(row)
+                else:
+                    constraint_rows.append(row)
+            except UsageError as exc:
+                failures.append(f"{relative} {exc.message.removeprefix('Invariant: ')}")
         elif relative == sources.INDEX_PATH.as_posix():
             source_documents.append(raw)
         elif relative.startswith(".invariant/audits/"):
@@ -520,9 +657,20 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
     constraint_ids = [str(row.get("id", "")) for row in constraint_rows]
     discovery_ids = [row.identifier for _, row, _ in discovery_rows]
     semantic_ids = [row.identifier for row in semantic_rows]
-    for name, values in (("contract", contract_ids), ("constraint", constraint_ids), ("discovery", discovery_ids)):
+    for name, values in (
+        ("semantic", semantic_ids),
+        ("domain", domain_ids),
+        ("contract", contract_ids),
+        ("constraint", constraint_ids),
+        ("discovery", discovery_ids),
+    ):
         for value in sorted({item for item in values if values.count(item) > 1}):
             failures.append(f"duplicate {name} '{value}'")
+
+    try:
+        domain_rows = list(DomainIndex.from_entries(domain_rows))
+    except UsageError as exc:
+        failures.append(exc.message.removeprefix("Invariant: "))
 
     semantic_by_id = {row.identifier: row for row in semantic_rows}
     for raw in source_documents:
@@ -535,7 +683,10 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
             )
         )
     for row in semantic_rows:
-        label = f".invariant/SEMANTICS.yml:{row.identifier}"
+        label = record_locations.get(
+            ("semantic", row.identifier),
+            governance.record_relative("semantic", row.identifier),
+        )
         failures.extend(_authority(repo, row.authority, label))
         failures.extend(_architecture(repo, row.document, label))
         if not row.applies_to and not row.revisit_on:
@@ -582,7 +733,10 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
                     )
 
     for domain in domain_rows:
-        label = f".invariant/DOMAINS.yml:{domain.identifier}"
+        label = record_locations.get(
+            ("domain", domain.identifier),
+            governance.record_relative("domain", domain.identifier),
+        )
         failures.extend(_authority(repo, domain.authority, label))
         for locator in domain.architecture:
             failures.extend(_architecture(repo, locator, label))
@@ -592,9 +746,12 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
 
     for row in contract_rows:
         identifier = row.get("id")
-        label = f".invariant/CONTRACTS.yml:{identifier}"
+        label = record_locations.get(
+            ("contract", str(identifier)),
+            governance.record_relative("contract", str(identifier)),
+        )
         if not _valid_id(identifier):
-            failures.append(f".invariant/CONTRACTS.yml invalid contract id '{identifier}'")
+            failures.append(f"{label} invalid contract id '{identifier}'")
         if not row.get("assertion"):
             failures.append(f"{label} missing assertion")
         failures.extend(_authority(repo, row.get("authority"), label))
@@ -624,9 +781,12 @@ def validate(repo: Path, *, landing: bool = False, named: Iterable[str] = ()) ->
 
     for row in constraint_rows:
         identifier = row.get("id")
-        label = f".invariant/CONSTRAINTS.yml:{identifier}"
+        label = record_locations.get(
+            ("constraint", str(identifier)),
+            governance.record_relative("constraint", str(identifier)),
+        )
         if not _valid_id(identifier):
-            failures.append(f".invariant/CONSTRAINTS.yml invalid constraint id '{identifier}'")
+            failures.append(f"{label} invalid constraint id '{identifier}'")
         if not row.get("assertion"):
             failures.append(f"{label} missing assertion")
         failures.extend(_authority(repo, row.get("authority"), label))

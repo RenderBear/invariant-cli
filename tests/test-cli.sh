@@ -129,11 +129,13 @@ governance_digest=$(printf '%s' "$governance_goal" | git -C "$fixture" hash-obje
 out=$(cd "$fixture" && "$cli" task begin governance-baseline --goal "$governance_goal")
 governance_branch=$(printf '%s\n' "$out" | sed -n 's/^BRANCH: //p')
 governance_worktree=$(printf '%s\n' "$out" | sed -n 's/^WORKTREE: //p')
-mkdir -p "$governance_worktree/.invariant" "$governance_worktree/docs" "$governance_worktree/checks"
+mkdir -p "$governance_worktree/.invariant/records/domain" \
+  "$governance_worktree/.invariant/records/contract" \
+  "$governance_worktree/docs" "$governance_worktree/checks"
 cat >"$governance_worktree/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Source contract
+## Source contract {#source-contract}
 
 The source owner provides a stable value to its consumer.
 EOF
@@ -142,35 +144,36 @@ cat >"$governance_worktree/checks/source-contract.sh" <<'EOF'
 test -f src/a.txt
 EOF
 chmod +x "$governance_worktree/checks/source-contract.sh"
-cat >"$governance_worktree/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$governance_worktree/.invariant/records/domain/source.yml" <<'EOF'
 version: 1
-domains:
-  - id: source
-    responsibility: Owns the source value.
-    authority: user:task:governance-baseline#goal
-    architecture: [architecture:docs/architecture.md#source-contract]
-    contracts: [source.contract.v1]
-  - id: consumer
-    responsibility: Consumes the source value.
-    authority: user:task:governance-baseline#goal
+id: source
+responsibility: Owns the source value.
+authority: user:task:governance-baseline#goal
+architecture: [architecture:docs/architecture.md#source-contract]
+contracts: [source.contract.v1]
 EOF
-cat >"$governance_worktree/.invariant/CONTRACTS.yml" <<'EOF'
+cat >"$governance_worktree/.invariant/records/domain/consumer.yml" <<'EOF'
 version: 1
-contracts:
-  - id: source.contract.v1
-    assertion: The source value remains available to its consumer.
-    authority: user:task:governance-baseline#goal
-    between: [source, consumer]
-    surfaces: [repo:src/a.txt]
-    architecture: [architecture:docs/architecture.md#source-contract]
-    verifies: [command:checks/source-contract.sh]
+id: consumer
+responsibility: Consumes the source value.
+authority: user:task:governance-baseline#goal
+EOF
+cat >"$governance_worktree/.invariant/records/contract/source.contract.v1.yml" <<'EOF'
+version: 1
+id: source.contract.v1
+assertion: The source value remains available to its consumer.
+authority: user:task:governance-baseline#goal
+between: [source, consumer]
+surfaces: [repo:src/a.txt]
+architecture: [architecture:docs/architecture.md#source-contract]
+verifies: [command:checks/source-contract.sh]
 EOF
 git -C "$governance_worktree" add -A
 git -C "$governance_worktree" commit -qm "establish governance baseline"
 cat >"$assessment" <<EOF
 version: 1
 goal_digest: $governance_digest
-paths: [.invariant/DOMAINS.yml, .invariant/CONTRACTS.yml, docs/architecture.md, checks/source-contract.sh]
+paths: [.invariant/records/domain/source.yml, .invariant/records/domain/consumer.yml, .invariant/records/contract/source.contract.v1.yml, docs/architecture.md, checks/source-contract.sh]
 interfaces: []
 domains: [source, consumer]
 boundary:
@@ -222,9 +225,11 @@ exit 1
 EOF
 chmod +x "$fixture/checks/fail.sh"
 git -C "$fixture" add checks/fail.sh
+test_setup_parent=$(git -C "$fixture" rev-parse HEAD)
 git -C "$fixture" commit -q -m "add failing check" -m "Invariant-Unit: test-setup
 Invariant-Scope: area.checks
-Invariant-Boundary: no-record"
+Invariant-Boundary: no-record
+Invariant-Landing-Parent: $test_setup_parent"
 failed_goal='Keep failed work recoverable'
 failed_digest=$(printf '%s' "$failed_goal" | git -C "$fixture" hash-object --stdin)
 out=$(cd "$fixture" && "$cli" task begin failed-flow --goal "$failed_goal" \
@@ -268,9 +273,11 @@ execution: assisted
 integration_branch: main
 EOF
 git -C "$fixture" add .invariant/config.yml
+assisted_setup_parent=$(git -C "$fixture" rev-parse HEAD)
 git -C "$fixture" commit -q -m "configure assisted execution" -m "Invariant-Unit: test-setup
 Invariant-Scope: area.root
-Invariant-Boundary: no-record"
+Invariant-Boundary: no-record
+Invariant-Landing-Parent: $assisted_setup_parent"
 
 out=$(cd "$fixture" && "$cli" task begin assisted-flow --goal "Pause before branch creation" \
   --boundary no-record --path src/a.txt)

@@ -75,8 +75,8 @@ fi
 if printf '%s\n' "$out" | grep -q "invariant governance begin"; then
   die "init exposed the agent protocol in its recommendation"
 fi
-[ ! -e "$defaults/.invariant/DOMAINS.yml" ] || die "init manufactured empty domains"
-[ ! -e "$defaults/.invariant/CONTRACTS.yml" ] || die "init manufactured empty contracts"
+[ ! -e "$defaults/.invariant/records/domain" ] || die "init manufactured empty domains"
+[ ! -e "$defaults/.invariant/records/contract" ] || die "init manufactured empty contracts"
 [ ! -e "$defaults/.invariant/audits" ] || die "init ran an audit"
 ok "--defaults configures the selected agent without seeding instruction files"
 

@@ -305,8 +305,9 @@ structured result back through the protocol. It:
   result without storing credentials or conversation state;
 - stamps `authority` and `review_mode` on every review it submits from how it dispatched the
   action, recording `independent` only when invoked with `--independent` because the host routed
-  the action away from the candidate's author; the public `change` command reviews with the
-  authoring provider and therefore records `self-attested`; and
+  the action away from the candidate's author; the public `change` command normally records its
+  authoring-provider review as `self-attested`, but starts a fresh independent review for every
+  gated transition or contract-defining change; and
 - treats provider output as untrusted input which the existing core command validates before any
   lifecycle transition.
 
@@ -341,9 +342,10 @@ Tracked repository state remains:
 
 ```text
 .invariant/config.yml
-.invariant/SEMANTICS.yml
-.invariant/DOMAINS.yml
-.invariant/CONTRACTS.yml
+.invariant/records/semantic/<id>.yml
+.invariant/records/domain/<id>.yml
+.invariant/records/contract/<id>.yml
+.invariant/records/constraint/<id>.yml
 .invariant/SOURCES.yml
 .invariant/sources/<material>
 .invariant/audits/<id>.yml
@@ -361,6 +363,7 @@ Generated local state is shared by linked worktrees and self-ignored at its root
 .invariant/runtime/tasks/<task-id>/...
 .invariant/runtime/history/tasks/<task-id>/<landed-commit>/...
 .invariant/runtime/verifications/<evidence-id>.*
+.invariant/runtime/history-validation/<target>.yml
 .invariant/runtime/plans/<id>.yml
 .invariant/runtime/leases/<unit>.yml
 .invariant/runtime/worktrees/<task-id>-<nonce>/...
@@ -591,23 +594,23 @@ Markdown should store the argument: proposition, rationale, evidence considered,
 alternatives, consequences, and conditions for revision. The CLI deliberately does not parse those
 sentences into a closed claim taxonomy.
 
-`.invariant/SEMANTICS.yml` is a thin mechanical index:
+Each `.invariant/records/semantic/<id>.yml` file is one thin mechanical index entry; its filename
+must equal its `id`:
 
 ```yaml
 version: 1
-records:
-  - id: processor-source-ownership
-    document: architecture:docs/architecture.md#processor-source-ownership
-    authority: user:task:import-processor#turn-3
-    status: active
-    applies_to: [repo:services/document-processor, interface:processor-source]
-    revisit_on: [repo:.gitmodules, repo:services/document-processor/.git]
-    verifies: [command:checks/ordinary-processor-source.sh]
-    supersedes: [processor-external-ownership]
-    relations:
-      challenges: [semantic:processor-external-ownership]
-    facets:
-      confidence: accepted
+id: processor-source-ownership
+document: architecture:docs/architecture.md#processor-source-ownership
+authority: user:task:import-processor#turn-3
+status: active
+applies_to: [repo:services/document-processor, interface:processor-source]
+revisit_on: [repo:.gitmodules, repo:services/document-processor/.git]
+verifies: [command:checks/ordinary-processor-source.sh]
+supersedes: [processor-external-ownership]
+relations:
+  challenges: [semantic:processor-external-ownership]
+facets:
+  confidence: accepted
 ```
 
 Only the fields needed for durable mechanics are fixed:
@@ -636,8 +639,9 @@ When a landing records `semantic:<id>`, its commit also carries `Invariant-Seman
 <id>@<sha256>`. The digest covers the normalized envelope and exact canonical Markdown section in
 the candidate tree. Landing-history validation rejects missing, malformed, or stale bindings.
 
-The older domain and contract registries remain supported as useful projections. They are not the
-universal ontology.
+Domain, contract, and constraint records use the same one-record-per-file layout. They are useful
+projections, not a universal ontology. Splitting identity boundaries across files removes the
+shared aggregate-registry write hotspot while keeping the semantic model unchanged.
 
 ### 7.2 Domains
 
@@ -646,13 +650,12 @@ service, or ownership lock merely because those structures happen to align.
 
 ```yaml
 version: 1
-domains:
-  - id: ocr.orchestrator
-    responsibility: Selects OCR engines and distributes work.
-    authority: user:task:ocr-architecture#turn-4
-    parent: ocr
-    architecture: [architecture:docs/architecture.md#ocr-orchestration]
-    contracts: [ocr.engine-protocol.v1]
+id: ocr.orchestrator
+responsibility: Selects OCR engines and distributes work.
+authority: user:task:ocr-architecture#turn-4
+parent: ocr
+architecture: [architecture:docs/architecture.md#ocr-orchestration]
+contracts: [ocr.engine-protocol.v1]
 ```
 
 The CLI validates identifiers, parent references, cycles, contract references, and architecture
@@ -670,14 +673,16 @@ consequences, and revision conditions. The Markdown remains canonical; registry 
 relevance, not truth.
 
 ```markdown
-## OCR engine isolation
+## OCR engine isolation {#ocr-engine-isolation}
 
 Provider-specific behavior remains inside its engine domain because orchestration must stay
 provider-neutral. Revisit this if engines no longer share lifecycle or replacement semantics.
 ```
 
 Architecture compliance requires semantic review against a concrete candidate. The CLI can locate
-affected sections and validate a review acknowledgement, but it cannot perform the review.
+affected sections and validate a review acknowledgement, but it cannot perform the review. Every
+governed Markdown locator names an explicit `{#stable-id}` heading ID; generated heading slugs are
+display conveniences and never durable identity.
 
 ### 7.4 Contracts
 
@@ -685,14 +690,13 @@ A contract is an accepted executable promise relied on across domains.
 
 ```yaml
 version: 1
-contracts:
-  - id: ocr.engine-protocol.v1
-    assertion: Every engine accepts OcrRequest and returns OcrResult.
-    authority: user:task:ocr-architecture#turn-4
-    between: [ocr.orchestrator, ocr.engine.external]
-    surfaces: [interface:OcrEngine, repo:schemas/ocr-engine.json]
-    architecture: [architecture:docs/architecture.md#ocr-engine-protocol]
-    verifies: [command:scripts/verify-ocr-engine-protocol]
+id: ocr.engine-protocol.v1
+assertion: Every engine accepts OcrRequest and returns OcrResult.
+authority: user:task:ocr-architecture#turn-4
+between: [ocr.orchestrator, ocr.engine.external]
+surfaces: [interface:OcrEngine, repo:schemas/ocr-engine.json]
+architecture: [architecture:docs/architecture.md#ocr-engine-protocol]
+verifies: [command:scripts/verify-ocr-engine-protocol]
 ```
 
 Contracts require identifiable reliance, referenced architecture, and executable verification. The
@@ -1020,6 +1024,9 @@ Hook execution follows these rules:
 8. A semantic review separates unresolved `candidate_defects` from non-blocking
    `retained_discoveries`. `review_mode` is `self-attested` unless a host actually dispatches the
    action to an independent reviewer; Invariant records this provenance but does not invent it.
+9. Every gated transition and every open change to a contract definition requires either an
+   attributable `user:` review or a fresh review marked `independent`. A failed verifier remains a
+   hard blocker under either authority.
 
 There is intentionally no blocking post-update hook: after compare-and-swap succeeds, an optional
 integration must not retroactively make the local landing ambiguous. Notifications or publication
@@ -1092,8 +1099,9 @@ CLI mechanics version, verifier identities, and relevant governance versions. It
 2. resolves an already-configured upstream before mutation when remote publication is enabled;
 3. confirms the target worktree can be synchronized safely;
 4. applies the requested local ref update atomically;
-5. releases explicitly associated leases only after success;
-6. pushes the exact landed commit to that upstream when enabled.
+5. writes a disposable successful-history checkpoint without making landing depend on that cache;
+6. releases explicitly associated leases only after success;
+7. pushes the exact landed commit to that upstream when enabled.
 
 Any conflict, failed check, changed candidate, missing review, stale assessment, or concurrent target
 advance leaves the target unchanged.
@@ -1101,6 +1109,18 @@ advance leaves the target unchanged.
 The host may use ordinary editing and Git inspection commands inside the generated work context, but
 the managed task reaches the integration target only through atomic landing. Routine changes use the
 same lifecycle with little or no semantic ceremony.
+
+The landing commit records the boundary disposition, accepted governance and architecture
+references, review authority, review mode, the SHA-256 digest of the exact accepted review, and
+`Invariant-Landing-Parent` for its original first parent. Landing-history validation rejects
+incomplete review provenance, stale semantic bindings, incorrect coverage ranges, and commits whose
+recorded original parent no longer matches. Cherry-picked landing trailers must therefore be removed;
+the next normal landing covers that out-of-band commit. A backport that retains an attestation is a
+new task and review against the backport branch.
+
+After a successful ref update, `.invariant/runtime/history-validation/<target>.yml` may bound the
+next first-parent scan. It is reused only for the same target, mechanics digest, and ancestor head.
+Read-only validation never writes it, and a missing or stale checkpoint falls back to full history.
 
 ## 11. Audits and discoveries
 

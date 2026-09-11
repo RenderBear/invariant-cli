@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -39,6 +40,9 @@ class LandRequest:
     plan: str | None = None
     allow_open: bool = False
     expected_tree: str | None = None
+    review_authority: str | None = None
+    review_mode: str | None = None
+    review_digest: str | None = None
 
 
 @dataclass(frozen=True)
@@ -91,6 +95,23 @@ def _validate_request(request: LandRequest) -> None:
         raise InvariantError(
             "Invariant: --boundary-review recorded requires at least one --governance reference"
         )
+    review_values = (
+        request.review_authority,
+        request.review_mode,
+        request.review_digest,
+    )
+    if any(review_values) and not all(review_values):
+        raise InvariantError(
+            "Invariant: review authority, mode, and digest must be supplied together"
+        )
+    if request.review_mode and request.review_mode not in {"self-attested", "independent"}:
+        raise InvariantError("Invariant: review mode must be self-attested or independent")
+    if request.review_authority and any(
+        character in request.review_authority for character in "\r\n"
+    ):
+        raise InvariantError("Invariant: review authority must be one line")
+    if request.review_digest and not re.fullmatch(r"[0-9a-f]{64}", request.review_digest):
+        raise InvariantError("Invariant: review digest must be a SHA-256 value")
     if request.mode == "merge" and not request.merge_branch:
         raise InvariantError("Invariant: merge landing requires a branch")
     if request.mode == "staged" and (
@@ -119,6 +140,7 @@ def _message(
     request: LandRequest,
     covers: str | None,
     candidate_tree: str,
+    landing_parent: str | None,
 ) -> str:
     message = governance.commit_message(
         repo,
@@ -129,17 +151,43 @@ def _message(
         request.plan,
     )
     message += f"Invariant-Boundary: {request.boundary}\n"
+    message += f"Invariant-Landing-Parent: {landing_parent or 'unborn'}\n"
     if covers:
         message += f"Invariant-Covers: {covers}\n"
+    semantic_refs = [
+        reference.removeprefix("semantic:")
+        for reference in request.governance_refs
+        if reference.startswith("semantic:")
+    ]
+    semantic_records = (
+        {
+            record.identifier: record
+            for record in governance.semantic_records(repo, candidate_tree)
+        }
+        if semantic_refs
+        else {}
+    )
+    content_cache: dict[str, str] = {}
     for reference in request.governance_refs:
         message += f"Invariant-Governance: {reference}\n"
         if reference.startswith("semantic:"):
             identifier = reference.removeprefix("semantic:")
-            digest = governance.semantic_record_digest(repo, identifier, candidate_tree)
+            record = semantic_records.get(identifier)
+            if record is None:
+                raise InvariantError(
+                    f"Invariant: unknown semantic record '{identifier}'"
+                )
+            digest = governance.digest_semantic_record(
+                repo, record, candidate_tree, content_cache
+            )
             message += f"Invariant-Semantic: {identifier}@{digest}\n"
     for reference in request.reviewed:
         if reference.startswith("architecture:"):
             message += f"Invariant-Architecture: {reference}\n"
+    if request.review_authority:
+        message += f"Invariant-Review-Authority: {request.review_authority}\n"
+        message += f"Invariant-Review-Mode: {request.review_mode}\n"
+        message += f"Invariant-Review-Digest: {request.review_digest}\n"
     return message
 
 
@@ -341,7 +389,7 @@ def _construct(repo: Path, request: LandRequest, target: str) -> Candidate:
         assert old is not None and branch_ref is not None
         tree = git.merge_tree(repo, old, branch_ref)
         parents = [old, branch_ref]
-    message = _message(repo, request, covers, tree)
+    message = _message(repo, request, covers, tree, old)
     arguments = ["commit-tree", tree]
     for parent in parents:
         arguments.extend(["-p", parent])
@@ -1103,6 +1151,11 @@ def _routine_convergence_allowed(request: LandRequest, update_ref: bool) -> bool
 
 def verify_and_land(repo: Path, request: LandRequest, *, update_ref: bool = True) -> list[str]:
     _validate_request(request)
+    if (request.boundary == "recorded" or request.reviewed) and not request.review_authority:
+        raise Blocked(
+            "Invariant: reviewed semantic change is missing durable review provenance",
+            code="missing_review",
+        )
     git.require_capabilities(repo)
     target = request.target or config.resolve(repo).integration_branch
     if git.run(["check-ref-format", "--branch", target], cwd=repo, check=False).returncode:
@@ -1180,6 +1233,22 @@ def _verify_and_land_once(
         if candidate.covers:
             output.append(f"COVERAGE: {candidate.covers}")
         verdict = candidate_context.reach
+        independent_required = (
+            verdict == Reach.GATED
+            or any(
+                item.kind == "contract" and item.level == Reach.OPEN
+                for item in candidate_context.affected
+            )
+        )
+        if independent_required and not (
+            str(request.review_authority or "").startswith("user:")
+            or request.review_mode == "independent"
+        ):
+            raise Blocked(
+                "Invariant: gated governance and contract-defining changes require a human or independent review",
+                code="independent_review_required",
+                lines=output,
+            )
         if verdict.needs_explicit_authority and not request.allow_open:
             label = (
                 "open governance boundary"
@@ -1293,6 +1362,12 @@ def _verify_and_land_once(
             if target_worktree:
                 _sync_checkout(target_worktree, candidate.commit, request.mode)
             journal.unlink(missing_ok=True)
+            try:
+                state.write_history_checkpoint(repo, target, candidate.commit)
+            except (OSError, InvariantError):
+                # Checkpoints are disposable acceleration only; a landing that has
+                # already advanced atomically must not be reported as failed.
+                pass
         for unit in request.units:
             coordinate.release_lease(repo, unit, missing_ok=True)
         if request.plan:

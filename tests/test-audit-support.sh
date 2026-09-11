@@ -13,18 +13,18 @@ git -C "$fixture" init -qb main
 git -C "$fixture" config user.name test
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
-mkdir -p "$fixture/docs/adr" "$fixture/src/ocr" "$fixture/ui" "$fixture/.invariant/audits" "$fixture/.invariant/discoveries"
-printf '# Architecture\n' >"$fixture/docs/architecture.md"
+mkdir -p "$fixture/docs/adr" "$fixture/src/ocr" "$fixture/ui" "$fixture/.invariant/audits" \
+  "$fixture/.invariant/discoveries" "$fixture/.invariant/records/domain"
+printf '# Architecture {#architecture}\n' >"$fixture/docs/architecture.md"
 printf '# ADR\n' >"$fixture/docs/adr/0001.md"
 printf 'ocr\n' >"$fixture/src/ocr/engine.txt"
 printf 'ui\n' >"$fixture/ui/view.txt"
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/ocr.engine.yml" <<'EOF'
 version: 1
-domains:
-  - id: ocr.engine
-    responsibility: Executes OCR.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#architecture]
+id: ocr.engine
+responsibility: Executes OCR.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#architecture]
 EOF
 cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
@@ -105,7 +105,7 @@ before_audits=$(find "$fixture/.invariant/audits" -type f -name '*.yml' | wc -l)
 if out=$(cd "$fixture" && "$cli" evidence audit save invalid --mode full --input "$findings" 2>&1); then
   die "audit persisted a record projection with an invalid architecture anchor"
 fi
-printf '%s\n' "$out" | grep -q "architecture anchor '#missing-heading' does not exist" ||
+printf '%s\n' "$out" | grep -Fq "must be an explicit {#missing-heading} heading id" ||
   die "invalid projected locator was not identified at audit intake"
 [ "$before_audits" -eq "$(find "$fixture/.invariant/audits" -type f -name '*.yml' | wc -l)" ] ||
   die "invalid projected records became resumable audit state"

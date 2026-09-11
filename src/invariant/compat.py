@@ -360,6 +360,7 @@ def _land(argv: list[str]) -> list[str]:
         one=(
             "--unit", "--scope", "--domain", "--interface", "--governance",
             "--reviewed", "--boundary-review", "--target", "--plan", "--check",
+            "--review-authority", "--review-mode", "--review-digest",
         ),
         many=("--paths",),
         flags=("--allow-open",),
@@ -384,6 +385,9 @@ def _land(argv: list[str]) -> list[str]:
         target=values.get("--target", [None])[-1],
         plan=values.get("--plan", [None])[-1],
         allow_open="--allow-open" in flags,
+        review_authority=values.get("--review-authority", [None])[-1],
+        review_mode=values.get("--review-mode", [None])[-1],
+        review_digest=values.get("--review-digest", [None])[-1],
     )
     return landing.verify_and_land(git.root(), request)
 

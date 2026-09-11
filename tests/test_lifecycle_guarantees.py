@@ -112,30 +112,33 @@ def test_assessment_cannot_land_governed_prose_without_a_review(tmp_path: Path) 
     repo = _repository(tmp_path / "repo")
     (repo / "docs").mkdir()
     (repo / "docs" / "architecture.md").write_text(
-        "# Architecture\n\n## Source ownership\n\nThe source module owns its value.\n"
+        "# Architecture\n\n## Source ownership {#source-ownership}\n\nThe source module owns its value.\n"
     )
-    (repo / ".invariant" / "DOMAINS.yml").write_text(
+    domain = repo / ".invariant" / "records" / "domain" / "source.yml"
+    domain.parent.mkdir(parents=True)
+    domain.write_text(
         "version: 1\n"
-        "domains:\n"
-        "  - id: source\n"
-        "    responsibility: Owns the source value.\n"
-        "    authority: user:task:seed#decision\n"
-        "    architecture: [architecture:docs/architecture.md#source-ownership]\n"
+        "id: source\n"
+        "responsibility: Owns the source value.\n"
+        "authority: user:task:seed#decision\n"
+        "architecture: [architecture:docs/architecture.md#source-ownership]\n"
     )
     _git(repo, "add", "-A")
+    seed_parent = _git(repo, "rev-parse", "HEAD")
     _git(
         repo,
         "commit",
         "-qm",
         "record ownership",
         "-m",
-        "Invariant-Unit: seed\nInvariant-Scope: area.root\nInvariant-Boundary: no-record",
+        "Invariant-Unit: seed\nInvariant-Scope: area.root\n"
+        f"Invariant-Boundary: no-record\nInvariant-Landing-Parent: {seed_parent}",
     )
     worktree = _begin(repo, "rewrite")
     _implement(
         worktree,
         "docs/architecture.md",
-        "# Architecture\n\n## Source ownership\n\nAnything may own the value.\n",
+        "# Architecture\n\n## Source ownership {#source-ownership}\n\nAnything may own the value.\n",
     )
     code, payload = _invariant(repo, "task", "status", "rewrite")
     goal_digest = payload["result"]["task"]["goal_digest"]

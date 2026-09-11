@@ -72,7 +72,7 @@ if [ "$schema" = true ]; then
       candidate_tree=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"candidate_tree": "\([^"]*\)",*$/\1/p' | head -n 1)
       effect=no-record
       case "$request" in
-        *'".invariant/DOMAINS.yml"'*|*'".invariant/CONTRACTS.yml"'*) effect=recorded ;;
+        *'".invariant/records/'*) effect=recorded ;;
       esac
       printf '%s\n' "{\"version\":1,\"review_id\":\"$review_id\",\"candidate_tree\":\"$candidate_tree\",\"verdict\":\"accepted\",\"summary\":\"The exact candidate preserves the affected repository constraint.\",\"semantic_effect\":\"$effect\",\"authority\":\"agent:codex\",\"review_mode\":\"independent\",\"candidate_defects\":[],\"retained_discoveries\":[]}" >"$output"
       ;;
@@ -346,30 +346,34 @@ find "$repo/.invariant/audits" -type f -name '*.yml' | grep -q . ||
   die "establishment did not land its durable audit"
 ok "establish runs the audit and lands its durable result"
 
-cat >"$repo/.invariant/DOMAINS.yml" <<'EOF'
+mkdir -p "$repo/.invariant/records/domain" "$repo/.invariant/records/constraint"
+cat >"$repo/.invariant/records/domain/lifecycle.yml" <<'EOF'
 version: 1
-domains:
-  - id: lifecycle
-    responsibility: Owns the managed repository lifecycle.
-    authority: user:task:test#domain
+id: lifecycle
+responsibility: Owns the managed repository lifecycle.
+authority: user:task:test#domain
 EOF
-cat >"$repo/.invariant/CONSTRAINTS.yml" <<'EOF'
+cat >"$repo/.invariant/records/constraint/invariant-state-review.yml" <<'EOF'
 version: 1
-constraints:
-  - id: invariant-state-review
-    assertion: Changes below .invariant require prospective-tree review.
-    authority: user:task:test#constraint
-    applies_to: [lifecycle]
-    surfaces: [repo:.invariant]
-    material: [repo:.invariant]
-    verifies: []
+id: invariant-state-review
+assertion: Changes below .invariant require prospective-tree review.
+authority: user:task:test#constraint
+applies_to: [lifecycle]
+surfaces: [repo:.invariant]
+material: [repo:.invariant]
+verifies: []
 EOF
-git -C "$repo" add .invariant/DOMAINS.yml .invariant/CONSTRAINTS.yml
+git -C "$repo" add .invariant/records/domain/lifecycle.yml .invariant/records/constraint/invariant-state-review.yml
+fixture_setup_parent=$(git -C "$repo" rev-parse HEAD)
 git -C "$repo" commit -q -m "record Invariant state constraint" -m "Invariant-Unit: fixture-setup
 Invariant-Scope: area.root
 Invariant-Boundary: recorded
+Invariant-Landing-Parent: $fixture_setup_parent
 Invariant-Governance: domain:lifecycle
-Invariant-Governance: constraint:invariant-state-review"
+Invariant-Governance: constraint:invariant-state-review
+Invariant-Review-Authority: user:task:test#review
+Invariant-Review-Mode: independent
+Invariant-Review-Digest: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 empty_findings="$fixtures/empty-findings.yml"
 cat >"$empty_findings" <<'EOF'
 version: 1
@@ -411,7 +415,7 @@ printf '%s\n' "$authored" | grep -q '^RECORDS: domain:application$' ||
   die "establish did not report the authored record"
 grep -q 'Request kind: governance.author' "$agent_stdin" ||
   die "establish did not ask the agent to author the missing projection"
-grep -q '^  - id: application$\|^- id: application$' "$repo/.invariant/DOMAINS.yml" ||
+grep -q '^id: application$' "$repo/.invariant/records/domain/application.yml" ||
   die "the authored domain was not landed"
 ok "establish authors record projections the audit left open"
 
@@ -483,7 +487,7 @@ refreshed=$(cd "$repo" && PATH="$fake_bin:$PATH" \
   "$cli" establish --id refresh-establishment)
 printf '%s\n' "$refreshed" | grep -q '^STATUS: complete$' ||
   die "establish could not re-record a domain that already existed"
-grep -q 'and its landing' "$repo/.invariant/DOMAINS.yml" ||
+grep -q 'and its landing' "$repo/.invariant/records/domain/lifecycle.yml" ||
   die "the refreshed domain definition was not landed"
 ok "establish reconciles domains that already exist at the integration head"
 

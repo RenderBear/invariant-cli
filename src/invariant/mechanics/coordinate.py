@@ -407,7 +407,7 @@ def lease_fresh(repo: Path, unit: str) -> list[str]:
                 break
     domain_values = governance.refs(value.get("domains"))
     if not hit and (governance.refs(value.get("governance")) or domain_values):
-        if any(path in governance.GOVERNANCE_FILES for path in landed):
+        if any(governance.is_governance_path(path) for path in landed):
             hit = "governance"
     if not hit and domain_values:
         material = governance.material_changes(repo, str(ground), f"refs/heads/{target}", domain_values)

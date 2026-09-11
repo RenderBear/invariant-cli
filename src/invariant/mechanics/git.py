@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import io
 import os
 import re
 import subprocess
+import tarfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
@@ -121,8 +123,48 @@ def is_ancestor(repo: Path, base: str, tip: str) -> bool:
     return run(["merge-base", "--is-ancestor", base, tip], cwd=repo, check=False).returncode == 0
 
 
+def is_first_parent_ancestor(repo: Path, base: str, tip: str) -> bool:
+    if base == tip:
+        return True
+    history = run(
+        ["rev-list", "--first-parent", "--reverse", f"{base}..{tip}"],
+        cwd=repo,
+        check=False,
+    )
+    commits = history.stdout.splitlines() if history.returncode == 0 else []
+    return bool(commits) and resolve(repo, f"{commits[0]}^1") == base
+
+
 def hash_text(repo: Path, value: str) -> str:
     return run(["hash-object", "--stdin"], cwd=repo, input_text=value).stdout
+
+
+def tree_text_files(repo: Path, ref: str, prefix: str) -> dict[str, str]:
+    """Read every text file below one tree prefix with a single Git process."""
+
+    completed = subprocess.run(
+        ["git", "archive", "--format=tar", ref, prefix],
+        cwd=repo,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode:
+        detail = completed.stderr.decode(errors="replace")
+        if "did not match any files" in detail:
+            return {}
+        raise InvariantError(
+            f"Invariant: {detail.strip() or 'Git archive failed'}", code="git_failed"
+        )
+    output: dict[str, str] = {}
+    with tarfile.open(fileobj=io.BytesIO(completed.stdout), mode="r:") as archive:
+        for member in archive.getmembers():
+            if not member.isfile():
+                continue
+            source = archive.extractfile(member)
+            if source is not None:
+                output[member.name] = source.read().decode("utf-8")
+    return output
 
 
 def changed_paths(repo: Path, base: str | None = None, tip: str | None = None) -> list[str]:

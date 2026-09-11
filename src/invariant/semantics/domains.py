@@ -123,6 +123,11 @@ class DomainIndex:
         if not isinstance(values, list) or not values:
             raise UsageError("domain index contains no domains; remove it")
         entries = tuple(Domain.parse(value, index) for index, value in enumerate(values))
+        return cls.from_entries(entries)
+
+    @classmethod
+    def from_entries(cls, values: Iterable[Domain]) -> "DomainIndex":
+        entries = tuple(values)
         identifiers = [entry.identifier for entry in entries]
         duplicate = next(
             (identifier for identifier in identifiers if identifiers.count(identifier) > 1),

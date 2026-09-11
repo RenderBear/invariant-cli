@@ -792,6 +792,11 @@
             <div class="decision-condition">Yes</div>
             <div class="decision-result">Pause the Change with one behavior-level question for the human. Do not ask them to construct protocol fields.</div>
           </div>
+          <div class="decision">
+            <div class="decision-question">Does the proposal rewrite accepted governance or define a contract?</div>
+            <div class="decision-condition">Yes</div>
+            <div class="decision-result">Require a human decision or a fresh reviewer independent of the author. A failed executable check still blocks either one.</div>
+          </div>
         </div>
         <figcaption>Reach classes, boundary dispositions, review packets, and approval flags may support this decision internally; they are not additional public concepts.</figcaption>
       </figure>
@@ -873,8 +878,12 @@
           <p>Reviews and executable checks apply to the prospective integrated result, not merely the earlier work branch.</p>
         </article>
         <article class="guarantee">
+          <h3>Independent challenge where it matters</h3>
+          <p>Governance rewrites and contract definitions need a human or a fresh second reviewer, while ordinary bounded work keeps its lighter path.</p>
+        </article>
+        <article class="guarantee">
           <h3>Compare-and-swap landing</h3>
-          <p>The local target moves only if it still equals the captured head. Concurrent movement forces reconstruction.</p>
+          <p>The local target moves only if it still equals the captured head. The landing records its original parent and review provenance; concurrent movement forces reconstruction.</p>
         </article>
         <article class="guarantee">
           <h3>Recoverable failure</h3>

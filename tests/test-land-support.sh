@@ -14,11 +14,12 @@ git -C "$fixture" init -qb main
 git -C "$fixture" config user.name test
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
-mkdir -p "$fixture/.invariant/audits" "$fixture/docs" "$fixture/src" "$fixture/ui" "$fixture/checks"
+mkdir -p "$fixture/.invariant/audits" "$fixture/.invariant/records/domain" \
+  "$fixture/.invariant/records/contract" "$fixture/docs" "$fixture/src" "$fixture/ui" "$fixture/checks"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Source layout
+## Source layout {#source-layout}
 
 Source behavior remains inside the source domain.
 EOF
@@ -34,34 +35,37 @@ cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
 authority: human
 EOF
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/source.yml" <<'EOF'
 version: 1
-domains:
-  - id: source
-    responsibility: Owns source behavior.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#source-layout]
-    contracts: [source.protocol.v1]
-  - id: consumer
-    responsibility: Consumes source behavior.
-    authority: user:task:test#turn-1
+id: source
+responsibility: Owns source behavior.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#source-layout]
+contracts: [source.protocol.v1]
 EOF
-cat >"$fixture/.invariant/CONTRACTS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/consumer.yml" <<'EOF'
 version: 1
-contracts:
-  - id: source.protocol.v1
-    assertion: Source behavior remains consumable.
-    authority: user:task:test#turn-1
-    between: [source, consumer]
-    surfaces: [repo:src]
-    architecture: [architecture:docs/architecture.md#source-layout]
-    verifies: [command:checks/verify.sh]
+id: consumer
+responsibility: Consumes source behavior.
+authority: user:task:test#turn-1
+EOF
+cat >"$fixture/.invariant/records/contract/source.protocol.v1.yml" <<'EOF'
+version: 1
+id: source.protocol.v1
+assertion: Source behavior remains consumable.
+authority: user:task:test#turn-1
+between: [source, consumer]
+surfaces: [repo:src]
+architecture: [architecture:docs/architecture.md#source-layout]
+verifies: [command:checks/verify.sh]
 EOF
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm seed
 
 ok() { echo "ok - $1"; }
 die() { echo "not ok - $1"; exit 1; }
+review_authority='user:task:test#review'
+review_digest='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
 start_branch() { git -C "$fixture" switch -qc "$1" main; }
 finish_branch() {
   git -C "$fixture" add -A
@@ -94,6 +98,7 @@ if (cd "$fixture" && "$compat" land merge invariant/work/u1 "unreviewed" --unit 
 fi
 out=$(cd "$fixture" && "$compat" land merge invariant/work/u1 "reviewed source" --unit u1 \
   --scope area.src --domain source --reviewed architecture:docs/architecture.md#source-layout --boundary-review no-record \
+  --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest" \
   --check command:checks/verify.sh --check command:checks/verify.sh)
 [ "$(printf '%s\n' "$out" | grep -c '^CHECK: running — command:checks/verify.sh$')" -eq 1 ] ||
   die "duplicate auto-discovered and explicit checks did not run exactly once"
@@ -104,6 +109,19 @@ git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Boundary,valueonly)'
   die "boundary disposition was not preserved in the landing commit"
 git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Architecture,valueonly)' |
   grep -qxF architecture:docs/architecture.md#source-layout || die "architecture review attestation was not preserved"
+git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Review-Authority,valueonly)' |
+  grep -qxF "$review_authority" || die "review authority was not preserved"
+git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Review-Mode,valueonly)' |
+  grep -qxF independent || die "review mode was not preserved"
+git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Review-Digest,valueonly)' |
+  grep -qxF "$review_digest" || die "review digest was not preserved"
+landed_parent=$(git -C "$fixture" rev-parse 'HEAD^1')
+git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Landing-Parent,valueonly)' |
+  grep -qxF "$landed_parent" || die "original landing parent was not preserved"
+checkpoint="$fixture/.invariant/runtime/history-validation/main.yml"
+[ -f "$checkpoint" ] || die "successful landing did not retain its disposable history checkpoint"
+grep -q "^head: $(git -C "$fixture" rev-parse HEAD)$" "$checkpoint" ||
+  die "history checkpoint did not bind the landed head"
 ok "merge requires boundary disposition and applicable architecture review"
 
 start_branch invariant/work/u2
@@ -111,7 +129,8 @@ printf 'broken\n' >"$fixture/src/a.txt"
 finish_branch "broken source"
 old=$(git -C "$fixture" rev-parse HEAD)
 if (cd "$fixture" && "$compat" land merge invariant/work/u2 "broken" --unit u2 --scope area.src \
-    --domain source --reviewed architecture:docs/architecture.md#source-layout --boundary-review no-record >/dev/null 2>&1); then
+    --domain source --reviewed architecture:docs/architecture.md#source-layout --boundary-review no-record \
+    --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest" >/dev/null 2>&1); then
   die "broken contract landed"
 fi
 [ "$(git -C "$fixture" rev-parse HEAD)" = "$old" ] || die "failed verifier moved target"
@@ -174,31 +193,43 @@ ok "only a fresh conclusive scoped audit clears boundary review"
 start_branch invariant/work/governance
 cat >>"$fixture/docs/architecture.md" <<'EOF'
 
-## Source naming
+## Source naming {#source-naming}
 
 Source names remain explicit.
 EOF
 sed 's|architecture: \[architecture:docs/architecture.md#source-layout\]|architecture: [architecture:docs/architecture.md#source-layout, architecture:docs/architecture.md#source-naming]|' \
-  "$fixture/.invariant/DOMAINS.yml" >"$fixture/.invariant/DOMAINS.tmp"
-mv "$fixture/.invariant/DOMAINS.tmp" "$fixture/.invariant/DOMAINS.yml"
+  "$fixture/.invariant/records/domain/source.yml" >"$fixture/.invariant/records/domain/source.tmp"
+mv "$fixture/.invariant/records/domain/source.tmp" "$fixture/.invariant/records/domain/source.yml"
 finish_branch "adopt naming architecture"
 old=$(git -C "$fixture" rev-parse HEAD)
 if (cd "$fixture" && "$compat" land merge invariant/work/governance "unresolved adoption" --unit govern \
     --scope area.docs --domain source --reviewed architecture:docs/architecture.md#source-layout \
     --reviewed architecture:docs/architecture.md#source-naming --boundary-review recorded \
-    --governance architecture:docs/architecture.md#source-naming >/dev/null 2>&1); then
+    --governance architecture:docs/architecture.md#source-naming \
+    --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest" >/dev/null 2>&1); then
   die "additive governance landed without resolved authority"
 fi
 if (cd "$fixture" && "$compat" land merge invariant/work/governance "wrong disposition" --unit govern \
     --scope area.docs --domain source --reviewed architecture:docs/architecture.md#source-layout \
-    --reviewed architecture:docs/architecture.md#source-naming --boundary-review no-record --allow-open >/dev/null 2>&1); then
+    --reviewed architecture:docs/architecture.md#source-naming --boundary-review no-record --allow-open \
+    --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest" >/dev/null 2>&1); then
   die "governance change accepted a no-record disposition"
 fi
+if out=$(cd "$fixture" && "$compat" land merge invariant/work/governance "self review" --unit govern \
+    --scope area.docs --domain source --reviewed architecture:docs/architecture.md#source-layout \
+    --reviewed architecture:docs/architecture.md#source-naming --boundary-review recorded \
+    --governance architecture:docs/architecture.md#source-naming --allow-open \
+    --review-authority agent:test --review-mode self-attested --review-digest "$review_digest" 2>&1); then
+  die "gated governance accepted its author's self-review"
+fi
+printf '%s\n' "$out" | grep -q 'require a human or independent review' ||
+  die "independent-review failure did not explain the required authority"
 [ "$(git -C "$fixture" rev-parse HEAD)" = "$old" ] || die "unresolved governance moved target"
 out=$(cd "$fixture" && "$compat" land merge invariant/work/governance "adopt naming" --unit govern \
   --scope area.docs --domain source --reviewed architecture:docs/architecture.md#source-layout \
   --reviewed architecture:docs/architecture.md#source-naming --boundary-review recorded \
-  --governance architecture:docs/architecture.md#source-naming --allow-open)
+  --governance architecture:docs/architecture.md#source-naming --allow-open \
+  --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest")
 printf '%s\n' "$out" | grep -Eq '^GOVERNANCE: (additive record establishment|existing accepted record changed or removed)$' || die "architecture adoption was not classified open or gated"
 printf '%s\n' "$out" | grep -q '^BOUNDARY-REVIEW: recorded — architecture:docs/architecture.md#source-naming$' || die "recorded governance disposition missing"
 git -C "$fixture" log -1 --format='%(trailers:key=Invariant-Governance,valueonly)' |
@@ -235,7 +266,8 @@ EOF
 old=$(git -C "$fixture" rev-parse HEAD)
 if (cd "$fixture" && "$compat" land merge invariant/work/worker "missing lease" --unit worker \
     --scope area.src --domain source --reviewed architecture:docs/architecture.md#source-layout \
-    --reviewed architecture:docs/architecture.md#source-naming --boundary-review no-record --plan bundle >/dev/null 2>&1); then
+    --reviewed architecture:docs/architecture.md#source-naming --boundary-review no-record --plan bundle \
+    --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest" >/dev/null 2>&1); then
   die "coordinated landing without lease succeeded"
 fi
 [ "$(git -C "$fixture" rev-parse HEAD)" = "$old" ] || die "missing lease moved target"
@@ -243,7 +275,8 @@ fi
   --digest "$source_digest" --branch invariant/work/worker --integration-target main >/dev/null)
 out=$(cd "$fixture" && "$compat" land merge invariant/work/worker "land worker" --unit worker \
   --scope area.src --domain source --reviewed architecture:docs/architecture.md#source-layout \
-  --reviewed architecture:docs/architecture.md#source-naming --boundary-review no-record --plan bundle)
+  --reviewed architecture:docs/architecture.md#source-naming --boundary-review no-record --plan bundle \
+  --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest")
 printf '%s\n' "$out" | grep -q '^LANDED:' || die "fresh matching lease did not land"
 [ ! -e "$runtime/leases/worker.yml" ] || die "landed lease was not released"
 [ -f "$runtime/plans/bundle.yml" ] || die "incomplete plan was removed"

@@ -13,11 +13,13 @@ git -C "$fixture" init -qb main
 git -C "$fixture" config user.name test
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
-mkdir -p "$fixture/.invariant/audits" "$fixture/.invariant/discoveries" "$fixture/.invariant/observations" "$fixture/docs" "$fixture/src" "$fixture/schemas" "$fixture/checks"
+mkdir -p "$fixture/.invariant/audits" "$fixture/.invariant/discoveries" "$fixture/.invariant/observations" \
+  "$fixture/.invariant/records/domain" "$fixture/.invariant/records/contract" \
+  "$fixture/.invariant/records/constraint" "$fixture/docs" "$fixture/src" "$fixture/schemas" "$fixture/checks"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Provider isolation
+## Provider isolation {#provider-isolation}
 
 Provider-specific behavior remains inside the owning domain.
 EOF
@@ -38,34 +40,38 @@ version: 1
 authority: human
 integration_branch: main
 EOF
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/ocr.yml" <<'EOF'
 version: 1
-domains:
-  - id: ocr
-    responsibility: Owns OCR execution responsibilities.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#provider-isolation]
-    contracts: [ocr.engine-protocol.v1]
-  - id: ocr.orchestrator
-    responsibility: Selects engines and distributes work.
-    authority: user:task:test#turn-1
-    parent: ocr
-    architecture: [architecture:docs/architecture.md#provider-isolation]
-  - id: ocr.external
-    responsibility: Executes OCR through an external provider.
-    authority: user:task:test#turn-1
-    parent: ocr
+id: ocr
+responsibility: Owns OCR execution responsibilities.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#provider-isolation]
+contracts: [ocr.engine-protocol.v1]
 EOF
-cat >"$fixture/.invariant/CONTRACTS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/ocr.orchestrator.yml" <<'EOF'
 version: 1
-contracts:
-  - id: ocr.engine-protocol.v1
-    assertion: Engines accept the shared request and return the shared result.
-    authority: user:task:test#turn-1
-    between: [ocr.orchestrator, ocr.external]
-    surfaces: [interface:OcrEngine, repo:schemas/ocr.json]
-    architecture: [architecture:docs/architecture.md#provider-isolation]
-    verifies: [command:checks/verify.sh]
+id: ocr.orchestrator
+responsibility: Selects engines and distributes work.
+authority: user:task:test#turn-1
+parent: ocr
+architecture: [architecture:docs/architecture.md#provider-isolation]
+EOF
+cat >"$fixture/.invariant/records/domain/ocr.external.yml" <<'EOF'
+version: 1
+id: ocr.external
+responsibility: Executes OCR through an external provider.
+authority: user:task:test#turn-1
+parent: ocr
+EOF
+cat >"$fixture/.invariant/records/contract/ocr.engine-protocol.v1.yml" <<'EOF'
+version: 1
+id: ocr.engine-protocol.v1
+assertion: Engines accept the shared request and return the shared result.
+authority: user:task:test#turn-1
+between: [ocr.orchestrator, ocr.external]
+surfaces: [interface:OcrEngine, repo:schemas/ocr.json]
+architecture: [architecture:docs/architecture.md#provider-isolation]
+verifies: [command:checks/verify.sh]
 EOF
 cat >"$fixture/.invariant/audits/ocr.yml" <<EOF
 version: 1
@@ -97,25 +103,37 @@ expect_fail() { if out=$(cd "$fixture" && "$compat" state 2>&1); then printf '%s
 
 expect_pass "domains, architecture pointers, executable contracts, audits, and discoveries validate"
 
-cp "$fixture/.invariant/DOMAINS.yml" "$fixture/.invariant/DOMAINS.good"
-sed 's/    parent: ocr/    parent: missing/' "$fixture/.invariant/DOMAINS.good" >"$fixture/.invariant/DOMAINS.yml"
+cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+version: 1
+domains: []
+EOF
+if out=$(cd "$fixture" && "$compat" brief rows ocr 2>&1); then
+  die "semantic reads silently accepted the obsolete aggregate registry"
+fi
+printf '%s\n' "$out" | grep -q "obsolete aggregate record file '.invariant/DOMAINS.yml'" ||
+  die "obsolete aggregate registry did not provide a replacement diagnostic"
+rm "$fixture/.invariant/DOMAINS.yml"
+ok "semantic reads reject obsolete aggregate registries explicitly"
+
+cp "$fixture/.invariant/records/domain/ocr.external.yml" "$fixture/.invariant/records/domain/ocr.external.good"
+sed 's/parent: ocr/parent: missing/' "$fixture/.invariant/records/domain/ocr.external.good" >"$fixture/.invariant/records/domain/ocr.external.yml"
 expect_fail "domain parent references are checked without validating filesystem membership"
-mv "$fixture/.invariant/DOMAINS.good" "$fixture/.invariant/DOMAINS.yml"
+mv "$fixture/.invariant/records/domain/ocr.external.good" "$fixture/.invariant/records/domain/ocr.external.yml"
 
-cp "$fixture/.invariant/CONTRACTS.yml" "$fixture/.invariant/CONTRACTS.good"
-sed '/    verifies:/d' "$fixture/.invariant/CONTRACTS.good" >"$fixture/.invariant/CONTRACTS.yml"
+cp "$fixture/.invariant/records/contract/ocr.engine-protocol.v1.yml" "$fixture/.invariant/records/contract/ocr.engine-protocol.v1.good"
+sed '/^verifies:/d' "$fixture/.invariant/records/contract/ocr.engine-protocol.v1.good" >"$fixture/.invariant/records/contract/ocr.engine-protocol.v1.yml"
 expect_fail "contracts require executable verification"
-mv "$fixture/.invariant/CONTRACTS.good" "$fixture/.invariant/CONTRACTS.yml"
+mv "$fixture/.invariant/records/contract/ocr.engine-protocol.v1.good" "$fixture/.invariant/records/contract/ocr.engine-protocol.v1.yml"
 
-cp "$fixture/.invariant/DOMAINS.yml" "$fixture/.invariant/DOMAINS.good"
-sed 's/#provider-isolation/#missing-decision/' "$fixture/.invariant/DOMAINS.good" >"$fixture/.invariant/DOMAINS.yml"
+cp "$fixture/.invariant/records/domain/ocr.yml" "$fixture/.invariant/records/domain/ocr.good"
+sed 's/#provider-isolation/#missing-decision/' "$fixture/.invariant/records/domain/ocr.good" >"$fixture/.invariant/records/domain/ocr.yml"
 expect_fail "architecture pointers require a real Markdown decision anchor"
-mv "$fixture/.invariant/DOMAINS.good" "$fixture/.invariant/DOMAINS.yml"
+mv "$fixture/.invariant/records/domain/ocr.good" "$fixture/.invariant/records/domain/ocr.yml"
 
-cp "$fixture/.invariant/DOMAINS.yml" "$fixture/.invariant/DOMAINS.good"
-sed 's/ocr.engine-protocol.v1/missing-contract/' "$fixture/.invariant/DOMAINS.good" >"$fixture/.invariant/DOMAINS.yml"
+cp "$fixture/.invariant/records/domain/ocr.yml" "$fixture/.invariant/records/domain/ocr.good"
+sed 's/ocr.engine-protocol.v1/missing-contract/' "$fixture/.invariant/records/domain/ocr.good" >"$fixture/.invariant/records/domain/ocr.yml"
 expect_fail "domain contract pointers are checked"
-mv "$fixture/.invariant/DOMAINS.good" "$fixture/.invariant/DOMAINS.yml"
+mv "$fixture/.invariant/records/domain/ocr.good" "$fixture/.invariant/records/domain/ocr.yml"
 
 cp "$fixture/.invariant/discoveries/adr-location.yml" "$fixture/.invariant/discoveries/adr-location.good"
 sed 's/repo:docs\/architecture.md/repo:docs\/missing.md/' "$fixture/.invariant/discoveries/adr-location.good" >"$fixture/.invariant/discoveries/adr-location.yml"
@@ -146,14 +164,13 @@ resolution: [architecture:docs/architecture.md#provider-isolation]
 EOF
 expect_pass "promoted discoveries point to established architecture or contracts"
 
-cat >"$fixture/.invariant/CONSTRAINTS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/constraint/ocr.legacy-isolation.yml" <<'EOF'
 version: 1
-constraints:
-  - id: ocr.legacy-isolation
-    assertion: Legacy accepted constraints remain binding until migrated.
-    authority: user:task:test#turn-legacy
-    applies_to: [ocr]
-    material: [architecture:docs/architecture.md]
+id: ocr.legacy-isolation
+assertion: Accepted constraints remain binding.
+authority: user:task:test#turn-legacy
+applies_to: [ocr]
+material: [architecture:docs/architecture.md]
 EOF
 cat >"$fixture/.invariant/observations/legacy-location.yml" <<EOF
 version: 1
@@ -163,7 +180,7 @@ statement: Legacy observations remain readable during migration.
 evidence: [repo:docs/architecture.md]
 relates_to: [domain:ocr]
 EOF
-expect_pass "legacy constraints and observations remain readable during migration"
+expect_pass "constraints and observations remain readable"
 
 cp "$fixture/.invariant/audits/ocr.yml" "$fixture/.invariant/audits/ocr.good"
 sed 's/domains: \[ocr.orchestrator\]/domains: [missing]/' "$fixture/.invariant/audits/ocr.good" >"$fixture/.invariant/audits/ocr.yml"
@@ -196,9 +213,11 @@ git -C "$history" config commit.gpgsign false
 printf 'seed\n' >"$history/file.txt"
 git -C "$history" add file.txt
 git -C "$history" commit -qm seed
+adoption_parent=$(git -C "$history" rev-parse HEAD)
 git -C "$history" commit -q --allow-empty -m "adopt landing history" -m "Invariant-Unit: adoption
 Invariant-Scope: area.root
-Invariant-Boundary: no-record"
+Invariant-Boundary: no-record
+Invariant-Landing-Parent: $adoption_parent"
 attested=$(git -C "$history" rev-parse HEAD)
 printf 'ordinary\n' >>"$history/file.txt"
 git -C "$history" commit -qam "ordinary integration edit"
@@ -208,11 +227,15 @@ if out=$(cd "$history" && "$compat" state --landing 2>&1); then
 fi
 printf '%s\n' "$out" | grep -q '^FAIL unattested integration range .* requires the next landing to carry Invariant-Covers$' ||
   die "unattested range lacks a precise diagnostic"
+[ ! -e "$history/.invariant/runtime/history-validation/main.yml" ] ||
+  die "read-only landing validation wrote a history checkpoint"
 ok "ordinary integration commits remain append-only but visibly unattested"
 
+bad_parent=$(git -C "$history" rev-parse HEAD)
 git -C "$history" commit -q --allow-empty -m "bad range attestation" -m "Invariant-Unit: bad
 Invariant-Scope: area.root
 Invariant-Boundary: no-record
+Invariant-Landing-Parent: $bad_parent
 Invariant-Covers: wrong..range"
 if out=$(cd "$history" && "$compat" state --landing 2>&1); then
   die "incorrect range attestation passed validation"
@@ -221,11 +244,25 @@ printf '%s\n' "$out" | grep -q 'covers wrong..range but expected' || die "incorr
 ok "range attestations must cover the exact first-parent suffix"
 
 git -C "$history" switch -qc correct "$unattested"
+correct_parent=$(git -C "$history" rev-parse HEAD)
 git -C "$history" commit -q --allow-empty -m "correct range attestation" -m "Invariant-Unit: correct
 Invariant-Scope: area.root
 Invariant-Boundary: no-record
+Invariant-Landing-Parent: $correct_parent
 Invariant-Covers: $attested..$unattested"
 (cd "$history" && "$compat" state --landing >/dev/null) || die "exact contiguous range attestation failed"
 ok "exact range attestation restores strict landing validity without rewriting"
 
-echo "17 state validation checks passed"
+correct_commit=$(git -C "$history" rev-parse HEAD)
+git -C "$history" switch -qc copied "$attested"
+printf 'sibling\n' >>"$history/file.txt"
+git -C "$history" commit -qam "sibling history"
+git -C "$history" cherry-pick --allow-empty "$correct_commit" >/dev/null
+if out=$(cd "$history" && "$compat" state --landing 2>&1); then
+  die "copied landing trailers survived a cherry-pick"
+fi
+printf '%s\n' "$out" | grep -q 'was copied or rewritten: Invariant-Landing-Parent' ||
+  die "copied landing did not identify its mismatched original parent"
+ok "landing identity does not survive cherry-pick or history rewrite"
+
+echo "19 state validation checks passed"

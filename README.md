@@ -17,7 +17,8 @@ runs the lifecycle.
 - **Bounded autonomy.** `invariant change` plans and implements in an isolated worktree, commits an
   exact candidate, checks it against accepted records, and lands it on the local branch, so routine
   changes land in two commands. Touching a recorded decision pauses the lifecycle until an agent
-  — or you, when it lacks the authority — resolves it.
+  — or you, when it lacks the authority — resolves it. Rewriting accepted governance or defining a
+  contract requires a fresh second-agent review unless a human accepts the exact candidate.
 - **Scaled coordination.** Several changes run in one clone without stepping on each other, because
   each owns its worktree, receipt, and evidence, and landings serialize atomically on the integration
   branch.

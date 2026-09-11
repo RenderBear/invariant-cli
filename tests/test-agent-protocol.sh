@@ -92,7 +92,7 @@ printf '%s\n' "$out" | grep -q '^FINDING-COVERAGE: record-app-boundary — proje
   die "audit-authored governance was not projected"
 printf '%s\n' "$out" | grep -q '^COVERAGE: 1/1 selected findings dispositioned$' ||
   die "selected-finding coverage was not explicit"
-[ -f "$governance_worktree/.invariant/DOMAINS.yml" ] ||
+[ -f "$governance_worktree/.invariant/records/domain/application.yml" ] ||
   die "projection did not generate the domain registry"
 coverage=$(cd "$governance" && "$cli" --format json governance coverage baseline-governance)
 printf '%s\n' "$coverage" | grep -q '"record-app-boundary":{' ||
@@ -104,7 +104,7 @@ git -C "$governance_worktree" add app.txt .invariant
 git -C "$governance_worktree" commit -qm "record audited candidate"
 prepared=$(cd "$governance" && "$cli" --format json task assessment prepare baseline-governance)
 printf '%s\n' "$prepared" | grep -q '"candidate_tree"' || die "assessment preparation omitted the candidate tree"
-printf '%s\n' "$prepared" | grep -q '".invariant/DOMAINS.yml"' || die "assessment preparation omitted generated governance"
+printf '%s\n' "$prepared" | grep -q '".invariant/records/domain/application.yml"' || die "assessment preparation omitted generated governance"
 printf '%s\n' "$prepared" | grep -q '".invariant/audits/' || die "assessment preparation omitted the canonical audit"
 [ -f "$governance/.invariant/runtime/tasks/baseline-governance/prepared-assessment.yml" ] ||
   die "assessment preparation did not save its ignored runtime draft"
@@ -158,7 +158,7 @@ ok "governance passes can be rerun against the current integration state"
 
 architecture="$fixtures/architecture"
 new_repo "$architecture"
-mkdir -p "$architecture/.invariant" "$architecture/docs"
+mkdir -p "$architecture/.invariant/records/domain" "$architecture/docs"
 cat >"$architecture/.invariant/config.yml" <<'EOF'
 version: 1
 authority: agent
@@ -169,17 +169,16 @@ EOF
 cat >"$architecture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Application boundary
+## Application boundary {#application-boundary}
 
 The application owns its public behavior.
 EOF
-cat >"$architecture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$architecture/.invariant/records/domain/app.yml" <<'EOF'
 version: 1
-domains:
-  - id: app
-    responsibility: Owns application behavior.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#application-boundary]
+id: app
+responsibility: Owns application behavior.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#application-boundary]
 EOF
 git -C "$architecture" add -A
 git -C "$architecture" commit -qm seed

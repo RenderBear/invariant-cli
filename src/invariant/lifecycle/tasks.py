@@ -831,7 +831,9 @@ def finish(
         else set()
     )
     invalid_expansion = expanded_domains.intersection(domains_at_base)
-    establishing_domains = ".invariant/DOMAINS.yml" in actual_paths
+    establishing_domains = any(
+        governance.is_governance_path(path, "domain") for path in actual_paths
+    )
     if expanded_domains and (
         invalid_expansion
         or not establishing_domains
@@ -925,6 +927,8 @@ def finish(
         expected_tree = expected_tree or candidate_tree
 
     combined_checks = tuple(sorted(set([*assessment.checks, *checks])))
+    review_path = receipts.task_root(repo, task) / "candidate-review.yml"
+    accepted_review = CandidateReview.load(review_path) if review_path.is_file() else None
     coordination = (
         receipt.get("coordination")
         if isinstance(receipt.get("coordination"), dict)
@@ -952,6 +956,9 @@ def finish(
         plan=plan,
         allow_open=assessment.allow_open,
         expected_tree=expected_tree,
+        review_authority=(accepted_review.authority if accepted_review else None),
+        review_mode=(accepted_review.review_mode if accepted_review else None),
+        review_digest=(accepted_review.digest if accepted_review else None),
     )
     if resolved.execution == "assisted" and not continuation_apply:
         local = receipts.task_root(repo, task)
@@ -1067,9 +1074,9 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
     candidate_repo = _candidate_repo(repo, active_stage, branch)
 
     def changed_records(
-        relative: str, current: list[dict[str, object]], previous: list[dict[str, object]]
+        kind: str, current: list[dict[str, object]], previous: list[dict[str, object]]
     ) -> list[dict[str, object]]:
-        if relative not in paths:
+        if not any(governance.is_governance_path(path, kind) for path in paths):
             return []
         before = {str(row.get("id")): row for row in previous if row.get("id")}
         return [row for row in current if row.get("id") and before.get(str(row["id"])) != row]
@@ -1087,16 +1094,16 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
             for domain in current_domains
             if previous_domains.get(domain.identifier) != domain
         ]
-        if ".invariant/DOMAINS.yml" in paths
+        if any(governance.is_governance_path(path, "domain") for path in paths)
         else []
     )
     changed_contracts = changed_records(
-        ".invariant/CONTRACTS.yml",
+        "contract",
         governance.contracts(candidate_repo),
         governance.contracts(candidate_repo, previous_ref) if previous_ref else [],
     )
     changed_constraints = changed_records(
-        ".invariant/CONSTRAINTS.yml",
+        "constraint",
         governance.constraints(candidate_repo),
         governance.constraints(candidate_repo, previous_ref) if previous_ref else [],
     )
@@ -1110,7 +1117,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
             for row in governance.semantic_records(candidate_repo)
             if previous_semantics.get(row.identifier) != row
         ]
-        if ".invariant/SEMANTICS.yml" in paths
+        if any(governance.is_governance_path(path, "semantic") for path in paths)
         else []
     )
     selected_domains.update(domain.identifier for domain in changed_domains)
@@ -1144,15 +1151,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         *[f"constraint:{row['id']}" for row in changed_constraints],
         *changed_architecture,
     ]
-    durable_registry_changed = bool(
-        {
-            ".invariant/SEMANTICS.yml",
-            ".invariant/DOMAINS.yml",
-            ".invariant/CONTRACTS.yml",
-            ".invariant/CONSTRAINTS.yml",
-        }
-        .intersection(paths)
-    )
+    durable_registry_changed = any(governance.is_governance_path(path) for path in paths)
     change_classification = (
         receipt.get("change_classification")
         if isinstance(receipt.get("change_classification"), dict)
@@ -1249,10 +1248,12 @@ def _request_packet(
         "reach": analysis["reach"],
         "changed_paths": assessment["paths"],
         "affected_semantics": analysis["recommended_architecture_reviews"],
+        "affected_records": analysis.get("affected_records", []),
         "governance": assessment["governance"],
         "will_run": analysis["will_run"],
         "evidence_ids": [item.identifier for item in evidence],
         "retained_discoveries": retained_discoveries,
+        "review_requirement": analysis.get("review_requirement", "self-attested"),
     }
     review_id = git.hash_text(repo, repr(packet_body))
     packet = {**packet_body, "review_id": review_id}
@@ -1424,6 +1425,24 @@ def _prepare_finish_once(
     analysis["reach"] = candidate_context.reach.value
     analysis["reach_records"] = candidate_context.lines
     analysis["recommended_architecture_reviews"] = exact_reviews
+    analysis["affected_records"] = [
+        {
+            "kind": item.kind,
+            "id": item.identifier,
+            "reach": item.level.value,
+        }
+        for item in candidate_context.affected
+    ]
+    independent_review_required = (
+        candidate_context.reach == Reach.GATED
+        or any(
+            item.kind == "contract" and item.level == Reach.OPEN
+            for item in candidate_context.affected
+        )
+    )
+    analysis["review_requirement"] = (
+        "independent" if independent_review_required else "self-attested"
+    )
     receipt = receipts.load(repo, task)
     target = str(receipt.get("integration_target") or "")
     base = str(receipt.get("integration_head") or "")
@@ -1460,6 +1479,17 @@ def _prepare_finish_once(
                 "field": "allow_open",
                 "reason": "human semantic authority must approve this open or gated transition",
                 "value_after_approval": True,
+            }
+        )
+    if independent_review_required:
+        required.append(
+            {
+                "field": "review_mode",
+                "reason": (
+                    "gated governance and contract-defining changes require a human or "
+                    "an independent reviewer"
+                ),
+                "value": "independent",
             }
         )
     analysis["required"] = required
@@ -1598,6 +1628,15 @@ def _apply_core_review(
         raise Blocked(
             "Invariant: human semantic authority requires an attributable user: locator",
             code="authority_required",
+        )
+    if (
+        context.get("review_requirement") == "independent"
+        and not review.authority.startswith("user:")
+        and review.review_mode != "independent"
+    ):
+        raise Blocked(
+            "Invariant: this candidate requires a human or independent semantic review",
+            code="independent_review_required",
         )
     local = receipts.task_root(repo, task)
     assessment_path = local / "prepared-assessment.yml"

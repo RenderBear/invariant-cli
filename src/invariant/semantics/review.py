@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,27 @@ class CandidateReview:
     review_mode: str
     candidate_defects: list[str]
     retained_discoveries: list[str]
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "version": 1,
+            "review_id": self.review_id,
+            "candidate_tree": self.candidate_tree,
+            "verdict": self.verdict,
+            "summary": self.summary,
+            "semantic_effect": self.semantic_effect,
+            "authority": self.authority,
+            "review_mode": self.review_mode,
+            "candidate_defects": list(self.candidate_defects),
+            "retained_discoveries": list(self.retained_discoveries),
+        }
+
+    @property
+    def digest(self) -> str:
+        payload = json.dumps(
+            self.as_dict(), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode()
+        return sha256(payload).hexdigest()
 
     @property
     def exceptions(self) -> list[str]:

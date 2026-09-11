@@ -16,16 +16,16 @@ git -C "$fixture" init -qb main
 git -C "$fixture" config user.name test
 git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
-mkdir -p "$fixture/.invariant" "$fixture/docs" "$fixture/src"
+mkdir -p "$fixture/.invariant/records/domain" "$fixture/docs" "$fixture/src"
 printf 'one\n' >"$fixture/src/a.txt"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Source ownership
+## Source ownership {#source-ownership}
 
 The source domain owns the durable value and consumers may not redefine it.
 
-## Unrelated material
+## Unrelated material {#unrelated-material}
 
 This section is not selected for the source task.
 EOF
@@ -35,13 +35,12 @@ execution: auto
 adapters:
   intent_brief: on
 EOF
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/source.yml" <<'EOF'
 version: 1
-domains:
-  - id: source
-    responsibility: Owns source behavior.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#source-ownership]
+id: source
+responsibility: Owns source behavior.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#source-ownership]
 EOF
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm seed
@@ -108,7 +107,7 @@ printf '%s\n' "$out" | grep -q '^STATUS: implementing$' ||
 cat >"$worktree/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Source ownership
+## Source ownership {#source-ownership}
 
 Candidate prose must not become the premise used to review its own change.
 EOF

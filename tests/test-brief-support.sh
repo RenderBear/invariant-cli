@@ -15,22 +15,23 @@ git -C "$fixture" config user.email test@example.com
 git -C "$fixture" config commit.gpgsign false
 mkdir -p "$fixture/.invariant/audits" "$fixture/.invariant/discoveries" "$fixture/.hidden" \
   "$fixture/Upper Dir" "$fixture/packages/Fancy App" "$fixture/docs" "$fixture/src/ocr" \
-  "$fixture/ui" "$fixture/schemas" "$fixture/checks"
+  "$fixture/ui" "$fixture/schemas" "$fixture/checks" "$fixture/.invariant/records/domain" \
+  "$fixture/.invariant/records/contract"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # OCR architecture
 
-## Provider isolation
+## Provider isolation {#provider-isolation}
 
 Provider details remain inside engines.
 EOF
 cat >"$fixture/README.md" <<'EOF'
 # Example
 
-## Submit and observe a job
+## Submit and observe a job {#submit-and-observe-a-job}
 
 Submit work and observe its events.
 
-## Local setup
+## Local setup {#local-setup}
 
 Run the local service.
 EOF
@@ -50,47 +51,57 @@ cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
 authority: human
 EOF
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/ocr.yml" <<'EOF'
 version: 1
-domains:
-  - id: ocr
-    responsibility: Owns OCR capabilities.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#provider-isolation]
-    contracts: [ocr.protocol.v1]
-  - id: ocr.orchestrator
-    responsibility: Selects engines.
-    authority: user:task:test#turn-1
-    parent: ocr
-  - id: ocr.external
-    responsibility: Runs an external OCR provider.
-    authority: user:task:test#turn-1
-    parent: ocr
+id: ocr
+responsibility: Owns OCR capabilities.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#provider-isolation]
+contracts: [ocr.protocol.v1]
 EOF
-cat >"$fixture/.invariant/CONTRACTS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/ocr.orchestrator.yml" <<'EOF'
 version: 1
-contracts:
-  - id: ocr.protocol.v1
-    assertion: Engines preserve the shared OCR request and result shape.
-    authority: user:task:test#turn-1
-    between: [ocr.orchestrator, ocr.external]
-    surfaces: [interface:OcrEngine, repo:schemas/ocr.json]
-    architecture: [architecture:docs/architecture.md#provider-isolation]
-    verifies: [command:checks/verify.sh]
-  - id: ocr.submit-doc
-    assertion: The submission documentation preserves the public job flow.
-    authority: user:task:test#turn-1
-    between: [ocr.orchestrator, ocr.external]
-    surfaces: [interface:SubmitJob]
-    architecture: [architecture:README.md#submit-and-observe-a-job]
-    verifies: [command:checks/verify.sh]
-  - id: ocr.setup-doc
-    assertion: The setup documentation preserves the supported local workflow.
-    authority: user:task:test#turn-1
-    between: [ocr.orchestrator, ocr.external]
-    surfaces: [interface:LocalSetup]
-    architecture: [architecture:README.md#local-setup]
-    verifies: [command:checks/verify.sh]
+id: ocr.orchestrator
+responsibility: Selects engines.
+authority: user:task:test#turn-1
+parent: ocr
+EOF
+cat >"$fixture/.invariant/records/domain/ocr.external.yml" <<'EOF'
+version: 1
+id: ocr.external
+responsibility: Runs an external OCR provider.
+authority: user:task:test#turn-1
+parent: ocr
+EOF
+cat >"$fixture/.invariant/records/contract/ocr.protocol.v1.yml" <<'EOF'
+version: 1
+id: ocr.protocol.v1
+assertion: Engines preserve the shared OCR request and result shape.
+authority: user:task:test#turn-1
+between: [ocr.orchestrator, ocr.external]
+surfaces: [interface:OcrEngine, repo:schemas/ocr.json]
+architecture: [architecture:docs/architecture.md#provider-isolation]
+verifies: [command:checks/verify.sh]
+EOF
+cat >"$fixture/.invariant/records/contract/ocr.submit-doc.yml" <<'EOF'
+version: 1
+id: ocr.submit-doc
+assertion: The submission documentation preserves the public job flow.
+authority: user:task:test#turn-1
+between: [ocr.orchestrator, ocr.external]
+surfaces: [interface:SubmitJob]
+architecture: [architecture:README.md#submit-and-observe-a-job]
+verifies: [command:checks/verify.sh]
+EOF
+cat >"$fixture/.invariant/records/contract/ocr.setup-doc.yml" <<'EOF'
+version: 1
+id: ocr.setup-doc
+assertion: The setup documentation preserves the supported local workflow.
+authority: user:task:test#turn-1
+between: [ocr.orchestrator, ocr.external]
+surfaces: [interface:LocalSetup]
+architecture: [architecture:README.md#local-setup]
+verifies: [command:checks/verify.sh]
 EOF
 git -C "$fixture" add -A
 git -C "$fixture" commit -qm seed
@@ -218,33 +229,36 @@ sed 's/UI event ordering may need/UI event sequencing may need/' "$fixture/.inva
 mv "$fixture/.invariant/discoveries/ui-event-order.tmp" "$fixture/.invariant/discoveries/ui-event-order.yml"
 after_discovery=$(cd "$fixture" && "$compat" brief digest ocr.external | sed 's/^DIGEST: //')
 [ "$digest" = "$after_discovery" ] || die "non-authoritative discovery entered governing digest"
-sed 's/Owns OCR capabilities/Owns OCR execution capabilities/' "$fixture/.invariant/DOMAINS.yml" >"$fixture/.invariant/DOMAINS.tmp"
-mv "$fixture/.invariant/DOMAINS.tmp" "$fixture/.invariant/DOMAINS.yml"
+sed 's/Owns OCR capabilities/Owns OCR execution capabilities/' "$fixture/.invariant/records/domain/ocr.yml" >"$fixture/.invariant/records/domain/ocr.tmp"
+mv "$fixture/.invariant/records/domain/ocr.tmp" "$fixture/.invariant/records/domain/ocr.yml"
 after_domain=$(cd "$fixture" && "$compat" brief digest ocr.external | sed 's/^DIGEST: //')
 [ "$digest" != "$after_domain" ] || die "domain responsibility change did not change digest"
 at_digest=$(cd "$fixture" && "$compat" brief digest --at HEAD ocr.external | sed 's/^DIGEST: //')
 [ "$digest" = "$at_digest" ] || die "working governance leaked into commit-addressed digest"
 if (cd "$fixture" && "$compat" brief check-digest "$digest" ocr.external >/dev/null 2>&1); then die "stale digest was accepted"; fi
-git -C "$fixture" checkout -q -- .invariant/DOMAINS.yml .invariant/discoveries/ui-event-order.yml
+git -C "$fixture" checkout -q -- .invariant/records/domain/ocr.yml .invariant/discoveries/ui-event-order.yml
 ok "digest covers governance and excludes evidence"
 
-printf '  - id: ocr.embedded\n    responsibility: Embedded OCR engine.\n    authority: user:task:test#turn-2\n    parent: ocr\n' >>"$fixture/.invariant/DOMAINS.yml"
-out=$(cd "$fixture" && "$compat" brief reach --paths .invariant/DOMAINS.yml)
+sed 's/Owns OCR capabilities/Owns revised OCR capabilities/' \
+  "$fixture/.invariant/records/domain/ocr.yml" >"$fixture/.invariant/records/domain/ocr.tmp"
+mv "$fixture/.invariant/records/domain/ocr.tmp" "$fixture/.invariant/records/domain/ocr.yml"
+out=$(cd "$fixture" && "$compat" brief reach --paths .invariant/records/domain/ocr.yml)
 printf '%s\n' "$out" | grep -q '^REACH: gated$' || die "working-tree governance edit was not conservative"
-git -C "$fixture" checkout -q -- .invariant/DOMAINS.yml
+git -C "$fixture" checkout -q -- .invariant/records/domain/ocr.yml
 ok "existing governance rewrites are conservatively gated"
 
 base=$(git -C "$fixture" rev-parse HEAD)
-cat >>"$fixture/.invariant/CONTRACTS.yml" <<'EOF'
-  - id: ocr.audit-protocol.v1
-    assertion: Governance audits remain executable.
-    authority: user:task:test#turn-2
-    between: [ocr.orchestrator, ocr.external]
-    surfaces: [repo:src/ocr]
-    architecture: [architecture:docs/architecture.md#provider-isolation]
-    verifies: [command:checks/verify.sh]
+cat >"$fixture/.invariant/records/contract/ocr.audit-protocol.v1.yml" <<'EOF'
+version: 1
+id: ocr.audit-protocol.v1
+assertion: Governance audits remain executable.
+authority: user:task:test#turn-2
+between: [ocr.orchestrator, ocr.external]
+surfaces: [repo:src/ocr]
+architecture: [architecture:docs/architecture.md#provider-isolation]
+verifies: [command:checks/verify.sh]
 EOF
-git -C "$fixture" add .invariant/CONTRACTS.yml
+git -C "$fixture" add .invariant/records/contract/ocr.audit-protocol.v1.yml
 git -C "$fixture" commit -qm "add audit protocol contract"
 out=$(cd "$fixture" && "$cli" context verifiers --base "$base")
 printf '%s\n' "$out" | grep -q '^VERIFY: contract:ocr.audit-protocol.v1 command:checks/verify.sh$' ||

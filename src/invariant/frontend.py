@@ -547,6 +547,7 @@ def _init(args: argparse.Namespace) -> CommandResult:
     setup_commit = ""
     setup_paths = git.changed_paths(repo)
     if not existing_changes and setup_paths:
+        setup_parent = git.resolve(repo, "HEAD") or "unborn"
         git.run(["add", "--", *setup_paths], cwd=repo)
         git.run(
             [
@@ -557,7 +558,8 @@ def _init(args: argparse.Namespace) -> CommandResult:
                 "-m",
                 "Invariant-Unit: initialization\n"
                 "Invariant-Scope: area.root\n"
-                "Invariant-Boundary: no-record",
+                "Invariant-Boundary: no-record\n"
+                f"Invariant-Landing-Parent: {setup_parent}",
             ],
             cwd=repo,
         )
@@ -1731,7 +1733,9 @@ def _human_active_changes(repo: Path) -> list[dict[str, Any]]:
     return sorted(output, key=lambda item: (not item["establishment"], item["label"]))
 
 
-def _human_decision_blocked(request: str) -> Blocked:
+def _human_decision_blocked(
+    request: str, *, next_step: str = "rerun invariant establish in an interactive terminal"
+) -> Blocked:
     return Blocked(
         "Invariant: your decision is needed before repository records can change",
         code="authority_required",
@@ -1739,7 +1743,7 @@ def _human_decision_blocked(request: str) -> Blocked:
             "STATUS: needs-your-decision",
             f"REQUEST: {request}",
             "PROCESS: no background worker — the proposal is preserved",
-            "NEXT: rerun invariant establish in an interactive terminal",
+            f"NEXT: {next_step}",
         ],
     )
 
@@ -1802,7 +1806,12 @@ def _human_finding_decision(repo: Path, change_id: str) -> None:
         print("  Choose all, none, or one or more listed numbers.")
 
 
-def _human_candidate_decisions(repo: Path, change_id: str) -> None:
+def _human_candidate_decisions(
+    repo: Path,
+    change_id: str,
+    *,
+    next_step: str = "rerun invariant establish in an interactive terminal",
+) -> None:
     for _ in range(12):
         task = _task(repo, change_id)
         actions = [
@@ -1814,13 +1823,15 @@ def _human_candidate_decisions(repo: Path, change_id: str) -> None:
             return
         if not sys.stdin.isatty():
             raise _human_decision_blocked(
-                "accept or reject the exact proposed repository records"
+                "accept or reject the exact proposed governed change",
+                next_step=next_step,
             )
         action_id = str(actions[0]["id"])
         action = _result(_core(repo, "task", "action", change_id, action_id), "action")
         if not isinstance(action, dict) or action.get("kind") != "review_semantics":
             raise _human_decision_blocked(
-                f"resolve the pending decision '{action_id}'"
+                f"resolve the pending decision '{action_id}'",
+                next_step=next_step,
             )
         context = action.get("context") if isinstance(action.get("context"), dict) else {}
         references = [
@@ -1838,7 +1849,7 @@ def _human_candidate_decisions(repo: Path, change_id: str) -> None:
             proposal.extend(["", "Records", *[f"  {item}" for item in references]])
         if changed:
             proposal.extend(["", "Files", *[f"  {item}" for item in changed]])
-        print(style.decision("Accept repository records", proposal))
+        print(style.decision("Accept governed change", proposal))
         accepted = input(style.prompt("decide") + "Accept this proposal? [y/N]: ").strip().lower()
         if accepted not in {"y", "yes"}:
             raise _ProposalDeclined()
@@ -1923,12 +1934,18 @@ def _resolve_actions(
         if not pending:
             return resolved
         action_id = str(pending[0]["id"])
+        action = _result(_core(repo, "task", "action", change_id, action_id), "action")
+        context = action.get("context") if isinstance(action, dict) else {}
+        independent = bool(
+            isinstance(context, dict)
+            and context.get("review_requirement") == "independent"
+        )
         namespace = argparse.Namespace(
             using=provider,
             model=model,
             timeout=timeout,
             apply=True,
-            independent=False,
+            independent=independent,
             task_id=change_id,
             action_id=action_id,
         )
@@ -2678,7 +2695,17 @@ def _finish_change(
     for check in checks:
         arguments.extend(["--check", check])
     payload = _core(repo, *arguments)
-    _resolve_actions(repo, change_id, provider, model=model, timeout=timeout)
+    if config.resolve(repo).authority == "human":
+        _human_candidate_decisions(
+            repo,
+            change_id,
+            next_step=(
+                f"rerun the same invariant change command with --id {change_id} "
+                "in an interactive terminal"
+            ),
+        )
+    else:
+        _resolve_actions(repo, change_id, provider, model=model, timeout=timeout)
     task = _task(repo, change_id)
     if task.get("stage") != "completed":
         raise Blocked(
@@ -2732,10 +2759,13 @@ def _change(args: argparse.Namespace) -> CommandResult:
     plan: _ChangePlan | None = None
     plan_usage: dict[str, Any] = {}
     try:
+        initial_task = _task(repo, change_id)
+        resume_review = initial_task.get("stage") == "awaiting-review"
         with style.activity("Preparing managed change", done="Prepared managed change"):
-            _resolve_actions(
-                repo, change_id, provider, model=args.model, timeout=args.timeout
-            )
+            if not resume_review:
+                _resolve_actions(
+                    repo, change_id, provider, model=args.model, timeout=args.timeout
+                )
             worktree = _worktree(repo, change_id)
             task = _task(repo, change_id)
             integration = task.get("integration")
@@ -2750,6 +2780,22 @@ def _change(args: argparse.Namespace) -> CommandResult:
                 else ""
             )
         plan = _load_change_plan(repo, change_id)
+        if resume_review and plan is None:
+            saved = receipts.load(repo, change_id)
+            coordination = (
+                saved.get("coordination")
+                if isinstance(saved.get("coordination"), dict)
+                else {}
+            )
+            if coordination.get("strategy") == "single":
+                plan = _ChangePlan(
+                    "single", str(coordination.get("summary") or "One cohesive change.")
+                )
+            else:
+                raise InvariantError(
+                    f"Invariant: change '{change_id}' cannot resume because its execution plan is missing",
+                    code="missing_change_plan",
+                )
         if plan is None:
             with style.activity(
                 "Choosing the smallest safe execution plan",
@@ -2772,7 +2818,15 @@ def _change(args: argparse.Namespace) -> CommandResult:
                     ground=base,
                     domains=args.domain,
                 )
-        if plan.parallel:
+        if resume_review:
+            agent = AgentWriteResult(provider, "", "", {})
+            candidate_commit = git.resolve(worktree, "HEAD") or ""
+            checks = (
+                tuple(sorted({check for unit in plan.units for check in unit.verifies}))
+                if plan.parallel
+                else ()
+            )
+        elif plan.parallel:
             with style.activity(
                 f"{_provider_name(provider)} is implementing {len(plan.units)} coordinated work items",
                 done=f"{_provider_name(provider)} implemented the coordinated work items",

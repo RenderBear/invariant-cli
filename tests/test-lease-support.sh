@@ -19,11 +19,11 @@ echo x >"$fixture/src/a.py"
 cat >"$fixture/docs/architecture.md" <<'EOF'
 # Architecture
 
-## Engine boundary
+## Engine boundary {#engine-boundary}
 
 The engine owns OCR execution.
 EOF
-mkdir -p "$fixture/.invariant"
+mkdir -p "$fixture/.invariant/records/domain"
 cat >"$fixture/.invariant/config.yml" <<'EOF'
 version: 1
 authority: agent
@@ -31,15 +31,14 @@ execution: auto
 integration_branch: main
 push_remote: off
 EOF
-cat >"$fixture/.invariant/DOMAINS.yml" <<'EOF'
+cat >"$fixture/.invariant/records/domain/ocr.engine.yml" <<'EOF'
 version: 1
-domains:
-  - id: ocr.engine
-    responsibility: Executes OCR.
-    authority: user:task:test#turn-1
-    architecture: [architecture:docs/architecture.md#engine-boundary]
+id: ocr.engine
+responsibility: Executes OCR.
+authority: user:task:test#turn-1
+architecture: [architecture:docs/architecture.md#engine-boundary]
 EOF
-git -C "$fixture" add src docs .invariant/config.yml .invariant/DOMAINS.yml
+git -C "$fixture" add src docs .invariant/config.yml .invariant/records/domain/ocr.engine.yml
 git -C "$fixture" commit -qm seed
 digest=$(cd "$fixture" && "$compat" brief digest ocr.engine | sed -n 's/^DIGEST: //p')
 
