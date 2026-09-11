@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from invariant import __version__
+from invariant import __version__, observer
 from invariant.cli import app as protocol_cli
 from invariant.cli import style
 from invariant.cli.argv import hoist_global_options, requested_format
@@ -89,8 +89,13 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include diagnostic detail (or complete text in JSON responses)",
     )
+    parser.add_argument(
+        "--server",
+        action="store_true",
+        help="serve the read-only local repository observer",
+    )
     parser.add_argument("--version", action="version", version=f"invariant {__version__}")
-    commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
+    commands = parser.add_subparsers(dest="command", parser_class=Parser)
 
     initialize = commands.add_parser(
         "init", help="set up this repository"
@@ -3629,6 +3634,7 @@ def _settings(_: argparse.Namespace) -> CommandResult:
         f"LANDING-BRANCH: {landing_branch}",
         f"PUBLISHING: {'off' if settings.get('push_remote') == 'off' else 'existing upstream'}",
         f"INTENT-BRIEF: {settings.get('adapter_intent_brief', 'off')}",
+        f"SERVER: http://127.0.0.1:{resolved.server.port}",
     ]
     return CommandResult(
         public_lines,
@@ -3679,6 +3685,39 @@ def _help(args: argparse.Namespace) -> CommandResult:
     return CommandResult([], {})
 
 
+def _serve(args: argparse.Namespace) -> int:
+    repo = git.root()
+    port = config.resolve(repo).server.port
+    url = f"http://127.0.0.1:{port}"
+    result = CommandResult(
+        [
+            "STATUS: serving",
+            f"ADDRESS: {url}",
+            "PROTOCOL: HTTP/1.1 snapshots + Server-Sent Events",
+            "ACCESS: loopback only — read only",
+            "NEXT: press Ctrl-C to stop",
+        ],
+        {
+            "status": "serving",
+            "address": url,
+            "protocol": "http+sse",
+            "access": "loopback-read-only",
+        },
+    )
+
+    def ready() -> None:
+        if args.format == "json":
+            emit_success("server", result, "json", verbose=args.verbose)
+        else:
+            rendered = style.render("server", result.lines)
+            if rendered:
+                print(rendered)
+        sys.stdout.flush()
+
+    observer.serve(repo, port, ready)
+    return 0
+
+
 def run(argv: list[str] | None = None) -> int:
     values = hoist_global_options(sys.argv[1:] if argv is None else argv)
     command = _top_level_command(values)
@@ -3686,14 +3725,33 @@ def run(argv: list[str] | None = None) -> int:
         return protocol_cli.run(values)
     format_name = "json" if requested_format(values) == "json" else "text"
     verbose = False
-    selected_command = command or "help"
+    selected_command = "server" if "--server" in values else command or "help"
     try:
         args = build_parser().parse_args(values)
         format_name = args.format
         verbose = args.verbose
+        if args.server and args.command is not None:
+            raise UsageError("Invariant: --server cannot be combined with a command")
+        if not args.server and args.command is None:
+            raise UsageError("Invariant: choose a command or use --server")
         if args.command not in {"connect", "help", "init"}:
             config.require_initialized(git.root())
-        result = args.handler(args)
+        if args.server:
+            with observer.track_process(git.root(), "server"):
+                return _serve(args)
+        tracked = selected_command in {"change", "establish", "source"} and not bool(
+            getattr(args, "dry_run", False)
+        )
+        task = str(
+            getattr(args, "change_id", "")
+            or getattr(args, "task_id", "")
+            or ""
+        )
+        if tracked:
+            with observer.track_process(git.root(), selected_command, task):
+                result = args.handler(args)
+        else:
+            result = args.handler(args)
         if format_name == "text":
             provider_value = (
                 result.data.get("provider") if isinstance(result.data, dict) else None

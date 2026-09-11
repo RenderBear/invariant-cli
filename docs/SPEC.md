@@ -366,6 +366,7 @@ Generated local state is shared by linked worktrees and self-ignored at its root
 .invariant/runtime/history-validation/<target>.yml
 .invariant/runtime/plans/<id>.yml
 .invariant/runtime/leases/<unit>.yml
+.invariant/runtime/processes/<pid>.yml
 .invariant/runtime/worktrees/<task-id>-<nonce>/...
 ```
 
@@ -433,6 +434,8 @@ integration_branch: auto
 push_remote: off
 adapters:
   intent_brief: off
+server:
+  port: 3000
 ```
 
 Provider selection is deliberately absent from tracked configuration: which coding agent is
@@ -468,6 +471,11 @@ branch as the convergence target. An omitted value is read as `auto` for compati
 
 - `off` leaves every successful landing local;
 - `on` pushes the exact landed commit to the configured integration branch's existing upstream.
+
+`server.port` is the loopback observation server's TCP port. It defaults to `3000` when omitted and
+must be an integer from 1 through 65535. It grants no network, repository, model, or publication
+authority. The server always binds to `127.0.0.1`; exposing it beyond the local machine belongs to a
+separate, explicitly secured host integration.
 
 Remote publication requires both the accepted configuration and the verified candidate to say
 `on`. Enabling therefore takes effect only after the enabling configuration reaches the integration
@@ -774,6 +782,7 @@ LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [<prompt>]
 LOCAL   invariant change [--using <provider>] [--id <change-id>] [--dry-run] <prompt>
 LOCAL   invariant establish [--using <provider>] [--id <establishment-id>] [--goal <focus>] [--dry-run | --discard]
 LOCAL   invariant status [<change-id>]
+LOCAL   invariant --server
 LOCAL   invariant settings
 LOCAL   invariant set <key> <value>
 GLOBAL  invariant help protocol
@@ -1047,6 +1056,38 @@ beyond the separately configured upstream push belong to the host.
 - State-changing commands identify every intended mutation before applying it and support a dry-run
   where the result can be computed without mutation.
 - Repeating an idempotent command with unchanged inputs yields an equivalent result.
+
+### 8.5 Local observation server
+
+`invariant --server` starts a foreground, loopback-only HTTP/1.1 server on the configured
+`server.port`. It is an observation surface, not a chat surface or an alternate lifecycle API. It
+does not invoke a model and exposes no write endpoint.
+
+The stable versioned routes are:
+
+```text
+GET  /                    CLI-derived local dashboard
+GET  /api/v1/snapshot     coherent JSON projection of current repository state
+GET  /api/v1/events       text/event-stream of changed snapshots
+GET  /healthz             process health and current snapshot revision
+```
+
+The event route uses Server-Sent Events because repository observation is one-way: the server emits
+an initial `snapshot` event, emits a new event only when the projected state revision changes, and
+sends comment heartbeats to keep intermediaries from considering an idle connection dead. Clients
+reconnect using ordinary EventSource behavior. HTTP snapshots remain the recovery and non-browser
+compatibility path; SSE is a notification transport, not a second state store.
+
+Each snapshot reports repository and governance validity, active and recently completed tasks,
+task freshness, pending actions, assurance, plans, leases, evidence, and locally observed Invariant
+processes. Long-running public commands write a heartbeat record beneath ignored runtime state while
+they execute and remove it on an orderly exit. A missing process or expired heartbeat is displayed
+as stale presence, never treated as proof that lifecycle work did or did not complete. Receipts, Git
+state, and evidence remain authoritative.
+
+The dashboard and API are safe to refresh during active work. Snapshot construction is read-only and
+never calls lifecycle continuation, lease renewal, cleanup, or freshness operations that update a
+receipt. Responses use no-store caching and restrictive browser security headers.
 
 ## 9. Reach
 

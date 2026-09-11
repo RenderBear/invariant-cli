@@ -100,6 +100,25 @@ Diagrams are semantic HTML laid out with Grid or Flexbox; never raster images.
 - Wide diagrams and tables scroll horizontally rather than compressing text.
 - Reading order matches DOM order.
 
+## Observation dashboard
+
+The local `--server` dashboard translates the terminal language into a continuously updated read
+surface. It uses the document palette on Paper, with cyan reserved for the Invariant wordmark and
+live-connection mark. Green, amber, and red retain their terminal meanings for healthy, waiting, and
+invalid or stale state. No state relies on colour alone.
+
+- The page is one centred column without a sidebar, application launcher, chat composer, or write
+  control.
+- Repository identity and stream state form a ruled header; compact counters summarize processes,
+  tasks, governance, and evidence.
+- Active changes use bordered units and a monospace lifecycle trail. Plans and leases remain tables
+  because their dependency and ownership fields are comparative.
+- Evidence is a chronological reading sequence with causal ground, exact tree, verifier, review,
+  and freshness facts visible as text.
+- The page updates in place without decorative motion. A quiet timestamp and explicit `LIVE`,
+  `RECONNECTING`, or `OFFLINE` label communicate stream state.
+- Narrow layouts preserve the same reading order and scroll wide tables horizontally.
+
 ## Document exclusions
 
 Reversed panels, diagonal lines, hatching, gradients, patterns, drop shadows, rounded dashboard

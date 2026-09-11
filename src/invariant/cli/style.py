@@ -47,6 +47,7 @@ _TITLES = {
     "set": "Setting updated",
     "settings": "Settings",
     "source": "Grounding source added",
+    "server": "Observation server",
     "status": "Repository",
 }
 
