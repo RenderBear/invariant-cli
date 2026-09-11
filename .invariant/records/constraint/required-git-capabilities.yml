@@ -1,0 +1,15 @@
+version: 1
+id: required-git-capabilities
+assertion: Required exact-candidate and linked-worktree Git capabilities must be proven available before
+  lifecycle mutation.
+authority: design:repo:docs/SPEC.md#mechanics
+applies_to:
+- mechanics
+- lifecycle
+surfaces:
+- repo:src/invariant/mechanics/git.py
+material:
+- repo:docs/SPEC.md
+- repo:tests/test_git_capabilities.py
+verifies:
+- test:tests/test_git_capabilities.py

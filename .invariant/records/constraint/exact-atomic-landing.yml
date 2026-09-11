@@ -1,0 +1,16 @@
+version: 1
+id: exact-atomic-landing
+assertion: Candidate review, verification evidence, and landing bind to an exact Git tree, and the integration
+  ref moves atomically by compare-and-swap or remains unchanged.
+authority: design:repo:protocol/protocol.md#verification-and-landing
+applies_to:
+- mechanics
+- lifecycle
+surfaces:
+- repo:src/invariant/mechanics/landing.py
+- repo:src/invariant/mechanics/git.py
+material:
+- repo:protocol/protocol.md
+- repo:tests/test_lifecycle_guarantees.py
+verifies:
+- test:tests/test_lifecycle_guarantees.py
