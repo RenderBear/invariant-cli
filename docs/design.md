@@ -197,10 +197,10 @@ Unit:
 - Long values wrap under their own column; a line that still does not fit is cut with `…`.
 - Labels are the record names in sentence case, right-padded to the widest label.
 - `Status` values are toned by state; other values are plain.
-- `Next`, `Warning`, `Error`, `Invalid`, `Request`, and `Command` records are callouts. They
+- `Next`, `Option`, `Problem`, `Warning`, `Error`, `Invalid`, `Request`, and `Command` records are callouts. They
   are removed from their record position and rendered last, in order, one per line, outside
-  the box. `Next`, `Request`, and `Command` glyphs are Accent; `Warning` is Warn; `Error` and
-  `Invalid` are Bad.
+  the box. `Next`, `Request`, and `Command` glyphs are Accent; `Option` is Muted; `Warning` is
+  Warn; `Problem`, `Error`, and `Invalid` are Bad.
 - Non-record lines pass through unchanged inside the box and reset label folding.
 - Trail lines from the steps that produced the unit stand above its compact title.
 

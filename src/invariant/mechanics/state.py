@@ -158,6 +158,47 @@ def _evidence(repo: Path, value: str, label: str, at: str | None) -> list[str]:
     return [f"{label} evidence '{value}' must use repo:, commit:, interface:, task:, or url:"]
 
 
+def _projected_record_locators(
+    repo: Path, record: ProjectedRecord, label: str
+) -> list[str]:
+    """Validate inspectable locators before an audit can become resumable state."""
+
+    value = record.value
+    failures = _authority(repo, value.get("authority"), label)
+    if record.kind == "semantic":
+        semantic = SemanticRecord.parse(value)
+        failures.extend(_architecture(repo, semantic.document, label))
+        for locator in semantic.applies_to:
+            if locator.startswith(("repo:", "interface:")):
+                failures.extend(_surface(repo, locator, label))
+        for locator in semantic.revisit_on:
+            if locator.startswith(("repo:", "interface:")):
+                failures.extend(_revisit_coordinate(locator, label))
+        for locator in semantic.verifies:
+            failures.extend(_verifier(repo, locator, label))
+    elif record.kind == "domain":
+        domain = Domain.parse(value)
+        for locator in domain.architecture:
+            failures.extend(_architecture(repo, locator, label))
+    elif record.kind == "contract":
+        for locator in refs(value.get("surfaces")):
+            failures.extend(_surface(repo, locator, label))
+        for locator in architecture_refs(value.get("architecture")):
+            failures.extend(_architecture(repo, locator, label))
+        for locator in refs(value.get("material")):
+            failures.extend(_material(repo, locator, label))
+        for locator in refs(value.get("verifies")):
+            failures.extend(_verifier(repo, locator, label))
+    elif record.kind == "constraint":
+        for locator in refs(value.get("surfaces")):
+            failures.extend(_surface(repo, locator, label))
+        for locator in refs(value.get("material")):
+            failures.extend(_material(repo, locator, label))
+        for locator in refs(value.get("verifies")):
+            failures.extend(_verifier(repo, locator, label))
+    return failures
+
+
 def validate_audit(repo: Path, path: Path, raw: dict[str, Any], domain_ids: Iterable[str]) -> list[str]:
     """Validate one persisted audit record without requiring it to be written first."""
     failures: list[str] = []
@@ -205,6 +246,7 @@ def validate_audit(repo: Path, path: Path, raw: dict[str, Any], domain_ids: Iter
         ).returncode:
             failures.append(f"{relative} audit path '{audit_path}' does not exist in tree {tree}")
     finding_ids: list[str] = []
+    projected_records: list[tuple[str, ProjectedRecord]] = []
     for finding in raw.get("findings", []):
         if not isinstance(finding, dict):
             failures.append(f"{relative} finding must be a mapping")
@@ -258,12 +300,17 @@ def validate_audit(repo: Path, path: Path, raw: dict[str, Any], domain_ids: Iter
             failures.append(f"{flabel} records must be a list")
         elif isinstance(projected, list):
             for index, record in enumerate(projected):
+                label = f"{flabel}.records[{index}]"
                 try:
-                    ProjectedRecord.parse(record, f"{flabel}.records[{index}]")
+                    projected_records.append(
+                        (label, ProjectedRecord.parse(record, label))
+                    )
                 except UsageError as exc:
                     failures.append(str(exc))
     if len(finding_ids) != len(set(finding_ids)):
         failures.append(f"{relative} finding ids must be unique")
+    for label, record in projected_records:
+        failures.extend(_projected_record_locators(repo, record, label))
     return failures
 
 

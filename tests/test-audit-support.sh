@@ -84,6 +84,33 @@ out=$(cd "$fixture" && "$cli" evidence fresh "$audit_id")
 printf '%s\n' "$out" | grep -q '^FRESH:' || die "audit commit made its own evidence stale"
 ok "completed audits are stamped, validated, saved, and remain non-authoritative"
 
+cat >"$findings" <<'EOF'
+version: 1
+findings:
+  - id: invalid-projection
+    summary: This projection deliberately names an absent architecture heading.
+    evidence: [repo:docs/architecture.md]
+    proposed: domain
+    disposition: adoptable
+    authority: user:task:test#projection
+    records:
+      - kind: domain
+        value:
+          id: invalid.projection
+          responsibility: Exercises projected-record validation.
+          authority: user:task:test#projection
+          architecture: [architecture:docs/architecture.md#missing-heading]
+EOF
+before_audits=$(find "$fixture/.invariant/audits" -type f -name '*.yml' | wc -l)
+if out=$(cd "$fixture" && "$cli" evidence audit save invalid --mode full --input "$findings" 2>&1); then
+  die "audit persisted a record projection with an invalid architecture anchor"
+fi
+printf '%s\n' "$out" | grep -q "architecture anchor '#missing-heading' does not exist" ||
+  die "invalid projected locator was not identified at audit intake"
+[ "$before_audits" -eq "$(find "$fixture/.invariant/audits" -type f -name '*.yml' | wc -l)" ] ||
+  die "invalid projected records became resumable audit state"
+ok "audits reject invalid projected locators before persistence"
+
 (cd "$fixture" && "$cli" config set authority human >/dev/null)
 git -C "$fixture" add .invariant/config.yml
 git -C "$fixture" commit -qm "select human authority"
@@ -134,4 +161,4 @@ if out=$(cd "$fixture" && "$cli" evidence fresh "$audit_id" 2>&1); then die "int
 printf '%s\n' "$out" | grep -q '^STALE: changed evidence docs/architecture.md$' || die "stale evidence is not identified"
 ok "intersecting descendant change makes audit stale"
 
-echo "7 audit checks passed"
+echo "8 audit checks passed"

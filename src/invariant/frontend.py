@@ -260,7 +260,11 @@ def _top_level_command(argv: list[str]) -> str | None:
 
 
 def _agent_error(error: AgentInvocationError) -> InvariantError:
-    message = f"Invariant: {error.message}"
+    message = (
+        error.message
+        if error.message.startswith("Invariant: ")
+        else f"Invariant: {error.message}"
+    )
     if error.exit_code == 1:
         return Blocked(message, code=error.code)
     return InvariantError(message, code=error.code, exit_code=2)
@@ -275,7 +279,16 @@ def _identify(error: InvariantError, label: str, identifier: str) -> InvariantEr
 
 def _core(repo: Path, *arguments: str) -> dict[str, Any]:
     completed = subprocess.run(
-        [sys.executable, "-P", "-m", "invariant.cli.app", "--format", "json", *arguments],
+        [
+            sys.executable,
+            "-P",
+            "-m",
+            "invariant.cli.app",
+            "--format",
+            "json",
+            "--verbose",
+            *arguments,
+        ],
         cwd=repo,
         check=False,
         capture_output=True,
@@ -305,13 +318,21 @@ def _core(repo: Path, *arguments: str) -> dict[str, Any]:
         code = str(diagnostic.get("code") or "protocol_operation_failed")
         result = payload.get("result")
         records = result.get("records") if isinstance(result, dict) else None
-        lines = [
-            f"{item.get('name')}: {item.get('value')}"
-            for item in records or []
-            if isinstance(item, dict) and item.get("name")
-        ]
+        output = result.get("output") if isinstance(result, dict) else None
+        lines = (
+            str(output).splitlines()
+            if isinstance(output, str)
+            else [
+                f"{item.get('name')}: {item.get('value')}"
+                for item in records or []
+                if isinstance(item, dict) and item.get("name")
+            ]
+        )
         error_type = Blocked if completed.returncode == 1 else InvariantError
         raise error_type(message, code=code, lines=lines)
+    result = payload.get("result")
+    if isinstance(result, dict):
+        result.pop("output", None)
     return payload
 
 
@@ -1443,11 +1464,18 @@ def _remember_establishment_failure(
         receipt = receipts.load(repo, change_id)
     except InvariantError:
         return
-    details: dict[str, str] = {}
+    details: dict[str, Any] = {}
+    validation: list[str] = []
     for line in error.lines:
         name, separator, value = line.partition(": ")
         if separator and name in {"CHECK", "LOG"}:
             details[name.lower()] = value
+        elif line.startswith("FAIL "):
+            validation.append(line.removeprefix("FAIL "))
+        elif separator and name == "INVALID":
+            validation.append(value)
+    if validation:
+        details["details"] = validation
     receipt["last_failure"] = {
         "code": error.code,
         "message": error.message.removeprefix("Invariant: "),
@@ -1468,27 +1496,106 @@ def _clear_establishment_failure(repo: Path, change_id: str) -> bool:
     return True
 
 
+def _retry_invalid_establishment(repo: Path, change_id: str) -> None:
+    """Return an invalid generated projection to the audit phase on an explicit retry."""
+
+    if not git.valid_id(change_id):
+        return
+    try:
+        receipt = receipts.load(repo, change_id)
+    except InvariantError:
+        return
+    failure = (
+        receipt.get("last_failure")
+        if isinstance(receipt.get("last_failure"), dict)
+        else {}
+    )
+    session = (
+        receipt.get("governance_run")
+        if isinstance(receipt.get("governance_run"), dict)
+        else {}
+    )
+    if (
+        failure.get("code") != "invalid_adoption_projection"
+        or session.get("phase") != "adopt"
+        or config.resolve(repo).authority != "agent"
+    ):
+        return
+
+    lifecycle = (
+        receipt.get("lifecycle")
+        if isinstance(receipt.get("lifecycle"), dict)
+        else {}
+    )
+    worktree_value = lifecycle.get("worktree")
+    worktree = (
+        Path(worktree_value).resolve()
+        if isinstance(worktree_value, str) and worktree_value
+        else None
+    )
+    audit_id = str(session.get("audit") or "")
+    worktrees_root = (coordinate.runtime_root(repo) / "worktrees").resolve()
+    if (
+        worktree is not None
+        and worktree.is_dir()
+        and worktree.is_relative_to(worktrees_root)
+        and git.valid_id(audit_id)
+    ):
+        (worktree / ".invariant" / "audits" / f"{audit_id}.yml").unlink(
+            missing_ok=True
+        )
+    local = coordinate.runtime_root(repo) / "tasks" / change_id
+    for name in (
+        "governance-adoption.draft.yml",
+        "governance-adoption.yml",
+        "governance-coverage.yml",
+    ):
+        (local / name).unlink(missing_ok=True)
+    receipt["governance_run"] = {"phase": "audit"}
+    receipt.pop("last_failure", None)
+    receipts.save(repo, change_id, receipt)
+
+
 def _present_establishment_failure(
     error: InvariantError,
     change_id: str,
     *,
     show_identifier: bool,
 ) -> InvariantError:
-    detail = [line for line in error.lines if line.startswith(_FAILURE_DETAIL)]
-    resume = f"invariant establish --id {change_id}" if show_identifier else "invariant establish"
+    supporting = [
+        line
+        for line in error.lines
+        if line.startswith(("CHECK: ", "LOG: ", "REQUIRES: ", "UNCOVERED: ", "WARNING: "))
+    ]
+    validation = [
+        line.removeprefix("FAIL ")
+        if line.startswith("FAIL ")
+        else line.removeprefix("INVALID: ")
+        for line in error.lines
+        if line.startswith(("FAIL ", "INVALID: "))
+    ]
+    problem = error.message.removeprefix("Invariant: ")
+    resume = (
+        f"invariant establish --id {change_id}"
+        if show_identifier
+        else "invariant establish"
+    )
     error.lines = [
         *([f"ESTABLISH: {change_id}"] if show_identifier else []),
         "STATUS: stopped",
-        "PROCESS: none — the command exited",
-        *detail,
-        "PRESERVED: proposed records and candidate work",
-        f"NEXT: {resume}",
-        f"NEXT: {resume} --discard — drop the preserved proposal instead",
+        f"PROBLEM: {validation[0] if validation else problem}",
+        *(
+            [f"DETAIL: {len(validation) - 1} more validation problems"]
+            if len(validation) > 1
+            else []
+        ),
+        *supporting,
+        "SAVED: repository inspection and unfinished work",
+        "ACTIVITY: stopped — no background process",
+        f"NEXT: retry from saved work with '{resume}'",
+        f"OPTION: discard saved work with '{resume} --discard'",
     ]
     return error
-
-
-_FAILURE_DETAIL = ("CHECK: ", "LOG: ", "REQUIRES: ", "INVALID: ", "UNCOVERED: ", "WARNING: ")
 
 
 class _ProposalDeclined(Exception):
@@ -1508,7 +1615,10 @@ def _discard_establishment(repo: Path, change_id: str | None) -> CommandResult:
     target = change_id or _latest_establishment(repo)
     if target is None:
         return CommandResult(
-            ["STATUS: nothing to discard", "NEXT: invariant establish"],
+            [
+                "STATUS: nothing to discard",
+                "NEXT: start a repository audit with 'invariant establish'",
+            ],
             {"operation": "establish", "discarded": None},
         )
     _core(repo, "task", "invalidate", target, "--discard")
@@ -1516,7 +1626,7 @@ def _discard_establishment(repo: Path, change_id: str | None) -> CommandResult:
         [
             "STATUS: discarded",
             "REMOVED: the preserved proposal and its candidate work",
-            "NEXT: invariant establish",
+            "NEXT: start a new repository audit with 'invariant establish'",
         ],
         {"operation": "establish", "discarded": target},
     )
@@ -1540,7 +1650,14 @@ def _human_change_state(
         else {}
     )
     if failure:
-        detail = str(failure.get("check") or failure.get("message") or "previous attempt failed")
+        validation = failure.get("details")
+        detail = str(
+            validation[0]
+            if isinstance(validation, list) and validation
+            else failure.get("check")
+            or failure.get("message")
+            or "previous attempt failed"
+        )
         return "needs retry", True, detail
     lifecycle = (
         receipt.get("lifecycle")
@@ -1555,6 +1672,18 @@ def _human_change_state(
     if stage == "cleanup-required":
         return "needs attention", True, ""
     return "ready to resume", False, ""
+
+
+def _human_next_operation(item: dict[str, Any]) -> str:
+    if not item["establishment"]:
+        return f"inspect '{item['label']}' with 'invariant status {item['id']}'"
+    verb = {
+        "needs retry": "retry from saved work",
+        "needs your decision": "review the saved proposal",
+        "needs confirmation": "continue the saved proposal",
+        "needs attention": "resolve the saved attempt",
+    }.get(str(item["state"]), "resume saved work")
+    return f"{verb} with 'invariant establish'"
 
 
 def _human_active_changes(repo: Path) -> list[dict[str, Any]]:
@@ -2776,6 +2905,7 @@ def _establish(args: argparse.Namespace) -> CommandResult:
             ],
             preview,
         )
+    _retry_invalid_establishment(repo, change_id)
     namespace = argparse.Namespace(
         using=provider,
         model=args.model,
@@ -2881,13 +3011,18 @@ def _establish(args: argparse.Namespace) -> CommandResult:
                     )
         task = _task(repo, change_id)
     except _ProposalDeclined:
+        resume = (
+            f"invariant establish --id {change_id}"
+            if args.change_id or args.goal or args.verbose
+            else "invariant establish"
+        )
         return CommandResult(
             [
                 *([f"ESTABLISH: {change_id}"] if args.change_id or args.verbose else []),
                 "STATUS: not accepted",
-                "PRESERVED: the exact proposal, ready for another look",
-                "NEXT: invariant establish — decide again",
-                "NEXT: invariant establish --discard — drop the proposal",
+                "SAVED: the exact proposal, ready for another look",
+                f"NEXT: review the saved proposal with '{resume}'",
+                f"OPTION: discard saved work with '{resume} --discard'",
             ],
             {**preview, "invoked": True, "status": "not accepted", "audit": audit_result},
         )
@@ -2897,7 +3032,7 @@ def _establish(args: argparse.Namespace) -> CommandResult:
         raise _present_establishment_failure(
             error,
             change_id,
-            show_identifier=bool(args.change_id or args.verbose),
+            show_identifier=bool(args.change_id or args.goal or args.verbose),
         ) from exc
     except InvariantError as exc:
         if exc.code == "authority_required":
@@ -2910,7 +3045,7 @@ def _establish(args: argparse.Namespace) -> CommandResult:
         raise _present_establishment_failure(
             exc,
             change_id,
-            show_identifier=bool(args.change_id or args.verbose),
+            show_identifier=bool(args.change_id or args.goal or args.verbose),
         )
     if task.get("stage") != "completed":
         raise Blocked(
@@ -3005,9 +3140,19 @@ def _status(args: argparse.Namespace) -> CommandResult:
                 "ACTIVITY: persisted state — no background worker",
             ]
             if failure_detail:
-                lines.append(f"FAILED: {failure_detail}")
+                lines.append(f"PROBLEM: {failure_detail}")
             if establishment:
-                lines.append("NEXT: invariant establish")
+                lines.append(
+                    "NEXT: "
+                    + _human_next_operation(
+                        {
+                            "id": args.change_id,
+                            "label": "Repository records",
+                            "state": stage,
+                            "establishment": True,
+                        }
+                    )
+                )
             if args.verbose:
                 lines.append(f"WORKTREE: {worktree}")
         elif isinstance(task, dict):
@@ -3099,34 +3244,32 @@ def _status(args: argparse.Namespace) -> CommandResult:
         if resolved.adapters.is_enabled("intent_brief"):
             add_ons.append("intent review")
         if not valid:
-            next_operation = "invariant state validate"
+            next_operation = (
+                "inspect invalid repository state with 'invariant state validate'"
+            )
         elif changes:
             first = next(
                 (item for item in changes if item["attention"]), changes[0]
             )
-            next_operation = (
-                "invariant establish"
-                if first["establishment"]
-                else f"invariant status {first['id']}"
-            )
+            next_operation = _human_next_operation(first)
         else:
-            next_operation = 'invariant change "Describe the change"'
-        lines = [f"STATUS: {status}"]
-        if next_operation:
-            lines.append(f"NEXT: {next_operation}")
-        lines.extend(
-            [
-                f"BRANCH: {branch_summary}",
-                f"AGENT: {agent_summary}",
-                f"CHANGES: {f'{active_count} unfinished' if active_count else 'none'}",
-                "ACTIVITY: foreground commands only — no background workers",
-                f"ADD-ONS: {', '.join(add_ons) if add_ons else 'none'}",
-            ]
-        )
+            next_operation = (
+                "start a managed change with 'invariant change \"Describe the change\"'"
+            )
+        lines = [
+            f"STATUS: {status}",
+            f"BRANCH: {branch_summary}",
+            f"AGENT: {agent_summary}",
+        ]
+        if add_ons:
+            lines.append(f"ADD-ONS: {', '.join(add_ons)}")
         for item in changes:
             lines.append(f"CHANGE: {item['label']} — {item['state']}")
             if item["detail"]:
-                lines.append(f"FAILED: {item['label']} — {item['detail']}")
+                lines.append(f"PROBLEM: {item['detail']}")
+                lines.append("SAVED: unfinished work — no process is running")
+        if next_operation:
+            lines.append(f"NEXT: {next_operation}")
         if args.verbose:
             lines.extend(
                 [
@@ -3292,8 +3435,9 @@ def _emit_failure(
     selected_command: str, exc: InvariantError, format_name: str, verbose: bool
 ) -> int:
     if format_name == "text":
-        # Cause first, then the retained state and the one command that resumes it.
-        print(style.error(exc.message), file=sys.stderr)
+        # A structured problem belongs with its retained state and recovery action.
+        if not any(line.startswith("PROBLEM: ") for line in exc.lines):
+            print(style.error(exc.message), file=sys.stderr)
         if exc.lines:
             rendered = style.render(selected_command, exc.lines)
             if rendered:

@@ -210,5 +210,6 @@ def test_session_panel_leaves_space_before_the_next_prompt(tmp_path: Path) -> No
 
     assert code == 0, output
     assert re.search(
-        r'invariant change "Describe the change"\n\n\(ask\) ›', output
+        r'start a managed change with \'invariant change "Describe the change"\'\n\n\(ask\) ›',
+        output,
     ), output

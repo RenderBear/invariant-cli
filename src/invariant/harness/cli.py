@@ -413,7 +413,9 @@ def _governance_audit(args: argparse.Namespace) -> dict[str, Any]:
         "instructions": (
             "Investigate the repository-wide durable responsibilities, architecture, contracts, "
             "constraints, and executable witnesses. Use repository locators for evidence. Classify "
-            "only grounded findings. Include complete record projections only when unambiguous."
+            "only grounded findings. Include complete record projections only when unambiguous. "
+            "Every projected path, verifier, and Markdown architecture anchor must already exist "
+            "in the inspected tree; use the exact heading slug rather than inferred shorthand."
         ),
     }
     try:

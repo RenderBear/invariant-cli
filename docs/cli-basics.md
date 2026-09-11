@@ -267,10 +267,11 @@ invariant establish
 ```
 
 The bare command resumes the latest compatible unfinished establishment; an explicit ID is not
-needed after a stopped run. A failed step reports its terminal state, confirms that no process is
-still running, shows the specific rejection (an unresolved architecture anchor, a failed check, an
-uncovered finding), preserves the proposal, and offers two continuations: the same bare command to
-retry, or `--discard` to drop the preserved proposal. Equivalent older attempts collapse into one
+needed after a stopped run. A failed step reports its first concrete problem, confirms what was
+saved and that no process is still running, then names the next task and its command. It also offers
+`--discard` when dropping the saved proposal is preferable. With agent authority, retrying an older
+invalid generated projection returns the attempt to investigation so the same command can correct
+it instead of replaying a proposal that cannot pass. Equivalent older attempts collapse into one
 `Repository records` item in human-facing status.
 
 Selected findings that carry complete record projections are projected directly. When a selected

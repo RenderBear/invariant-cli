@@ -75,6 +75,8 @@ _BAD_STATES = {"failed", "error", "invalid", "stale", "unavailable", "absent"}
 
 _CALLOUTS = {
     "Next": (ACCENT, NEXT),
+    "Option": (MUTED, DOT),
+    "Problem": (BAD, CROSS),
     "Warning": (WARN, CAUTION),
     "Error": (BAD, CROSS),
     "Invalid": (BAD, CROSS),

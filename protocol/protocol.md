@@ -203,6 +203,10 @@ YAML, unknown fields, unresolved locators, dangling anchors, cycles, and unattes
 history (§4.5) are each reported with a stable diagnostic and the offending location. A task cannot
 begin or land against invalid state.
 
+Inspectable locators in an audit's proposed records are validated against the inspected tree before
+the audit is persisted. Invalid paths, anchors, authorities, surfaces, material, or verifiers remain
+rejected agent output; they never become a resumable adoption proposal.
+
 ---
 
 ## 3. The task lifecycle

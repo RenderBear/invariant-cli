@@ -57,7 +57,11 @@ if [ "$schema" = true ]; then
       printf '%s\n' '{"strategy":"single","summary":"One cohesive fixture edit.","units":[]}' >"$output"
       ;;
     *"Request kind: governance.audit"*)
-      printf '%s\n' '{"version":1,"findings":[]}' >"$output"
+      if [ "${FAKE_INVALID_AUDIT:-0}" = 1 ]; then
+        printf '%s\n' '{"version":1,"findings":[{"id":"invalid-projection","summary":"The application responsibility should be recorded.","evidence":["repo:app.txt"],"proposed":"domain","disposition":"adoptable","authority":"user:task:invalid-establishment#finding","records":[{"kind":"domain","value":{"id":"application","responsibility":"Owns application behavior.","authority":"user:task:invalid-establishment#finding","parent":null,"architecture":["architecture:missing.md#application"],"contracts":[]}}]}]}' >"$output"
+      else
+        printf '%s\n' '{"version":1,"findings":[]}' >"$output"
+      fi
       ;;
     *"Request kind: governance.author"*)
       task=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"task": "\([^"]*\)",*$/\1/p' | head -n 1)
@@ -244,8 +248,8 @@ printf '%s\n' "$resume_status" | grep -q '^STATUS: 1 unfinished change$' ||
   die "status counted equivalent establishment attempts as separate user work"
 printf '%s\n' "$resume_status" | grep -q '^CHANGE: Repository records — ready to resume$' ||
   die "status exposed the establishment's internal lifecycle stage"
-printf '%s\n' "$resume_status" | grep -q '^ACTIVITY: foreground commands only — no background workers$' ||
-  die "status did not distinguish retained work from a running process"
+printf '%s\n' "$resume_status" | grep -q "^NEXT: resume saved work with 'invariant establish'$" ||
+  die "status did not name the resumable task before its command"
 resumed_establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
   FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
   "$cli" establish)
@@ -258,6 +262,48 @@ printf '%s\n' "$resume_complete_status" | grep -q '^STATUS: ready$' ||
   die "completed establishment left equivalent older attempts as user-visible work"
 (cd "$repo" && "$cli" task invalidate establish-older --discard >/dev/null)
 ok "establishment resumes as one foreground operation without leaking task stages"
+
+if invalid_establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" FAKE_INVALID_AUDIT=1 \
+  "$cli" establish --id invalid-establishment 2>&1); then
+  die "establishment accepted a generated record with an absent architecture anchor"
+fi
+printf '%s\n' "$invalid_establishment" | grep -q '^STATUS: stopped$' ||
+  die "failed establishment did not state that it stopped"
+printf '%s\n' "$invalid_establishment" | grep -q "^PROBLEM: invalid audit: .*architecture 'missing.md' does not exist" ||
+  die "failed establishment hid the concrete generated-record problem"
+printf '%s\n' "$invalid_establishment" | grep -q '^SAVED: repository inspection and unfinished work$' ||
+  die "failed establishment did not identify retained work"
+printf '%s\n' "$invalid_establishment" | grep -q "^NEXT: retry from saved work with 'invariant establish --id invalid-establishment'$" ||
+  die "failed establishment did not name the retry task and command"
+retry_status=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" status)
+printf '%s\n' "$retry_status" | grep -q '^CHANGE: Repository records — needs retry$' ||
+  die "status hid the failed repository-record attempt"
+printf '%s\n' "$retry_status" | grep -q "^PROBLEM: invalid audit: .*architecture 'missing.md' does not exist" ||
+  die "status hid the retry reason"
+printf '%s\n' "$retry_status" | grep -q "^NEXT: retry from saved work with 'invariant establish'$" ||
+  die "status did not expose the public retry command"
+retried_establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  "$cli" establish --id invalid-establishment)
+printf '%s\n' "$retried_establishment" | grep -q '^STATUS: complete$' ||
+  die "the advertised establishment retry did not resume and complete"
+ok "failed establishment exposes and completes one situation-specific retry"
+
+(cd "$repo" && "$cli" governance begin legacy-invalid-projection --goal "$resume_goal" >/dev/null)
+(cd "$repo" && "$cli" governance audit-save legacy-invalid-projection \
+  --input "$resume_findings" >/dev/null)
+cat >>"$repo/.invariant/runtime/briefs/legacy-invalid-projection.yml" <<'EOF'
+last_failure:
+  code: invalid_adoption_projection
+  message: projected repository records are invalid
+EOF
+legacy_retry=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  "$cli" establish --id legacy-invalid-projection)
+printf '%s\n' "$legacy_retry" | grep -q '^STATUS: complete$' ||
+  die "retry replayed an older structurally invalid projection"
+ok "retry returns older invalid generated projections to investigation"
 
 (cd "$repo" && "$cli" set authority human >/dev/null)
 (cd "$repo" && "$cli" governance begin human-establishment --goal "$resume_goal" >/dev/null)
@@ -374,20 +420,22 @@ cat >"$broken_findings" <<'EOF'
 version: 1
 findings:
   - id: broken-pointer
-    summary: A finding whose projection points at prose that does not exist.
+    summary: A finding whose contract names domains that do not exist.
     evidence: [repo:app.txt]
-    proposed: domain
+    proposed: contract
     disposition: adoptable
     authority: user:task:broken-establishment#audit
     records:
-      - kind: domain
+      - kind: contract
         value:
-          id: broken
-          responsibility: Points at missing architecture prose.
+          id: broken.v1
+          assertion: Missing domains exchange application data.
           authority: user:task:broken-establishment#audit
-          parent: null
-          architecture: [architecture:docs/missing.md#nowhere]
-          contracts: []
+          between: [absent.one, absent.two]
+          surfaces: [repo:app.txt]
+          architecture: []
+          material: [repo:app.txt]
+          verifies: [test:app.txt]
 EOF
 (cd "$repo" && "$cli" governance begin broken-establishment --goal "Record a broken pointer" >/dev/null)
 (cd "$repo" && "$cli" governance audit-save broken-establishment --input "$broken_findings" >/dev/null)
@@ -396,9 +444,9 @@ if broken=$(cd "$repo" && PATH="$fake_bin:$PATH" \
   "$cli" establish --id broken-establishment 2>&1); then
   die "establish landed a projection that does not resolve"
 fi
-printf '%s\n' "$broken" | grep -q "^INVALID: .*architecture 'docs/missing.md' does not exist" ||
+printf '%s\n' "$broken" | grep -q "^PROBLEM: .*references missing domain 'absent.one'" ||
   die "establish hid why the projection was rejected"
-printf '%s\n' "$broken" | grep -q '^NEXT: invariant establish --id broken-establishment --discard' ||
+printf '%s\n' "$broken" | grep -q "^OPTION: discard saved work with 'invariant establish --id broken-establishment --discard'$" ||
   die "establish did not offer a way out of a preserved proposal"
 discarded=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" establish --id broken-establishment --discard)
 printf '%s\n' "$discarded" | grep -q '^STATUS: discarded$' ||
@@ -504,4 +552,4 @@ printf '%s\n' "$paused" | grep -q '^STATUS: awaiting-branch$' ||
 (cd "$repo" && "$cli" set execution auto >/dev/null)
 ok "assisted execution pauses before any provider write"
 
-echo "13 human lifecycle checks passed"
+echo "18 human lifecycle checks passed"

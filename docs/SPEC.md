@@ -516,6 +516,13 @@ proposal. The verification activity reports landing only when the task actually 
 otherwise it reports that review is pending. The completion result carries a `RECORDS:` line, and a
 pass that recorded nothing is presented as `Audit recorded`.
 
+Human status ends with a situation-specific verb and its public command: start, inspect, resume,
+review, continue, or retry. Failed establishment output keeps the first concrete problem beside the
+saved-work statement, its primary retry, and the discard alternative. With agent authority, retry
+returns an older structurally invalid generated projection to investigation before invoking the
+agent again. Newly generated record locators are validated when the audit is saved and participate
+in the harness's bounded semantic correction loop.
+
 Ordinary `test:` verifier locators require no configuration. The verifier resolves execution from
 the exact candidate: Python tests locate the nearest `pyproject.toml`; shell tests in a locked uv
 project execute through `uv run --frozen`; standalone shell tests execute through POSIX `sh`.
