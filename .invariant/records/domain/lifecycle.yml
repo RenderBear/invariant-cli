@@ -1,0 +1,8 @@
+version: 1
+id: lifecycle
+responsibility: Owns resumable task progression through isolated work, prospective-tree construction,
+  verification, atomic landing, and archival completion.
+authority: design:repo:docs/SPEC.md#lifecycle
+parent: null
+architecture: []
+contracts: []
