@@ -1,17 +1,41 @@
 # Invariant: Scale agentic coding without architectural drift
 
-Invariant uses a governance derived ontology and a robust Git grounded change lifecycle, 
-to maintain durable architectural intent across complex and long running projects. Read [protocol](protocol/README.md) for the internals 
-of the invariant protocol. This repo is a Python CLI implementation of the same. 
+Agent harnesses know how to reason, plan, dispatch, and resume. Git knows how to preserve exact
+trees and move refs atomically. The dangerous gap is between them: deciding what concurrent agent
+work may change, whether it still means what it intended to mean, and whether it can land without
+overwriting another change.
 
-## What a change goes through
+Invariant is the repository-safety kernel for that gap. It does not replace your harness or Git. It
+gives their handoff a durable contract: accepted architecture and authority live with the code;
+write workers receive isolated worktrees; evidence and review bind to one exact candidate; and the
+integration ref moves atomically or not at all.
 
-![Durable memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, with many changes running it in parallel in one clone.](.github/assets/lifecycle.svg)
+![An agent harness owns reasoning, planning, worker dispatch, and implementation. Invariant sits between the harness and Git as a repository-safety kernel, owning coordination, isolation, authority, exact-tree verification, and atomic attested landing. Git supplies worktrees, immutable trees, branches, and atomic refs.](.github/assets/kernel.svg)
 
-- **Scaled planning and execution.** Well defined contracts and domain structures, allow an agent to clearly plan and parallelize work, 
-and eventually land with safety.
-- **Bounded autonomy.** Touching a recorded decision pauses the lifecycle until a secondary agent
-  — or you, when it lacks the authority — resolves it. 
+## More safe work in flight
+
+Scale here is not the number of model calls. It is how much repository authority you can hand to
+agents — across long-running sessions and genuinely parallel changes — without making a model's
+memory or a conversation transcript the source of truth.
+
+- **The harness owns intelligence and throughput.** Codex, Claude Code, an SDK, or an automation
+  system investigates the repository, proposes a plan, dispatches workers, and implements changes.
+- **Invariant owns repository consequences.** It validates claims and dependencies, isolates every
+  writer, computes the actual reach of the resulting tree, obtains review within recorded authority,
+  runs applicable checks, and controls landing.
+- **Git owns exact state.** Commits and trees identify what was reviewed; linked worktrees separate
+  writers; compare-and-swap makes the integration update atomic; trailers leave an attributable
+  record in history.
+
+A cohesive change remains one work item. A plan becomes parallel only when useful units have
+concrete, non-overlapping claims. Ready units run together; a changed contract converges before its
+consumers begin; then the combined candidate passes the same exact-tree review, verification, and
+landing path as any other change.
+
+If a check fails, a real conflict appears, or authority is missing, the work is retained and the
+integration branch does not move. If another landing wins the race, the candidate is rebuilt and
+reverified against the new head. Routine work continues; consequential work stops at an explicit
+boundary.
 
 ## Quick start
 

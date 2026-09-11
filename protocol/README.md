@@ -66,6 +66,8 @@ leaves the target unchanged. The landed commit carries greppable `Invariant-*` t
 scope, authority, governance, and review provenance. Publication is a separate, optional step; a
 failed push does not undo a verified local landing. See [Verification and landing](protocol.md#4-verification-and-landing).
 
+![Durable repository memory constrains a fixed lifecycle from goal through receipt, isolated worktree, exact candidate, evidence, review within authority, and atomic landing, while many independent changes remain in flight in one clone.](assets/lifecycle.svg)
+
 ## Reach, contract risk, and safe parallelism
 
 What teams often call **blast radius**, the protocol calls **reach**. A plan can estimate reach from

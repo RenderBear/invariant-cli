@@ -1,0 +1,185 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="570" viewBox="0 0 1200 570" role="img" aria-labelledby="title desc">
+  <title id="title">Invariant is the repository-safety kernel between an agent harness and Git</title>
+  <desc id="desc">The agent harness on the left owns reasoning, planning, worker dispatch, and implementation. Invariant in the centre owns coordination, isolated writes, authority, exact-tree review, verification, and atomic landing. Git on the right supplies linked worktrees, immutable candidate trees, branches, and atomic refs. The harness sends intent and edits through Invariant; only an exact, verified, attested candidate reaches the integration branch.</desc>
+
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#626262"/>
+    </marker>
+    <marker id="arrow-accent" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#4f7d1b"/>
+    </marker>
+    <style>
+      .sans { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+      .ink { fill: #171717; }
+      .muted { fill: #626262; }
+      .accent { fill: #4f7d1b; }
+      .hero { font-size: 21px; font-weight: 650; }
+      .label { font-size: 11px; font-weight: 700; letter-spacing: 1.2px; }
+      .title-text { font-size: 15px; font-weight: 650; }
+      .body { font-size: 12px; }
+      .small { font-size: 11px; }
+      .line { fill: none; stroke: #626262; stroke-width: 1.5; marker-end: url(#arrow); }
+      .line-accent { fill: none; stroke: #4f7d1b; stroke-width: 1.8; marker-end: url(#arrow-accent); }
+      .line-dashed { fill: none; stroke: #626262; stroke-width: 1.4; stroke-dasharray: 5 4; marker-end: url(#arrow); }
+      .plane { fill: #ffffff; stroke: #171717; stroke-width: 1.5; }
+      .kernel { fill: #eeeeec; stroke: #171717; stroke-width: 2.5; }
+      .card { fill: #ffffff; stroke: #b8b8b8; stroke-width: 1.2; }
+      .gate { fill: #ffffff; stroke: #171717; stroke-width: 1.5; }
+      .rule { stroke: #b8b8b8; stroke-width: 1; }
+    </style>
+
+    <symbol id="agent" viewBox="0 0 48 48">
+      <rect x="22" y="6" width="4" height="9" fill="#4f7d1b"/>
+      <circle cx="24" cy="5" r="3" fill="#4f7d1b"/>
+      <rect x="6" y="15" width="36" height="28" rx="7" fill="#4f7d1b"/>
+      <circle cx="17" cy="28" r="3.5" fill="#ffffff"/>
+      <circle cx="31" cy="28" r="3.5" fill="#ffffff"/>
+      <rect x="16" y="36" width="16" height="3" rx="1.5" fill="#ffffff"/>
+    </symbol>
+    <symbol id="worktree" viewBox="0 0 48 48">
+      <circle cx="12" cy="10" r="6" fill="#4f7d1b"/>
+      <circle cx="12" cy="38" r="6" fill="#4f7d1b"/>
+      <circle cx="36" cy="18" r="6" fill="#4f7d1b"/>
+      <path d="M12 16v16" stroke="#4f7d1b" stroke-width="4"/>
+      <path d="M36 24c0 8-8 8-20 10" fill="none" stroke="#4f7d1b" stroke-width="4"/>
+    </symbol>
+    <symbol id="shield" viewBox="0 0 48 48">
+      <path d="M24 4l17 6v13c0 10-7 18-17 21C14 41 7 33 7 23V10z" fill="#4f7d1b"/>
+      <path d="M15 24l6 6 12-13" fill="none" stroke="#ffffff" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+    </symbol>
+    <symbol id="tree" viewBox="0 0 48 48">
+      <circle cx="11" cy="9" r="5" fill="#4f7d1b"/>
+      <circle cx="11" cy="39" r="5" fill="#4f7d1b"/>
+      <circle cx="37" cy="24" r="5" fill="#4f7d1b"/>
+      <path d="M11 14v20M16 37c13-1 21-5 21-8M16 11c13 1 21 5 21 8" fill="none" stroke="#4f7d1b" stroke-width="3.5"/>
+    </symbol>
+  </defs>
+
+  <rect width="1200" height="570" fill="#ffffff"/>
+
+  <g class="sans">
+    <text x="24" y="35" class="ink hero">The repository-safety kernel between agents and Git</text>
+    <text x="24" y="58" class="muted body">The harness stays free to reason and scale workers. Invariant controls what becomes repository truth.</text>
+
+    <!-- Agent harness -->
+    <rect x="24" y="92" width="286" height="350" class="plane"/>
+    <text x="44" y="120" class="mono ink label">AGENT HARNESS</text>
+    <text x="44" y="140" class="muted body">Codex · Claude Code · SDK · automation</text>
+
+    <g transform="translate(44,160)">
+      <rect width="246" height="70" class="card"/>
+      <use href="#agent" x="12" y="11" width="48" height="48"/>
+      <text x="74" y="29" class="ink title-text">Reason and plan</text>
+      <text x="74" y="48" class="muted body">interpret intent, inspect code,</text>
+      <text x="74" y="63" class="muted body">propose one change or a work graph</text>
+    </g>
+
+    <g transform="translate(44,240)">
+      <rect width="246" height="70" class="card"/>
+      <text x="16" y="25" class="ink title-text">Dispatch workers</text>
+      <text x="16" y="46" class="muted body">sessions, models, tools, retries</text>
+      <g transform="translate(165,14)">
+        <circle cx="12" cy="12" r="10" fill="#4f7d1b"/>
+        <circle cx="38" cy="12" r="10" fill="#4f7d1b"/>
+        <circle cx="64" cy="12" r="10" fill="#4f7d1b"/>
+        <text x="12" y="16" text-anchor="middle" fill="#ffffff" class="mono small">A</text>
+        <text x="38" y="16" text-anchor="middle" fill="#ffffff" class="mono small">B</text>
+        <text x="64" y="16" text-anchor="middle" fill="#ffffff" class="mono small">C</text>
+      </g>
+    </g>
+
+    <g transform="translate(44,320)">
+      <rect width="246" height="70" class="card"/>
+      <text x="16" y="27" class="ink title-text">Implement and repair</text>
+      <text x="16" y="48" class="muted body">produce edits; respond to grounded</text>
+      <text x="16" y="63" class="muted body">defects; never move the target ref</text>
+    </g>
+    <text x="167" y="420" text-anchor="middle" class="mono muted small">OWNS INTELLIGENCE + THROUGHPUT</text>
+
+    <!-- Invariant kernel -->
+    <rect x="342" y="78" width="400" height="378" class="kernel"/>
+    <rect x="342" y="78" width="8" height="378" fill="#4f7d1b"/>
+    <use href="#shield" x="368" y="99" width="48" height="48"/>
+    <text x="432" y="118" class="mono ink label">INVARIANT</text>
+    <text x="432" y="141" class="ink title-text">Repository-safety kernel</text>
+    <text x="368" y="166" class="muted body">Deterministic where reasoning becomes consequential</text>
+
+    <g transform="translate(368,184)">
+      <rect width="348" height="52" class="gate"/>
+      <text x="16" y="23" class="mono accent label">01  COORDINATE</text>
+      <text x="16" y="41" class="muted body">claims · dependencies · contracts · leases</text>
+    </g>
+    <g transform="translate(368,244)">
+      <rect width="348" height="52" class="gate"/>
+      <text x="16" y="23" class="mono accent label">02  ISOLATE</text>
+      <text x="16" y="41" class="muted body">one linked worktree for every write worker</text>
+    </g>
+    <g transform="translate(368,304)">
+      <rect width="348" height="52" class="gate"/>
+      <text x="16" y="23" class="mono accent label">03  JUDGE THE EXACT TREE</text>
+      <text x="16" y="41" class="muted body">reach · evidence · checks · review in authority</text>
+    </g>
+    <g transform="translate(368,364)">
+      <rect width="348" height="52" class="gate"/>
+      <text x="16" y="23" class="mono accent label">04  LAND</text>
+      <text x="16" y="41" class="muted body">compare-and-swap · trailers · recovery journal</text>
+    </g>
+    <text x="542" y="440" text-anchor="middle" class="mono ink small">OWNS AUTHORITY + CONSEQUENCES</text>
+
+    <!-- Git repository -->
+    <rect x="774" y="92" width="402" height="350" class="plane"/>
+    <text x="794" y="120" class="mono ink label">GIT REPOSITORY</text>
+    <text x="794" y="140" class="muted body">Immutable objects and atomic refs</text>
+
+    <use href="#worktree" x="800" y="165" width="48" height="48"/>
+    <text x="860" y="181" class="ink title-text">Parallel worktrees</text>
+    <text x="860" y="200" class="muted body">independent branches retain every edit</text>
+
+    <g transform="translate(800,224)">
+      <rect width="98" height="32" class="card"/>
+      <text x="49" y="21" text-anchor="middle" class="mono muted small">worktree A</text>
+      <rect x="112" width="98" height="32" class="card"/>
+      <text x="161" y="21" text-anchor="middle" class="mono muted small">worktree B</text>
+      <rect x="224" width="98" height="32" class="card"/>
+      <text x="273" y="21" text-anchor="middle" class="mono muted small">worktree C</text>
+      <path d="M49 32 V56 H161 M161 32 V72 M273 32 V56 H161" fill="none" stroke="#626262" stroke-width="1.4"/>
+      <path d="M161 56 V74" class="line-accent"/>
+      <rect x="76" y="80" width="170" height="48" class="gate"/>
+      <text x="161" y="101" text-anchor="middle" class="ink title-text">Exact candidate tree</text>
+      <text x="161" y="118" text-anchor="middle" class="muted small">one object id, reviewed and verified</text>
+    </g>
+
+    <g transform="translate(800,374)">
+      <text x="0" y="0" class="mono muted small">INTEGRATION BRANCH</text>
+      <path d="M0 28 H332" fill="none" stroke="#171717" stroke-width="2"/>
+      <circle cx="30" cy="28" r="6" fill="#ffffff" stroke="#171717" stroke-width="2"/>
+      <circle cx="122" cy="28" r="6" fill="#ffffff" stroke="#171717" stroke-width="2"/>
+      <circle cx="214" cy="28" r="6" fill="#ffffff" stroke="#171717" stroke-width="2"/>
+      <rect x="302" y="20" width="16" height="16" fill="#4f7d1b"/>
+      <text x="310" y="48" text-anchor="middle" class="mono accent small">attested</text>
+    </g>
+    <text x="975" y="420" text-anchor="middle" class="mono muted small">OWNS IDENTITY + ATOMIC STATE</text>
+
+    <!-- Contracts crossing the boundaries -->
+    <path d="M310 194 H334" class="line-accent"/>
+    <path d="M342 352 H318" class="line-dashed"/>
+
+    <path d="M742 194 H766" class="line-accent"/>
+    <path d="M774 352 H750" class="line"/>
+
+    <!-- Function split -->
+    <rect x="24" y="486" width="1152" height="60" class="card"/>
+    <line x1="310" y1="486" x2="310" y2="546" class="rule"/>
+    <line x1="742" y1="486" x2="742" y2="546" class="rule"/>
+    <text x="44" y="509" class="mono ink label">FUNCTION SPLIT</text>
+    <text x="44" y="530" class="muted body">Models may change. Sessions may end.</text>
+    <text x="334" y="509" class="ink title-text">The boundary survives the worker.</text>
+    <text x="334" y="528" class="muted body">Accepted meaning, exact candidates, and authority</text>
+    <text x="334" y="542" class="muted body">remain inspectable after the worker ends.</text>
+    <text x="766" y="509" class="ink title-text">More workers do not widen trust.</text>
+    <text x="766" y="528" class="muted body">Every path to the integration branch</text>
+    <text x="766" y="542" class="muted body">crosses the same kernel.</text>
+  </g>
+</svg>
