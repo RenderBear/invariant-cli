@@ -1697,7 +1697,7 @@ def _prepare_finish_once(
         retained_discoveries=tuple(retained_discoveries),
     )
     requests = adapters.pending(receipt)
-    semantic_required = bool(analysis.get("required"))
+    semantic_required = bool(analysis.get("required")) or disposition == "recorded"
     completion_assessment = prepared
     if semantic_required and reusable is not None:
         # The accepted review survives an inert movement of the target (protocol §4.3): the

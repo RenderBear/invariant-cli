@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import traceback
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -19,10 +20,11 @@ from invariant.harness.providers import (
     invoke,
     status,
 )
-from invariant.mechanics import receipts
+from invariant.mechanics import config, receipts
 from invariant.mechanics.documents import load_yaml
 from invariant.semantics import sources
 from invariant.semantics.adoption import authoring_schema, projected_record_schema
+from invariant.semantics.schemas import audit_authority_review_schema
 
 
 class Parser(argparse.ArgumentParser):
@@ -264,6 +266,10 @@ def _invoke_and_submit(
     timeout: int,
     semantic_retries: int = 0,
     stamps: dict[str, str] | None = None,
+    response_review: Callable[
+        [dict[str, Any]], tuple[dict[str, Any], dict[str, Any], dict[str, Any]]
+    ]
+    | None = None,
 ) -> dict[str, Any]:
     if timeout <= 0:
         raise AgentInvocationError("timeout must be greater than zero", code="invalid_invocation")
@@ -283,6 +289,11 @@ def _invoke_and_submit(
         for name, value in (stamps or {}).items():
             if name in agent.response:
                 agent.response[name] = value
+        response_value = agent.response
+        review_usage: dict[str, Any] = {}
+        review_metadata: dict[str, Any] = {}
+        if response_review is not None:
+            response_value, review_usage, review_metadata = response_review(response_value)
         for name, value in agent.usage.items():
             prior = usage.get(name)
             usage[name] = (
@@ -291,19 +302,27 @@ def _invoke_and_submit(
                 and isinstance(value, (int, float))
                 else value
             )
+        for name, value in review_usage.items():
+            prior = usage.get(name)
+            usage[name] = (
+                prior + value
+                if isinstance(prior, (int, float))
+                and isinstance(value, (int, float))
+                else value
+            )
         with tempfile.TemporaryDirectory(prefix="invariant-agent-response.") as directory:
-            response = Path(directory) / "response.json"
-            response.write_text(
-                json.dumps(agent.response, separators=(",", ":"), ensure_ascii=False),
+            response_path = Path(directory) / "response.json"
+            response_path.write_text(
+                json.dumps(response_value, separators=(",", ":"), ensure_ascii=False),
                 encoding="utf-8",
             )
             try:
-                invariant = _invariant(repo, *submit, "--input", str(response))
+                invariant = _invariant(repo, *submit, "--input", str(response_path))
             except AgentInvocationError as exc:
                 if attempt >= semantic_retries or exc.code != "invalid_audit":
                     raise
                 prior_response = json.dumps(
-                    agent.response,
+                    response_value,
                     sort_keys=True,
                     indent=2,
                     ensure_ascii=False,
@@ -323,11 +342,12 @@ def _invoke_and_submit(
             "provider": provider.value,
             "session_id": agent.session_id,
             "response_digest": hashlib.sha256(
-                json.dumps(agent.response, sort_keys=True, separators=(",", ":")).encode()
+                json.dumps(response_value, sort_keys=True, separators=(",", ":")).encode()
             ).hexdigest(),
             "usage": usage,
             "invariant": invariant,
             "applied": True,
+            **review_metadata,
         }
     raise AssertionError("unreachable semantic retry loop")
 
@@ -419,7 +439,8 @@ def _governance_audit(args: argparse.Namespace) -> dict[str, Any]:
     frame = _invariant(repo, "governance", "status", args.task_id)
     request = {
         "task": args.task_id,
-        "authority": f"agent:{args.using.value}",
+        "authority": config.resolve(repo).authority,
+        "attribution": f"agent:{args.using.value}",
         "audit_frame": frame,
         "instructions": (
             "Investigate the repository-wide durable responsibilities, architecture, contracts, "
@@ -446,6 +467,92 @@ def _governance_audit(args: argparse.Namespace) -> dict[str, Any]:
     )
     if not args.apply:
         return preview
+
+    def review_authority(
+        audit_response: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+        findings = audit_response.get("findings")
+        if config.resolve(repo).authority != "agent" or not isinstance(findings, list):
+            return audit_response, {}, {}
+        referred = [
+            item
+            for item in findings
+            if isinstance(item, dict) and item.get("disposition") == "needs-authority"
+        ]
+        if not referred:
+            return audit_response, {}, {}
+        review_request = {
+            "task": args.task_id,
+            "authority": "agent",
+            "attribution": f"agent:{args.using.value}",
+            "audit_frame": frame,
+            "findings": referred,
+            "instructions": (
+                "Independently resolve every referred finding under the repository's accepted "
+                "agent authority. Use the exact audited tree and evidence. Mark a finding adoptable "
+                "when accepted policy plus attributable repository or task context is sufficient; "
+                "retain needs-authority only for an actual user choice, external authority, or policy "
+                "change. You may add complete record projections when grounded. Do not add, omit, "
+                "rename, or broaden findings."
+            ),
+        }
+        reviewer = invoke(
+            args.using,
+            cwd,
+            _prompt("governance.authority-review", review_request),
+            audit_authority_review_schema(),
+            model=args.model,
+            timeout=args.timeout,
+        )
+        resolutions = reviewer.response.get("resolutions")
+        if not isinstance(resolutions, list):
+            raise AgentInvocationError(
+                "authority reviewer omitted its resolutions", code="invalid_agent_output"
+            )
+        expected = {str(item["id"]) for item in referred}
+        received = {
+            str(item.get("id")) for item in resolutions if isinstance(item, dict)
+        }
+        if received != expected or len(resolutions) != len(expected):
+            raise AgentInvocationError(
+                "authority reviewer must resolve every referred finding exactly once",
+                code="invalid_agent_output",
+            )
+        by_id = {
+            str(item["id"]): item for item in resolutions if isinstance(item, dict)
+        }
+        merged_findings: list[Any] = []
+        resolved = 0
+        for finding in findings:
+            if not isinstance(finding, dict) or str(finding.get("id")) not in by_id:
+                merged_findings.append(finding)
+                continue
+            resolution = by_id[str(finding["id"])]
+            merged = dict(finding)
+            for name in ("disposition", "authority", "records"):
+                if name in resolution:
+                    merged[name] = resolution[name]
+            if merged.get("disposition") != "needs-authority":
+                resolved += 1
+            merged_findings.append(merged)
+        merged_response = {**audit_response, "findings": merged_findings}
+        review_digest = hashlib.sha256(
+            json.dumps(reviewer.response, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        return (
+            merged_response,
+            reviewer.usage,
+            {
+                "authority_review": {
+                    "provider": args.using.value,
+                    "session_id": reviewer.session_id,
+                    "response_digest": review_digest,
+                    "findings": len(referred),
+                    "resolved": resolved,
+                }
+            },
+        )
+
     return {
         **preview,
         **_invoke_and_submit(
@@ -458,6 +565,7 @@ def _governance_audit(args: argparse.Namespace) -> dict[str, Any]:
             model=args.model,
             timeout=args.timeout,
             semantic_retries=2,
+            response_review=review_authority,
         ),
     }
 

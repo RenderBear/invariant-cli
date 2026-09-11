@@ -151,7 +151,7 @@ def build_parser() -> argparse.ArgumentParser:
     start.set_defaults(handler=_start)
 
     serve = commands.add_parser(
-        "serve", help="run the per-user project and session host"
+        "serve", help="run the read-only project and session state explorer"
     )
     serve.add_argument(
         "--port",
@@ -894,6 +894,7 @@ def _serve(args: argparse.Namespace) -> CommandResult:
         [
             f"ADDRESS: {address}",
             "ACCESS: this OS user — loopback only",
+            "MODE: read-only state explorer",
             "LIFETIME: until this process stops",
         ],
         branded=False,
@@ -1135,9 +1136,9 @@ def _console_session(
     print(style.session_intro(provider.value, active.mode, active.identifier))
 
     def catch_up() -> None:
-        # Turns taken through the served workspace land in the same transcript; show them
-        # before the next prompt so both surfaces read one conversation. A stat decides
-        # whether anything changed, at most once a second, so the prompt is never delayed.
+        # Another console may update the same session. Show those turns before the next
+        # prompt. A stat decides whether anything changed, at most once a second, so the
+        # prompt is never delayed.
         nonlocal seen_messages, seen_revision, checked
         if time.monotonic() - checked < 1.0:
             return

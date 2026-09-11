@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import secrets
-import subprocess
 import sys
 import threading
 import time
@@ -12,9 +10,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
-from invariant import conversation, dashboard, workspace
+from invariant import dashboard, workspace
 from invariant.errors import InvariantError
-from invariant.harness.providers import AgentInvocationError, AgentProvider, invoke_session
 from invariant.observer import (
     EVENT_HEARTBEAT_SECONDS,
     SNAPSHOT_INTERVAL_SECONDS,
@@ -23,24 +20,14 @@ from invariant.observer import (
 )
 
 
-MAX_REQUEST_BYTES = 1_000_000
-
-
 def _public_error(error: Exception) -> tuple[HTTPStatus, dict[str, Any]]:
     if isinstance(error, InvariantError):
         status = {
             "missing_project": HTTPStatus.NOT_FOUND,
             "missing_session": HTTPStatus.NOT_FOUND,
             "project_unavailable": HTTPStatus.CONFLICT,
-            "agent_not_connected": HTTPStatus.CONFLICT,
         }.get(error.code, HTTPStatus.BAD_REQUEST)
         return status, {"error": error.code, "message": error.message, "details": error.lines}
-    if isinstance(error, AgentInvocationError):
-        return HTTPStatus.BAD_GATEWAY, {
-            "error": error.code,
-            "message": error.message,
-            "details": error.lines,
-        }
     return HTTPStatus.INTERNAL_SERVER_ERROR, {
         "error": "internal_error",
         "message": f"Invariant: internal host failure — {type(error).__name__}",
@@ -52,7 +39,6 @@ class WorkspaceHTTPServer(ThreadingHTTPServer):
     daemon_threads = True
 
     def __init__(self, address: tuple[str, int]) -> None:
-        self.csrf_token = secrets.token_urlsafe(32)
         self.stopping = threading.Event()
         self._stores: dict[str, SnapshotStore] = {}
         self._store_references: dict[str, int] = {}
@@ -145,7 +131,7 @@ class WorkspaceRequestHandler(BaseHTTPRequestHandler):
             "Content-Security-Policy",
             "default-src 'self'; connect-src 'self'; img-src 'self'; "
             "script-src 'self'; style-src 'self'; frame-ancestors 'none'; base-uri 'none'; "
-            "form-action 'self'",
+            "form-action 'none'",
         )
         if length is not None:
             self.send_header("Content-Length", str(length))
@@ -179,42 +165,8 @@ class WorkspaceRequestHandler(BaseHTTPRequestHandler):
         port = self.server.server_address[1]
         return host in {f"127.0.0.1:{port}", f"localhost:{port}"}
 
-    def _authorized_write(self) -> bool:
-        if not self._trusted_host():
-            return False
-        if not secrets.compare_digest(
-            self.headers.get("X-Invariant-Token", ""), self.server.csrf_token
-        ):
-            return False
-        origin = self.headers.get("Origin")
-        if origin is None:
-            return True
-        port = self.server.server_address[1]
-        return origin in {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
-
-    def _body(self) -> dict[str, Any]:
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except ValueError:
-            length = 0
-        if not 0 < length <= MAX_REQUEST_BYTES:
-            raise InvariantError("Invariant: invalid host request body", code="invalid_invocation")
-        try:
-            value = json.loads(self.rfile.read(length))
-        except json.JSONDecodeError as exc:
-            raise InvariantError(
-                "Invariant: host request body must be one JSON object",
-                code="invalid_invocation",
-            ) from exc
-        if not isinstance(value, dict):
-            raise InvariantError(
-                "Invariant: host request body must be one JSON object",
-                code="invalid_invocation",
-            )
-        return value
-
     def _workspace_state(self) -> dict[str, Any]:
-        return {**workspace.snapshot(), "csrf_token": self.server.csrf_token}
+        return workspace.snapshot()
 
     def _project_from_query(self) -> str:
         query = parse_qs(urlsplit(self.path).query)
@@ -323,142 +275,15 @@ class WorkspaceRequestHandler(BaseHTTPRequestHandler):
     def do_HEAD(self) -> None:
         self._get(head=True)
 
-    def _turn(self, session_id: str, value: dict[str, Any]) -> dict[str, Any]:
-        message = value.get("message")
-        if not isinstance(message, str) or not message.strip():
-            raise InvariantError("Invariant: session message cannot be empty", code="invalid_invocation")
-        model = value.get("model")
-        if model is not None and not isinstance(model, str):
-            raise InvariantError("Invariant: model must be a string", code="invalid_invocation")
-        timeout = value.get("timeout", 600)
-        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout <= 0:
-            raise InvariantError("Invariant: timeout must be a positive integer", code="invalid_invocation")
-        repo = workspace.session_repo(session_id)
-        with workspace.session_lock(session_id):
-            saved = workspace.session_private(session_id)
-            stored_provider = str(saved.get("provider") or "")
-            requested = AgentProvider(stored_provider) if stored_provider else None
-            provider = conversation.resolve_provider(repo, requested)
-            workspace.append_message(session_id, "user", message.strip())
-            try:
-                result = invoke_session(
-                    provider,
-                    repo,
-                    conversation.prompt(repo, str(saved["mode"]), message),
-                    conversation.schema(str(saved["mode"])),
-                    session_id=str(saved.get("provider_session_id") or "") or None,
-                    model=model,
-                    timeout=timeout,
-                )
-            except AgentInvocationError as exc:
-                workspace.append_message(session_id, "system", exc.message, state="failed")
-                raise
-            response = result.response.get("message")
-            if not isinstance(response, str) or not response.strip():
-                raise InvariantError(
-                    f"Invariant: {provider.value} omitted its session response",
-                    code="invalid_agent_output",
-                )
-            mode = str(saved["mode"])
-            action = "answer" if mode == "ask" else str(result.response.get("action") or "")
-            if action not in {"answer", "change"}:
-                raise InvariantError(
-                    f"Invariant: {provider.value} returned an invalid session action",
-                    code="invalid_agent_output",
-                )
-            workspace.update_session(
-                session_id,
-                provider=provider.value,
-                provider_session_id=result.session_id,
-            )
-            workspace.append_message(session_id, "assistant", response.strip(), action=action)
-            lifecycle: dict[str, Any] | None = None
-            if action == "change":
-                completed = subprocess.run(
-                    [
-                        sys.executable,
-                        "-P",
-                        "-m",
-                        "invariant",
-                        "--format",
-                        "json",
-                        "change",
-                        "--using",
-                        provider.value,
-                        "--timeout",
-                        str(max(timeout, 1800)),
-                        response.strip(),
-                    ],
-                    cwd=repo,
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=max(timeout, 1800) + 30,
-                )
-                try:
-                    lifecycle = json.loads(completed.stdout)
-                except json.JSONDecodeError as exc:
-                    raise InvariantError(
-                        "Invariant: lifecycle command returned invalid JSON",
-                        code="invalid_invariant_output",
-                    ) from exc
-                outcome = str(lifecycle.get("outcome") or "failed")
-                workspace.append_message(
-                    session_id,
-                    "system",
-                    f"Managed change {outcome}.",
-                    state="complete" if completed.returncode == 0 else "failed",
-                    action="change-result",
-                )
-            return {
-                "session": workspace.session(session_id),
-                "response": {
-                    "provider": provider.value,
-                    "message": response.strip(),
-                    "action": action,
-                    "usage": result.usage,
-                },
-                "lifecycle": lifecycle,
-            }
-
-    def do_POST(self) -> None:
-        if not self._authorized_write():
-            self._json(
-                {"error": "host_forbidden", "message": "Invariant: host write was not authorized"},
-                status=HTTPStatus.FORBIDDEN,
-            )
-            return
-        path = urlsplit(self.path).path
-        parts = [part for part in path.split("/") if part]
-        try:
-            value = self._body()
-            if len(parts) == 5 and parts[:3] == ["host", "v1", "projects"] and parts[4] == "sessions":
-                repo = workspace.project_repo(parts[3])
-                theme = value.get("theme")
-                mode = value.get("mode", "ask")
-                if not isinstance(theme, str) or not isinstance(mode, str):
-                    raise InvariantError(
-                        "Invariant: session theme and mode must be strings",
-                        code="invalid_invocation",
-                    )
-                created = workspace.new_session(repo, theme, mode=mode)
-                self._json({"session": created}, status=HTTPStatus.CREATED)
-            elif len(parts) == 5 and parts[:3] == ["host", "v1", "sessions"] and parts[4] == "turns":
-                self._json(self._turn(parts[3], value), status=HTTPStatus.CREATED)
-            else:
-                self._json({"error": "not_found"}, status=HTTPStatus.NOT_FOUND)
-        except Exception as exc:
-            status, payload = _public_error(exc)
-            self._json(payload, status=status)
-
     def _method_not_allowed(self) -> None:
         body = b'{"error":"method_not_allowed"}'
         self.send_response(HTTPStatus.METHOD_NOT_ALLOWED)
         self._headers("application/json; charset=utf-8", len(body))
-        self.send_header("Allow", "GET, HEAD, POST")
+        self.send_header("Allow", "GET, HEAD")
         self.end_headers()
         self.wfile.write(body)
 
+    do_POST = _method_not_allowed
     do_PUT = _method_not_allowed
     do_PATCH = _method_not_allowed
     do_DELETE = _method_not_allowed

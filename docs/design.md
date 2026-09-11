@@ -107,18 +107,19 @@ project-and-session surface. It uses the document palette on Paper, with cyan re
 Invariant wordmark, user turns, and live-connection mark. Green, amber, and red retain their terminal
 meanings for healthy, waiting, and invalid or stale state. No state relies on colour alone.
 
-- The application shell has three semantic columns: explicitly registered project folders, themed
-  sessions in the selected project, and the active conversation with repository activity.
-- Project and session navigation is compact and text-first. The browser never offers a raw path
-  field; folder registration remains an explicit CLI operation.
-- The active session leads with its theme, mode, provider, transcript, and one composer. `ask` and
-  `change` capability are stated beside the composer rather than encoded only by colour.
-- Active lifecycle tasks sit below the conversation as bordered units with stage, freshness, target,
-  and pending action count. Repository identity and stream state remain continuously visible.
+- The application shell has two semantic columns: one file-explorer pane and one state-detail pane.
+  Registered projects are folders; their themed sessions are nested `.session` files in the same
+  tree.
+- Explorer navigation is compact and text-first. Selecting a folder opens repository lifecycle
+  state; selecting a session file adds its retained log. The browser never offers a raw path field,
+  session creation, a composer, or another mutation control.
+- Active lifecycle tasks appear as bordered units with stage, freshness, target, and pending action
+  count. Plans, leases, local processes, governance, and evidence remain visible as compact state
+  summaries. Repository identity and stream state remain continuously visible.
 - The page updates in place without decorative motion. A quiet timestamp and explicit `LIVE`,
   `RECONNECTING`, or `OFFLINE` label communicate stream state.
-- Narrow layouts preserve the same reading order, turning project and session columns into horizontal
-  selectors above the conversation.
+- Narrow layouts preserve the same reading order, placing the scrollable explorer above the state
+  detail.
 
 ## Document exclusions
 

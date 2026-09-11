@@ -501,7 +501,7 @@
 
       <p><strong>The operating philosophy:</strong> free-form agent reasoning for accuracy; deterministic, inspectable state where reasoning becomes consequential; near-zero user ceremony for routine work; and hard authority boundaries when an accepted promise is genuinely at risk.</p>
 
-      <p>Invariant is deliberately narrow. It is not a general knowledge graph, policy language, or workflow framework. A local host may organize repository folders and themed conversations, but that personal workspace is not repository memory or authority. Consequential work still enters the same Git-bound lifecycle.</p>
+      <p>Invariant is deliberately narrow. It is not a general knowledge graph, policy language, or workflow framework. A local host may display repository folders, session files, and lifecycle state, but that personal workspace is not repository memory or authority. Consequential work still enters the same Git-bound lifecycle.</p>
     </section>
 
     <section id="objects" aria-labelledby="objects-title">
@@ -661,6 +661,11 @@
           </div>
         </div>
       </div>
+
+      <aside class="callout">
+        <span class="label">Delegated establishment</span>
+        <p>When repository policy grants agent authority, an audit worker's <code>needs-authority</code> finding goes to a fresh secondary worker before Invariant concludes that no Record is ready. The reviewer can resolve only the referred findings and cannot impersonate a human for policy or genuinely user-owned choices.</p>
+      </aside>
 
       <h3>Minimal envelopes, open meaning</h3>
       <p>The following examples are conceptual, not direct CLI input. They show what the product must preserve without deciding what a proposition means.</p>
@@ -965,9 +970,9 @@
               <td>One state machine should derive these views rather than storing competing truths.</td>
             </tr>
             <tr>
-              <td>Project registration and conversation</td>
+              <td>Project registration and session files</td>
               <td>Personal workspace</td>
-              <td>Host-local navigation and provider context; never repository authority or landing evidence.</td>
+              <td>Host-local navigation and retained provider context; browser display is read-only and never repository authority or landing evidence.</td>
             </tr>
           </tbody>
         </table>

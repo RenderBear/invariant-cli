@@ -22,29 +22,6 @@ def _available_port() -> int:
         return int(listener.getsockname()[1])
 
 
-def _fake_codex(path: Path) -> Path:
-    executable = path / "codex"
-    executable.write_text(
-        "#!/bin/sh\n"
-        "set -eu\n"
-        "if [ \"${1:-}\" = \"--version\" ]; then echo 'codex-cli host-test'; exit 0; fi\n"
-        "if [ \"${1:-}\" = \"login\" ] && [ \"${2:-}\" = \"status\" ]; then echo 'Logged in'; exit 0; fi\n"
-        "output=\n"
-        "while [ \"$#\" -gt 0 ]; do\n"
-        "  if [ \"$1\" = \"--output-last-message\" ]; then shift; output=$1; fi\n"
-        "  shift\n"
-        "done\n"
-        "cat >/dev/null\n"
-        "[ -n \"$output\" ] || exit 3\n"
-        "printf '%s\\n' '{\"message\":\"The durable host session answered.\"}' >\"$output\"\n"
-        "printf '%s\\n' '{\"type\":\"thread.started\",\"thread_id\":\"host-session\"}'\n"
-        "printf '%s\\n' '{\"type\":\"turn.completed\",\"usage\":{\"input_tokens\":1,\"output_tokens\":2}}'\n",
-        encoding="utf-8",
-    )
-    executable.chmod(0o755)
-    return executable
-
-
 def _cli(repo: Path, home: Path, *arguments: str) -> tuple[int, dict]:
     completed = subprocess.run(
         [str(CLI), "--format", "json", *arguments],
@@ -75,14 +52,11 @@ def _wait_for_json(url: str, process: subprocess.Popen[str]) -> dict:
     raise AssertionError(f"host did not become ready: {last_error}")
 
 
-def _post(url: str, value: dict, *, token: str | None = None) -> tuple[int, dict]:
-    headers = {"Content-Type": "application/json"}
-    if token is not None:
-        headers["X-Invariant-Token"] = token
+def _post(url: str, value: dict) -> tuple[int, dict]:
     request = urllib.request.Request(
         url,
         data=json.dumps(value).encode("utf-8"),
-        headers=headers,
+        headers={"Content-Type": "application/json"},
         method="POST",
     )
     try:
@@ -133,11 +107,13 @@ def test_projects_and_sessions_are_machine_local_cli_state(tmp_path: Path) -> No
     assert git(repo, "status", "--porcelain") == ""
 
 
-def test_per_user_host_serves_projects_sessions_turns_and_observation(tmp_path: Path) -> None:
+def test_per_user_host_is_a_read_only_state_and_session_explorer(tmp_path: Path) -> None:
     first_repo = repository(tmp_path / "first")
     second_repo = repository(tmp_path / "second")
     home = tmp_path / "invariant-home"
-    fake = _fake_codex(tmp_path)
+    code, payload = _cli(first_repo, home, "session", "new", "Host architecture", "--mode", "ask")
+    assert code == 0, payload
+    session = payload["result"]["session"]
     port = _available_port()
     process = subprocess.Popen(
         [
@@ -153,9 +129,7 @@ def test_per_user_host_serves_projects_sessions_turns_and_observation(tmp_path: 
         cwd=first_repo,
         env={
             **os.environ,
-            "INVARIANT_CODEX": str(fake),
             "INVARIANT_HOME": str(home),
-            "INVARIANT_DEFAULT_HARNESS": "codex",
             "PYTHONUNBUFFERED": "1",
         },
         stdout=subprocess.PIPE,
@@ -167,7 +141,7 @@ def test_per_user_host_serves_projects_sessions_turns_and_observation(tmp_path: 
     try:
         state = _wait_for_json(f"{base_url}/host/v1/state", process)
         assert [item["name"] for item in state["projects"]] == ["second", "first"]
-        assert state["csrf_token"]
+        assert "csrf_token" not in state
         first = next(item for item in state["projects"] if item["path"] == str(first_repo))
 
         duplicate = subprocess.run(
@@ -185,40 +159,38 @@ def test_per_user_host_serves_projects_sessions_turns_and_observation(tmp_path: 
         with urllib.request.urlopen(f"{base_url}/", timeout=2) as response:
             page = response.read().decode("utf-8")
             assert response.headers["Content-Security-Policy"]
-            assert "Invariant · Local workspace" in page
-            assert "Project themes" in page
-            assert 'id="composer"' in page
+            assert "Invariant · State explorer" in page
+            assert 'aria-label="Project folders and session files"' in page
+            assert "Sessions appear as files and open as read-only logs." in page
+            assert 'id="composer"' not in page
+            assert "<form" not in page
 
         code, payload = _post(
             f"{base_url}/host/v1/projects/{first['id']}/sessions",
             {"theme": "Host architecture", "mode": "ask"},
         )
-        assert code == 403
-        assert payload["error"] == "host_forbidden"
-
-        code, payload = _post(
-            f"{base_url}/host/v1/projects/{first['id']}/sessions",
-            {"theme": "Host architecture", "mode": "ask"},
-            token=state["csrf_token"],
-        )
-        assert code == 201, payload
-        session = payload["session"]
+        assert code == 405
+        assert payload["error"] == "method_not_allowed"
 
         code, payload = _post(
             f"{base_url}/host/v1/sessions/{session['id']}/turns",
             {"message": "What owns the server?"},
-            token=state["csrf_token"],
         )
-        assert code == 201, payload
-        assert payload["response"]["action"] == "answer"
-        assert payload["response"]["message"] == "The durable host session answered."
-        assert [item["role"] for item in payload["session"]["messages"]] == ["user", "assistant"]
+        assert code == 405
+        assert payload["error"] == "method_not_allowed"
 
         with urllib.request.urlopen(f"{base_url}/host/v1/state", timeout=2) as response:
             refreshed = json.load(response)
         summary = next(item for item in refreshed["sessions"] if item["id"] == session["id"])
-        assert summary["message_count"] == 2
+        assert summary["message_count"] == 0
         assert "messages" not in summary
+
+        with urllib.request.urlopen(
+            f"{base_url}/host/v1/sessions/{session['id']}", timeout=2
+        ) as response:
+            opened = json.load(response)
+        assert opened["session"]["theme"] == "Host architecture"
+        assert opened["session"]["messages"] == []
 
         with urllib.request.urlopen(
             f"{base_url}/host/v1/projects/{first['id']}/snapshot", timeout=2
@@ -263,4 +235,4 @@ def test_per_user_host_serves_projects_sessions_turns_and_observation(tmp_path: 
 
     code, payload = _cli(first_repo, home, "session", "show", session["id"])
     assert code == 0, payload
-    assert len(payload["result"]["session"]["messages"]) == 2
+    assert payload["result"]["session"]["messages"] == []

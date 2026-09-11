@@ -56,16 +56,29 @@ if [ "$schema" = true ]; then
     *"Classify one requested repository change"*)
       printf '%s\n' '{"strategy":"single","summary":"One cohesive fixture edit.","units":[]}' >"$output"
       ;;
+    *"Request kind: governance.authority-review"*)
+      task=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"task": "\([^"]*\)",*$/\1/p' | head -n 1)
+      printf '%s\n' "{\"version\":1,\"resolutions\":[{\"id\":\"delegated-ownership\",\"disposition\":\"adoptable\",\"authority\":\"user:task:$task#goal\"}]}" >"$output"
+      ;;
     *"Request kind: governance.audit"*)
       if [ "${FAKE_INVALID_AUDIT:-0}" = 1 ]; then
         printf '%s\n' '{"version":1,"findings":[{"id":"invalid-projection","summary":"The application responsibility should be recorded.","evidence":["repo:app.txt"],"proposed":"domain","disposition":"adoptable","authority":"user:task:invalid-establishment#finding","records":[{"kind":"domain","value":{"id":"application","responsibility":"Owns application behavior.","authority":"user:task:invalid-establishment#finding","parent":null,"architecture":["architecture:missing.md#application"],"contracts":[]}}]}]}' >"$output"
+      elif [ "${FAKE_NEEDS_AUTHORITY:-0}" = 1 ]; then
+        printf '%s\n' '{"version":1,"findings":[{"id":"delegated-ownership","summary":"The application surface has a stable delegated responsibility.","evidence":["repo:app.txt"],"proposed":"domain","disposition":"needs-authority"}]}' >"$output"
       else
         printf '%s\n' '{"version":1,"findings":[]}' >"$output"
       fi
       ;;
     *"Request kind: governance.author"*)
       task=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"task": "\([^"]*\)",*$/\1/p' | head -n 1)
-      printf '%s\n' "{\"version\":1,\"mappings\":[{\"findings\":[\"application-ownership\"],\"records\":[{\"kind\":\"domain\",\"value\":{\"id\":\"application\",\"responsibility\":\"Owns the application file.\",\"authority\":\"user:task:$task#audit\",\"parent\":null,\"architecture\":[],\"contracts\":[]}}]}]}" >"$output"
+      case "$request" in
+        *'delegated-ownership'*)
+          printf '%s\n' "{\"version\":1,\"mappings\":[{\"findings\":[\"delegated-ownership\"],\"records\":[{\"kind\":\"domain\",\"value\":{\"id\":\"delegated\",\"responsibility\":\"Owns the delegated application surface.\",\"authority\":\"user:task:$task#goal\",\"parent\":null,\"architecture\":[],\"contracts\":[]}}]}]}" >"$output"
+          ;;
+        *)
+          printf '%s\n' "{\"version\":1,\"mappings\":[{\"findings\":[\"application-ownership\"],\"records\":[{\"kind\":\"domain\",\"value\":{\"id\":\"application\",\"responsibility\":\"Owns the application file.\",\"authority\":\"user:task:$task#audit\",\"parent\":null,\"architecture\":[],\"contracts\":[]}}]}]}" >"$output"
+          ;;
+      esac
       ;;
     *"Request kind: task.respond"*)
       review_id=$(printf '%s\n' "$request" | sed -n 's/^[[:space:]]*"review_id": "\([^"]*\)",*$/\1/p' | head -n 1)
@@ -345,6 +358,22 @@ printf '%s\n' "$establishment" | grep -q '^STATUS: complete$' ||
 find "$repo/.invariant/audits" -type f -name '*.yml' | grep -q . ||
   die "establishment did not land its durable audit"
 ok "establish runs the audit and lands its durable result"
+
+if ! delegated_establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
+  FAKE_AGENT_LOG="$agent_log" FAKE_AGENT_STDIN="$agent_stdin" \
+  FAKE_NEEDS_AUTHORITY=1 "$cli" establish --id delegated-establishment \
+  --goal "Record the delegated application responsibility" 2>&1); then
+  die "agent authority did not complete after a delegated authority review: $delegated_establishment"
+fi
+printf '%s\n' "$delegated_establishment" | grep -q '^STATUS: complete$' ||
+  die "agent authority did not complete after a delegated authority review"
+printf '%s\n' "$delegated_establishment" | grep -q '^RECORDS: domain:delegated$' ||
+  die "the secondary authority review did not make its grounded record adoptable"
+grep -q 'Request kind: governance.authority-review' "$agent_stdin" ||
+  die "needs-authority findings were not delegated to a fresh secondary agent"
+grep -q '^id: delegated$' "$repo/.invariant/records/domain/delegated.yml" ||
+  die "the authority-reviewed record was not landed"
+ok "agent authority delegates needs-authority findings before deferring them"
 
 mkdir -p "$repo/.invariant/records/domain" "$repo/.invariant/records/constraint"
 cat >"$repo/.invariant/records/domain/lifecycle.yml" <<'EOF'

@@ -104,6 +104,44 @@ def audit_input_example() -> dict[str, Any]:
     }
 
 
+def audit_authority_review_schema() -> dict[str, Any]:
+    return {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "title": "Invariant audit authority review",
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["version", "resolutions"],
+        "properties": {
+            "version": {"const": 1},
+            "resolutions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["id", "disposition"],
+                    "properties": {
+                        "id": {
+                            "type": "string",
+                            "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+                        },
+                        "disposition": {"enum": AUDIT_DISPOSITIONS},
+                        "authority": {
+                            "type": "string",
+                            "minLength": 1,
+                            "description": "Inspectable user:, design:, or architecture: locator.",
+                        },
+                        "records": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": projected_record_schema(),
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
 def assessment_schema() -> dict[str, Any]:
     string_list = {
         "type": "array",

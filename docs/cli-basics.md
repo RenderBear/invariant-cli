@@ -164,15 +164,16 @@ invariant establish --dry-run
 `invariant serve` runs the local workspace at `http://127.0.0.1:3000` for the current OS user until
 that process stops. `invariant init` registers the repository it initializes (and nested
 repositories it finds) for the workspace; `project list` and `project remove` manage that
-machine-local list. The workspace switches between project folders, creates and resumes themed
-sessions, sends session turns, and shows active lifecycle work. A session held by a running
-`invariant start` shows as live, and turns taken from either surface appear in both. It observes only the selected project and receives change notifications through
-Server-Sent Events. Use `invariant serve --port <port>` when the default machine-local port is busy.
+machine-local list. The workspace is a read-only explorer: project folders and their session files
+share one tree on the left, while the selected repository's lifecycle state and optional session log
+appear on the right. A session held by a running `invariant start` shows as live. The browser cannot
+create sessions, send turns, change modes, register folders, or advance lifecycle work; use the CLI
+for those operations. It observes only the selected project and receives change notifications
+through Server-Sent Events. Use `invariant serve --port <port>` when the default machine-local port
+is busy.
 
-Browser session writes require a process-random same-origin token. The browser cannot register an
-arbitrary folder, and a `change` session still delegates implementation to the public managed-change
-command. Project registrations, transcripts, and opaque provider handles live beneath the user's
-Invariant configuration directory; none are repository state or authority.
+Project registrations, transcripts, and opaque provider handles live beneath the user's Invariant
+configuration directory; none are repository state or authority.
 
 Drop a preserved establishment and its proposal without starting another:
 

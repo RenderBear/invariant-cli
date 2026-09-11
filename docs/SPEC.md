@@ -514,6 +514,14 @@ findings, adoption of selected findings, or deferral. The human-facing establish
 that interaction and the exact-proposal acceptance; the user is never handed task, action,
 worktree, or governance-protocol commands.
 
+If an audit produced under agent authority classifies findings as `needs-authority`, the host sends
+exactly those findings to a fresh, read-only secondary agent before deciding that nothing is ready
+to adopt. That authority review sees the same audit frame and exact tree, cannot add or omit
+findings, and may change only disposition, authority, and record projections. It resolves decisions
+covered by the accepted agent policy and retains `needs-authority` only for an actual human choice,
+external authority, or policy change. Human authority continues to stop for the human; secondary
+agent review never impersonates user authority.
+
 A governance pass is exposed as one resumable session while preserving distinct audit, adoption,
 and verification phases. The first pass establishes durable governance; later passes reconcile it
 with the current committed integration state. The managed worktree is opened before audit
@@ -794,7 +802,7 @@ LOCAL   invariant init [--defaults] [--agent <auto|codex|claude>]
 GLOBAL  invariant connect [codex|claude] [--default <codex|claude>]
 LOCAL   invariant ask [--using <provider>] [--dry-run] <prompt>
 LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [--session <id> | --theme <theme>] [<prompt>]
-GLOBAL  invariant serve [--port <port>] [--project <folder>]...
+GLOBAL  invariant serve [--port <port>] [--project <folder>]...  # read-only state explorer
 GLOBAL  invariant project <add|list|remove> ...
 LOCAL   invariant session <new|list|show> ...
 LOCAL   invariant change [--using <provider>] [--id <change-id>] [--dry-run] <prompt>
@@ -1088,16 +1096,14 @@ client opens a registered project.
 
 A session is one transcript whichever surface holds it. `invariant start` marks its session live
 beneath the user's Invariant configuration directory while the console runs, refreshes the mark on
-every turn, and shows turns that arrived through the served workspace before its next prompt. The
-served workspace reports `live` on each session and may take a turn on a live session; the
-per-session lock serializes the two surfaces. Presence is a hint about a process on this machine,
-never authority over the transcript.
+every turn, and retains the transcript for later inspection. The served workspace reports `live` on
+each session but cannot create a session or take a turn. Presence is a hint about a process on this
+machine, never authority over the transcript.
 
-The browser workspace is a focused client: it switches projects, creates and resumes themed
-sessions, sends turns, and shows repository activity. A session turn is handled by the same
-read-only coordinator as the terminal. When `change` mode classifies a request as implementation,
-the host invokes the public `invariant change --format json` boundary; it never reimplements or
-bypasses lifecycle mechanics.
+The browser workspace is a read-only state explorer. Its left pane presents registered projects as
+folders and their themed sessions as nested files. Selecting a folder shows its repository state
+and lifecycle; selecting a session file additionally shows its retained log. Session creation,
+turns, mode changes, project registration, and lifecycle control remain terminal operations.
 
 The stable versioned routes are:
 
@@ -1107,8 +1113,6 @@ GET  /host/v1/state       registered projects and durable sessions
 GET  /host/v1/sessions/<id>  one session transcript
 GET  /host/v1/projects/<id>/snapshot  coherent projection of one repository
 GET  /host/v1/projects/<id>/events    changed snapshots for one repository
-POST /host/v1/projects/<id>/sessions  create a themed session
-POST /host/v1/sessions/<id>/turns     run one session turn
 GET  /api/v1/snapshot?project=<id>    observer compatibility route
 GET  /api/v1/events?project=<id>      observer compatibility stream
 GET  /healthz             host process health
@@ -1132,9 +1136,10 @@ never calls lifecycle continuation, lease renewal, cleanup, or freshness operati
 receipt. A one-off snapshot read never starts an observer: while no event subscriber holds the
 project, the host reuses its last snapshot for as long as the longer of the poll interval and that
 snapshot's own build time, then rebuilds. An observer that is subscribed widens its poll interval to
-its last build time, so an expensive repository is observed at the rate it can afford. Responses use no-store caching and restrictive browser security headers. Every write route
-requires a process-random same-origin token, validates the loopback Host and Origin, and accepts no
-repository path from the browser. Loopback reachability by itself grants no repository authority.
+its last build time, so an expensive repository is observed at the rate it can afford. Responses use
+no-store caching and restrictive browser security headers. The public host implements only GET and
+HEAD; any write method receives `405 Method Not Allowed`. It validates the loopback Host and accepts
+no repository path from the browser. Loopback reachability by itself grants no repository authority.
 
 ## 9. Reach
 

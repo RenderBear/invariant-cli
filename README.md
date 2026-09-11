@@ -93,7 +93,7 @@ invariant set harness claude
 | Ask a read-only repository question | `invariant ask "…"` |
 | Run one managed change | `invariant change "…"` |
 | Keep or resume a themed project conversation | `invariant start [--session <id>]` |
-| Open the local multi-project workspace | `invariant serve` |
+| Open the read-only project and lifecycle explorer | `invariant serve` |
 | Establish or refresh architecture | `invariant establish` |
 | See state or configuration | `invariant status`, `invariant settings` |
 | Add scoped evidence | `invariant source add …` |
