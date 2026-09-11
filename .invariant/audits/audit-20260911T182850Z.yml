@@ -1,0 +1,129 @@
+version: 1
+id: audit-20260911T182850Z
+created_at: '2026-09-11T18:28:50Z'
+ground: 8cee840cb5f377bb1ca892ae3b3d928c02b27129
+tree: e27f365c56945a5ec6fb1f5b3d6b840de94a6145
+mode: full
+findings:
+- id: layered-responsibility-boundaries
+  summary: The repository consistently describes and implements separate semantics, mechanics, lifecycle,
+    CLI, harness, and host responsibilities, with dependency direction from presentation and lifecycle
+    toward deterministic mechanics and semantic data.
+  evidence:
+  - repo:docs/SPEC.md
+  - repo:src/invariant/semantics
+  - repo:src/invariant/mechanics
+  - repo:src/invariant/lifecycle
+  - repo:src/invariant/cli
+  - repo:src/invariant/harness
+  - repo:src/invariant/frontend.py
+  - repo:tests/test_lifecycle_guarantees.py
+  proposed: domain
+  disposition: needs-authority
+- id: protocol-governs-cli-design
+  summary: The repository declares the implementation-independent protocol authoritative over the CLI
+    design, while the CLI design records implementation-specific commands, configuration, runtime layout,
+    and mechanics.
+  evidence:
+  - repo:AGENTS.md
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:src/invariant/protocol.py
+  proposed: architecture
+  disposition: needs-authority
+- id: tracked-governance-versus-evidence
+  summary: Tracked semantic, domain, contract, and constraint records are designed to carry accepted governance,
+    whereas audits, discoveries, sources, runtime receipts, and verification results remain evidence or
+    coordination state and cannot independently create authority.
+  evidence:
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:src/invariant/semantics/records.py
+  - repo:src/invariant/semantics/adoption.py
+  - repo:src/invariant/mechanics/audit.py
+  - repo:src/invariant/mechanics/receipts.py
+  - repo:tests/test-semantic-records.sh
+  - repo:tests/test-audit-support.sh
+  proposed: constraint
+  disposition: needs-authority
+- id: exact-tree-verification-and-atomic-landing
+  summary: 'The protocol, implementation design, mechanics, and product-boundary tests converge on a durable
+    contract: verification concerns one exact prospective tree, and failed or stale evidence must not
+    move the integration target; successful landing uses an atomic local ref update.'
+  evidence:
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:src/invariant/mechanics/landing.py
+  - repo:src/invariant/mechanics/git.py
+  - repo:src/invariant/lifecycle/tasks.py
+  - repo:tests/test_lifecycle_guarantees.py
+  - repo:tests/test_verification_and_governance.py
+  - repo:tests/test_policy_and_movement.py
+  proposed: contract
+  disposition: needs-authority
+- id: stable-cli-wire-boundary
+  summary: 'The installed command-line surface is the compatibility baseline: callers exchange structured
+    inputs and versioned JSON results through the CLI, while richer hosts and adapters are expected to
+    preserve rather than reimplement those semantics.'
+  evidence:
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:pyproject.toml
+  - repo:bin/invariant
+  - repo:src/invariant/entry.py
+  - repo:src/invariant/cli/output.py
+  - repo:src/invariant/semantics/schemas.py
+  - repo:tests/test-agent-protocol.sh
+  - repo:tests/test-cli.sh
+  - repo:.github/workflows/verify.yml
+  proposed: contract
+  disposition: needs-authority
+- id: user-owned-policy-boundary
+  summary: Repository policy in .invariant/config.yml is user-owned; agent-produced candidates cannot
+    authorize policy changes, and landing/history validation enforce user review authority for such changes.
+  evidence:
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:src/invariant/mechanics/config.py
+  - repo:src/invariant/mechanics/landing.py
+  - repo:src/invariant/mechanics/governance.py
+  - repo:tests/test-config-cli.sh
+  - repo:tests/test_policy_and_movement.py
+  proposed: constraint
+  disposition: needs-authority
+- id: generated-runtime-is-nonauthoritative
+  summary: Generated task worktrees, receipts, verification artifacts, plans, leases, and archives live
+    beneath the repository-local runtime namespace and are explicitly non-authoritative; losing runtime
+    must not lose accepted governance or landed history.
+  evidence:
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:src/invariant/mechanics/state.py
+  - repo:src/invariant/mechanics/receipts.py
+  - repo:src/invariant/workspace.py
+  - repo:tests/test-runtime-support.sh
+  - repo:tests/test_recovery_and_protocol.py
+  proposed: constraint
+  disposition: needs-authority
+- id: canonical-architecture-sections-lack-durable-anchors
+  summary: The principal architecture sections in protocol/protocol.md and docs/SPEC.md use ordinary headings
+    rather than explicit {#anchor} suffixes. Because accepted architecture locators require explicit anchors,
+    the otherwise grounded responsibilities and contracts cannot yet be projected unambiguously into valid
+    governance records.
+  evidence:
+  - repo:protocol/protocol.md
+  - repo:docs/SPEC.md
+  - repo:src/invariant/semantics/sources.py
+  - repo:src/invariant/semantics/records.py
+  proposed: discovery
+  disposition: discovery-only
+- id: no-accepted-governance-records-present
+  summary: No tracked .invariant record registry or source index is present in the inspected tree, so
+    repository architecture is documented and executable but has not yet been accepted as durable semantic,
+    domain, contract, or constraint records.
+  evidence:
+  - repo:.invariant/config.yml
+  - repo:docs/SPEC.md
+  - repo:protocol/protocol.md
+  proposed: observation
+  disposition: observation-only
