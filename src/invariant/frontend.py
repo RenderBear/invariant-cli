@@ -266,8 +266,16 @@ def _agent_error(error: AgentInvocationError) -> InvariantError:
         else f"Invariant: {error.message}"
     )
     if error.exit_code == 1:
-        return Blocked(message, code=error.code)
-    return InvariantError(message, code=error.code, exit_code=2)
+        return Blocked(
+            message, code=error.code, lines=list(error.lines), data=error.data
+        )
+    return InvariantError(
+        message,
+        code=error.code,
+        exit_code=2,
+        lines=list(error.lines),
+        data=error.data,
+    )
 
 
 def _identify(error: InvariantError, label: str, identifier: str) -> InvariantError:
@@ -2002,6 +2010,23 @@ def _change_plan_schema() -> dict[str, Any]:
         "type": "array",
         "items": {"type": "string", "minLength": 1},
     }
+    contract_list = {
+        "type": "array",
+        "items": {
+            "type": "string",
+            "pattern": "^contract:[A-Za-z0-9][A-Za-z0-9._-]*$",
+        },
+    }
+    governance_list = {
+        "type": "array",
+        "items": {
+            "type": "string",
+            "pattern": (
+                "^((semantic|domain|contract|constraint):[A-Za-z0-9][A-Za-z0-9._-]*"
+                "|architecture:[^\\s]+#[^\\s]+)$"
+            ),
+        },
+    }
     return {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -2036,9 +2061,9 @@ def _change_plan_schema() -> dict[str, Any]:
                         "dependencies": string_list,
                         "paths": string_list,
                         "interfaces": string_list,
-                        "governance": string_list,
-                        "provides": string_list,
-                        "relies_on": string_list,
+                        "governance": governance_list,
+                        "provides": contract_list,
+                        "relies_on": contract_list,
                         "verifies": string_list,
                     },
                 },
@@ -2047,8 +2072,8 @@ def _change_plan_schema() -> dict[str, Any]:
     }
 
 
-def _change_plan_prompt(repo: Path, goal: str) -> str:
-    return (
+def _change_plan_prompt(repo: Path, goal: str, rejection: str | None = None) -> str:
+    prompt = (
         "Classify one requested repository change before implementation. Inspect the repository "
         "read-only and return exactly one JSON object matching the supplied schema. Choose single "
         "for a small, cohesive, tightly coupled, or uncertain change. Choose parallel only when at "
@@ -2056,12 +2081,20 @@ def _change_plan_prompt(repo: Path, goal: str) -> str:
         "interface, and governance claims. Do not manufacture work merely to use more workers.\n\n"
         "For a parallel plan, give every work item a short stable id, a self-contained objective, "
         "repository-relative path prefixes without globs, exact interface and governance claims, "
-        "and at least one executable verifier locator (command:<executable-path>, test:<test-path>, "
-        "schema:<executable-path>, or a configured runner:<name>#<target>). Unordered work items must "
-        "have disjoint claims.\n\n"
+        "and at least one verifier already supported by the repository: an existing or explicitly "
+        "owned executable command:<path>, a test:<path> only when that test framework is established "
+        "by the repository, an executable schema:<path>, or a configured runner:<name>#<target>. Do "
+        "not invent a test runner. If no reliable per-unit verifier exists, choose single. Unordered "
+        "work items must have disjoint claims.\n\n"
+        "Claim namespaces are strict. paths contains repository-relative prefixes. interfaces contains "
+        "code symbols or schema fragments. governance contains only accepted semantic:, domain:, "
+        "contract:, constraint:, or architecture: locators that the work may change. A test, source "
+        "path, code symbol, or schema fragment is never a governance claim. provides and relies_on "
+        "contain only exact contract:<id> locators; leave them empty for ordinary dependencies.\n\n"
         "Contract synchronization is causal. Work items that consume an unchanged accepted contract "
-        "may run concurrently. If a work item creates or evolves a contract, make it the sole provider "
-        "by listing the same contract locator in governance and provides. Every affected consumer must "
+        "may run concurrently. If a work item creates or evolves an accepted contract record, its "
+        "owned paths must include that .invariant contract record and it is the sole provider by "
+        "listing the same contract:<id> locator in governance and provides. Every affected consumer must "
         "list that locator in relies_on and depend on the provider. The host will converge providers "
         "before creating dependent worktrees. A frontend and backend may therefore run concurrently "
         "against a stable contract, while consumers of an evolving contract must follow its provider.\n\n"
@@ -2070,6 +2103,16 @@ def _change_plan_prompt(repo: Path, goal: str) -> str:
         f"Request:\n{goal.strip()}\n"
         f"{_grounding_prompt(repo)}"
     )
+    if rejection:
+        prompt += (
+            "\n<invariant-plan-repair>\n"
+            "The previous plan was rejected before any worker or lease was created. Return a complete "
+            "replacement plan that corrects every diagnostic. Prefer strategy=single when the safe "
+            "parallel structure is uncertain.\n"
+            f"{rejection}\n"
+            "</invariant-plan-repair>\n"
+        )
+    return prompt
 
 
 def _string_tuple(value: object, label: str) -> tuple[str, ...]:
@@ -2144,6 +2187,21 @@ def _parse_change_plan(
                 f"change planner made '{label}' depend on missing work item '{missing[0]}'",
                 code="invalid_agent_output",
             )
+        provides = _string_tuple(raw.get("provides"), f"provides for '{label}'")
+        relies_on = _string_tuple(raw.get("relies_on"), f"relies_on for '{label}'")
+        invalid_contract = next(
+            (
+                item
+                for item in (*provides, *relies_on)
+                if re.fullmatch(r"contract:[A-Za-z0-9][A-Za-z0-9._-]*", item) is None
+            ),
+            None,
+        )
+        if invalid_contract:
+            raise AgentInvocationError(
+                f"change planner used non-contract locator '{invalid_contract}' in provides/relies_on",
+                code="invalid_agent_output",
+            )
         units.append(
             _ChangeUnit(
                 identifier=identifiers[label],
@@ -2153,8 +2211,8 @@ def _parse_change_plan(
                 paths=_string_tuple(raw.get("paths"), f"paths for '{label}'"),
                 interfaces=_string_tuple(raw.get("interfaces"), f"interfaces for '{label}'"),
                 governance=_string_tuple(raw.get("governance"), f"governance for '{label}'"),
-                provides=_string_tuple(raw.get("provides"), f"provides for '{label}'"),
-                relies_on=_string_tuple(raw.get("relies_on"), f"relies_on for '{label}'"),
+                provides=provides,
+                relies_on=relies_on,
                 verifies=_string_tuple(raw.get("verifies"), f"verifiers for '{label}'"),
             )
         )
@@ -2169,12 +2227,13 @@ def _plan_change(
     *,
     model: str | None,
     timeout: int,
+    rejection: str | None = None,
 ) -> tuple[_ChangePlan, dict[str, Any]]:
     try:
         result = invoke(
             provider,
             repo,
-            _change_plan_prompt(repo, goal),
+            _change_plan_prompt(repo, goal, rejection),
             _change_plan_schema(),
             model=model,
             timeout=timeout,
@@ -2406,6 +2465,47 @@ def _validate_unit_paths(unit: _ChangeUnit, changed: list[str]) -> None:
             )
 
 
+_DISPOSABLE_UNTRACKED_COMPONENTS = {
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+}
+_DISPOSABLE_UNTRACKED_NAMES = {".coverage", ".DS_Store"}
+
+
+def _discard_disposable_untracked(worktree: Path) -> list[str]:
+    """Remove recognized tool caches without touching tracked or ordinary untracked work."""
+
+    output = git.run(
+        ["ls-files", "--others", "--exclude-standard", "-z"],
+        cwd=worktree,
+        check=False,
+    ).stdout
+    discarded: list[str] = []
+    for relative in sorted({item for item in output.split("\0") if item}):
+        candidate = Path(relative)
+        disposable = (
+            candidate.name in _DISPOSABLE_UNTRACKED_NAMES
+            or candidate.suffix in {".pyc", ".pyo"}
+            or any(part in _DISPOSABLE_UNTRACKED_COMPONENTS for part in candidate.parts)
+        )
+        if not disposable:
+            continue
+        path = worktree / candidate
+        if path.is_file() or path.is_symlink():
+            path.unlink()
+            discarded.append(relative)
+        for parent in path.parents:
+            if parent == worktree:
+                break
+            try:
+                parent.rmdir()
+            except OSError:
+                break
+    return discarded
+
+
 def _prepare_parallel_unit(
     provider: AgentProvider,
     worktree: Path,
@@ -2571,6 +2671,7 @@ def _run_parallel_change(
                     unit, branch, worktree = futures[future]
                     try:
                         result = future.result()
+                        _discard_disposable_untracked(worktree)
                         changed = git.changed_paths(worktree)
                         _validate_unit_paths(unit, changed)
                         commit = _commit_candidate(worktree, unit.objective)
@@ -2619,7 +2720,11 @@ def _acquire_convergence_lease(
     domains: list[str],
     selected_interfaces: list[str],
 ) -> None:
-    paths = sorted({path for unit in plan.units for path in unit.paths})
+    paths = sorted(
+        {path for unit in plan.units for path in unit.paths}.union(
+            git.changed_paths(convergence, base)
+        )
+    )
     interfaces = sorted(
         {name for unit in plan.units for name in unit.interfaces}.union(
             selected_interfaces
@@ -2668,7 +2773,47 @@ def _change_prompt(repo: Path, change_id: str, goal: str) -> str:
     )
 
 
+def _review_correction_prompt(
+    repo: Path,
+    change_id: str,
+    goal: str,
+    review: dict[str, Any],
+) -> str:
+    defects = review.get("candidate_defects")
+    defect_lines = (
+        "\n".join(f"- {item}" for item in defects if isinstance(item, str))
+        if isinstance(defects, list)
+        else ""
+    )
+    return (
+        "You are the candidate author correcting an Invariant-managed change after a separate "
+        "read-only semantic review. Inspect the current candidate and fix every grounded defect "
+        "below. The reviewer has authority to reject, but not to edit; you may edit, but you do not "
+        "accept or attest your own correction. Invariant will construct a new exact tree, rerun its "
+        "checks, and dispatch a fresh review. Do not invoke Invariant, edit runtime receipts, create "
+        "commits, push, publish, or perform unrelated work. Leave the correction in the working tree.\n\n"
+        f"Change ID: {change_id}\nOriginal request:\n{goal.strip()}\n\n"
+        f"Rejected candidate tree: {review.get('candidate_tree') or 'unknown'}\n"
+        f"Reviewer summary: {review.get('summary') or 'Candidate not accepted.'}\n"
+        f"Candidate defects:\n{defect_lines or '- Resolve the reviewer summary above.'}\n"
+        f"{_grounding_prompt(repo)}"
+    )
+
+
+def _latest_rejected_review(
+    repo: Path, change_id: str, candidate_tree: str
+) -> dict[str, Any] | None:
+    directory = receipts.task_root(repo, change_id) / "rejected-reviews"
+    matches: list[tuple[float, dict[str, Any]]] = []
+    for path in directory.glob("*.yml") if directory.is_dir() else []:
+        raw = load_yaml(path)
+        if isinstance(raw, dict) and raw.get("candidate_tree") == candidate_tree:
+            matches.append((path.stat().st_mtime, raw))
+    return max(matches, key=lambda item: item[0])[1] if matches else None
+
+
 def _commit_candidate(worktree: Path, subject: str) -> str:
+    _discard_disposable_untracked(worktree)
     paths = git.changed_paths(worktree)
     if not paths:
         raise Blocked(
@@ -2758,6 +2903,7 @@ def _change(args: argparse.Namespace) -> CommandResult:
     _core(repo, *begin)
     plan: _ChangePlan | None = None
     plan_usage: dict[str, Any] = {}
+    plan_attempts = 0
     try:
         initial_task = _task(repo, change_id)
         resume_review = initial_task.get("stage") == "awaiting-review"
@@ -2801,23 +2947,50 @@ def _change(args: argparse.Namespace) -> CommandResult:
                 "Choosing the smallest safe execution plan",
                 done="Chose the execution plan",
             ):
-                plan, plan_usage = _plan_change(
-                    provider,
-                    worktree,
-                    change_id,
-                    args.prompt,
-                    model=args.model,
-                    timeout=args.timeout,
-                )
-                _persist_change_plan(
-                    repo,
-                    change_id,
-                    args.prompt,
-                    plan,
-                    target=target,
-                    ground=base,
-                    domains=args.domain,
-                )
+                rejection: str | None = None
+                plan_usages: list[dict[str, Any]] = []
+                for attempt in range(1, 4):
+                    plan_attempts = attempt
+                    try:
+                        proposed, usage = _plan_change(
+                            provider,
+                            worktree,
+                            change_id,
+                            args.prompt,
+                            model=args.model,
+                            timeout=args.timeout,
+                            rejection=rejection,
+                        )
+                        plan_usages.append(usage)
+                        _persist_change_plan(
+                            repo,
+                            change_id,
+                            args.prompt,
+                            proposed,
+                            target=target,
+                            ground=base,
+                            domains=args.domain,
+                        )
+                    except AgentInvocationError as exc:
+                        if exc.code != "invalid_agent_output" or attempt == 3:
+                            raise
+                        rejection = f"PLAN: invalid — {exc.message}"
+                        continue
+                    except InvariantError as exc:
+                        if exc.code != "invalid_plan" or attempt == 3:
+                            raise
+                        rejection = "\n".join(
+                            [exc.message, *exc.lines]
+                        )
+                        continue
+                    plan = proposed
+                    break
+                plan_usage = _aggregate_usage(plan_usages)
+                if plan is None:
+                    raise InvariantError(
+                        "Invariant: planner did not produce a valid execution plan",
+                        code="invalid_plan",
+                    )
         if resume_review:
             agent = AgentWriteResult(provider, "", "", {})
             candidate_commit = git.resolve(worktree, "HEAD") or ""
@@ -2876,18 +3049,77 @@ def _change(args: argparse.Namespace) -> CommandResult:
             candidate_commit = _commit_candidate(worktree, args.prompt)
             checks = ()
         subject_text = re.sub(r"\s+", " ", args.prompt).strip()[:64]
-        with style.activity(
-            "Verifying and landing the exact change", done="Verified and landed the exact change"
-        ):
-            finished = _finish_change(
-                repo,
-                change_id,
-                provider,
-                subject=f"Invariant change: {subject_text}",
-                model=args.model,
-                timeout=args.timeout,
-                checks=checks,
-            )
+        review_repairs: list[dict[str, Any]] = []
+        review_usages: list[dict[str, Any]] = []
+        pending_rejection = _latest_rejected_review(
+            repo, change_id, git.resolve(worktree, "HEAD", "tree") or ""
+        )
+        for review_attempt in range(3):
+            if pending_rejection is not None:
+                with style.activity(
+                    f"{_provider_name(provider)} is correcting the independent review defects",
+                    done=f"{_provider_name(provider)} corrected the review defects",
+                ):
+                    correction = invoke_change(
+                        provider,
+                        worktree,
+                        _review_correction_prompt(
+                            worktree, change_id, args.prompt, pending_rejection
+                        ),
+                        model=args.model,
+                        timeout=args.timeout,
+                    )
+                    candidate_commit = _commit_candidate(
+                        worktree, f"Address independent review for {change_id}"
+                    )
+                    if plan.parallel:
+                        _acquire_convergence_lease(
+                            repo,
+                            change_id,
+                            worktree,
+                            plan,
+                            target=target,
+                            base=base,
+                            domains=args.domain,
+                            selected_interfaces=args.interface,
+                        )
+                review_repairs.append(
+                    {
+                        "rejected_tree": str(
+                            pending_rejection.get("candidate_tree") or ""
+                        ),
+                        "summary": correction.message,
+                        "session_id": correction.session_id,
+                    }
+                )
+                review_usages.append(correction.usage)
+                pending_rejection = None
+            try:
+                with style.activity(
+                    "Verifying and landing the exact change",
+                    done="Verified and landed the exact change",
+                ):
+                    finished = _finish_change(
+                        repo,
+                        change_id,
+                        provider,
+                        subject=f"Invariant change: {subject_text}",
+                        model=args.model,
+                        timeout=args.timeout,
+                        checks=checks,
+                    )
+                break
+            except InvariantError as exc:
+                review = exc.data.get("review") if isinstance(exc.data, dict) else None
+                if (
+                    exc.code != "candidate_not_accepted"
+                    or not isinstance(review, dict)
+                    or review_attempt == 2
+                ):
+                    raise
+                pending_rejection = review
+        else:
+            raise AssertionError("unreachable review correction loop")
     except AgentInvocationError as exc:
         raise _identify(_agent_error(exc), "CHANGE", change_id) from exc
     except InvariantError as exc:
@@ -2909,6 +3141,8 @@ def _change(args: argparse.Namespace) -> CommandResult:
     if agent.message:
         summary_text = re.sub(r"\s+", " ", agent.message).strip()
         lines.append(f"SUMMARY: {summary_text}")
+    if review_repairs:
+        lines.append(f"REVIEW-REPAIRS: {len(review_repairs)}")
     return CommandResult(
         lines,
         {
@@ -2918,12 +3152,14 @@ def _change(args: argparse.Namespace) -> CommandResult:
             "candidate_commit": candidate_commit,
             "commit": landed,
             "session_id": agent.session_id,
-            "usage": _aggregate_usage([plan_usage, agent.usage]),
+            "usage": _aggregate_usage([plan_usage, agent.usage, *review_usages]),
             "summary": agent.message,
+            "review_repairs": review_repairs,
             "plan": {
                 "strategy": plan.strategy if plan else "single",
                 "summary": plan.summary if plan else "",
                 "units": [unit.plan_row() for unit in plan.units] if plan else [],
+                "attempts": plan_attempts,
             },
             **finished,
         },

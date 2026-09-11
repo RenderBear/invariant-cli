@@ -124,6 +124,31 @@ units:
 EOF
 if (cd "$fixture" && "$compat" workboard validate bad >/dev/null 2>&1); then die "unordered provider and consumer were accepted"; fi
 ok "provider-before-consumer order is mechanical"
+
+cat >"$runtime/plans/bad.yml" <<EOF
+version: 1
+id: bad
+goal: Invalid model-facing contract vocabulary.
+integration_target: main
+integration_ground: $ground
+domains: []
+governing_digest: $empty_digest
+units:
+  - id: setter
+    objective: Set a boundary.
+    dependencies: []
+    paths: [schema/demo.yml]
+    provides: [contract:demo#fragment]
+    verifies: [test:setter]
+  - id: consumer
+    objective: Consume the boundary.
+    dependencies: [setter]
+    paths: [consumer]
+    relies_on: [contract:demo#fragment]
+    verifies: [test:consumer]
+EOF
+if (cd "$fixture" && "$compat" workboard validate bad >/dev/null 2>&1); then die "malformed contract locator was accepted"; fi
+ok "provider and reliance vocabulary is restricted to exact contract locators"
 rm -f "$runtime/plans/bad.yml"
 
 out=$(cd "$fixture" && "$compat" workboard-status demo)
@@ -155,4 +180,4 @@ printf '%s\n' "$msg" | grep -q '^Invariant-Plan: demo$' || die "message omits pl
 printf '%s\n' "$msg" | grep -q '^Invariant-Unit: web$' || die "message omits bundled unit"
 ok "one convergence message can contain several bundled units"
 
-echo "8 plan checks passed"
+echo "9 plan checks passed"

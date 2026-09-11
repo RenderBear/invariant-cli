@@ -37,11 +37,15 @@ class AgentInvocationError(Exception):
         *,
         code: str = "agent_invocation_failed",
         exit_code: int = 2,
+        lines: list[str] | None = None,
+        data: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(message)
         self.message = message
         self.code = code
         self.exit_code = exit_code
+        self.lines = lines or []
+        self.data = data
 
 
 @dataclass(frozen=True)

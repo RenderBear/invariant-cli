@@ -125,8 +125,17 @@ def validate_plan(repo: Path, value: str) -> list[str]:
             elif dependency not in units:
                 failures.append(f"unit {unit} depends on missing unit {dependency}")
         for provided in governance.refs(item.get("provides")):
+            if re.fullmatch(r"contract:[A-Za-z0-9][A-Za-z0-9._-]*", provided) is None:
+                failures.append(
+                    f"unit {unit} provides {provided}; provides accepts only contract:<id> locators"
+                )
             if provided not in claims:
                 failures.append(f"unit {unit} provides {provided} without claiming it as governance")
+        for reliance in governance.refs(item.get("relies_on")):
+            if re.fullmatch(r"contract:[A-Za-z0-9][A-Za-z0-9._-]*", reliance) is None:
+                failures.append(
+                    f"unit {unit} relies on {reliance}; relies_on accepts only contract:<id> locators"
+                )
 
     def depends(unit: str, target_unit: str, visiting: set[str] | None = None) -> bool:
         visiting = visiting or set()

@@ -270,7 +270,7 @@ if invalid_establishment=$(cd "$repo" && PATH="$fake_bin:$PATH" \
 fi
 printf '%s\n' "$invalid_establishment" | grep -q '^STATUS: stopped$' ||
   die "failed establishment did not state that it stopped"
-printf '%s\n' "$invalid_establishment" | grep -q "^PROBLEM: invalid audit: .*architecture 'missing.md' does not exist" ||
+printf '%s\n' "$invalid_establishment" | grep -q "^PROBLEM: .*architecture 'missing.md' does not exist" ||
   die "failed establishment hid the concrete generated-record problem"
 printf '%s\n' "$invalid_establishment" | grep -q '^SAVED: repository inspection and unfinished work$' ||
   die "failed establishment did not identify retained work"
@@ -279,7 +279,7 @@ printf '%s\n' "$invalid_establishment" | grep -q "^NEXT: retry from saved work w
 retry_status=$(cd "$repo" && PATH="$fake_bin:$PATH" "$cli" status)
 printf '%s\n' "$retry_status" | grep -q '^CHANGE: Repository records — needs retry$' ||
   die "status hid the failed repository-record attempt"
-printf '%s\n' "$retry_status" | grep -q "^PROBLEM: invalid audit: .*architecture 'missing.md' does not exist" ||
+printf '%s\n' "$retry_status" | grep -q "^PROBLEM: .*architecture 'missing.md' does not exist" ||
   die "status hid the retry reason"
 printf '%s\n' "$retry_status" | grep -q "^NEXT: retry from saved work with 'invariant establish'$" ||
   die "status did not expose the public retry command"

@@ -168,13 +168,24 @@ def _invariant(repo: Path, *arguments: str) -> dict[str, Any]:
         )
     if completed.returncode:
         diagnostics = payload.get("diagnostics")
+        result = payload.get("result")
+        data = result if isinstance(result, dict) else None
+        lines = [
+            f"{item['name']}: {item['value']}"
+            for item in (result.get("records", []) if isinstance(result, dict) else [])
+            if isinstance(item, dict) and item.get("name") and item.get("value") is not None
+        ]
         message = "Invariant rejected the harness request"
         code = "invariant_rejected"
         if isinstance(diagnostics, list) and diagnostics and isinstance(diagnostics[0], dict):
             message = str(diagnostics[0].get("message") or message)
             code = str(diagnostics[0].get("code") or code)
         raise AgentInvocationError(
-            message, code=code, exit_code=1 if completed.returncode == 1 else 2
+            message,
+            code=code,
+            exit_code=1 if completed.returncode == 1 else 2,
+            lines=lines,
+            data=data,
         )
     return payload
 

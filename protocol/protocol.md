@@ -318,6 +318,11 @@ Rules:
    human acceptance or `review_mode: independent`. An independent reviewer did not author any
    candidate work item and receives the exact candidate in a fresh review session. Self-attestation
    is refused for this boundary. Review cannot override a failed verifier.
+10. A rejected or uncertain review does not resolve its action. Its summary and candidate defects
+    remain attached to the exact candidate and are returned to the host. A host MAY route those
+    defects to a candidate author for correction, but the author cannot convert that rejection into
+    acceptance: every corrected tree receives new evidence and, when independence is required, a
+    fresh independent review.
 
 Responses are submitted by action id. Editing runtime files is not a response.
 
@@ -528,8 +533,12 @@ dispatches write workers. The policy keeps a small or tightly coupled Change in 
 creates multiple work items only when at least two have concrete, non-overlapping claims and can make
 meaningful progress independently. Ready work items SHOULD run concurrently; dependency edges, claim
 overlap, or a shared mutable surface require ordering rather than optimistic concurrent writes.
+The host validates a proposed plan before dispatch. It MAY return concrete validation failures to the
+planner for a bounded number of repair attempts; no invalid attempt creates a lease or write worker.
 
-Contract synchronization is causal. Work items that only consume an unchanged accepted contract may
+Contract synchronization is causal. `provides` and `relies_on` contain only exact `contract:<id>`
+locators; code symbols, schemas, tests, and paths remain interface, verification, or path claims.
+Work items that only consume an unchanged accepted contract may
 run concurrently. When a work item creates or evolves a contract, it is the sole provider for that
 contract in the plan, and every affected consumer depends on it. The host MUST converge the provider
 into the Change candidate before dispatching those consumers, and consumers MUST start from that

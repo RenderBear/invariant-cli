@@ -166,6 +166,28 @@ def test_assessment_cannot_land_governed_prose_without_a_review(tmp_path: Path) 
     action = payload["result"]["task"]["actions"][0]["id"]
     code, payload = _invariant(repo, "task", "action", "rewrite", action)
     context = payload["result"]["action"]["context"]
+    rejected = tmp_path / "rejected-review.yml"
+    rejected.write_text(
+        "version: 1\n"
+        f"review_id: {context['review_id']}\n"
+        f"candidate_tree: {context['candidate_tree']}\n"
+        "verdict: rejected\n"
+        "summary: The candidate still contradicts the accepted source rule.\n"
+        "semantic_effect: recorded\n"
+        "authority: agent:independent-reviewer\n"
+        "review_mode: independent\n"
+        "candidate_defects: [The source ownership rule is unresolved.]\n"
+        "retained_discoveries: []\n"
+    )
+    code, payload = _invariant(
+        repo, "task", "respond", "rewrite", action, "--input", str(rejected)
+    )
+    assert code == 1
+    assert _codes(payload) == ["candidate_not_accepted"], payload
+    assert payload["result"]["review"]["candidate_defects"] == [
+        "The source ownership rule is unresolved."
+    ]
+    assert Path(payload["result"]["rejection"]).is_file()
     review = tmp_path / "review.yml"
     review.write_text(
         "version: 1\n"
@@ -181,6 +203,35 @@ def test_assessment_cannot_land_governed_prose_without_a_review(tmp_path: Path) 
     assert code == 0, payload
     assert payload["result"]["task"]["stage"] == "completed"
     assert "Anything may own" in _git(repo, "show", "main:docs/architecture.md")
+
+
+def test_python_test_locator_runs_stdlib_unittest_without_pytest(tmp_path: Path) -> None:
+    repo = _repository(tmp_path / "repo")
+    test_file = repo / "tests" / "test_stdlib.py"
+    test_file.parent.mkdir()
+    test_file.write_text(
+        "import unittest\n\n"
+        "class ArithmeticTest(unittest.TestCase):\n"
+        "    def test_sum(self):\n"
+        "        self.assertEqual(2 + 2, 4)\n"
+    )
+    _git(repo, "add", "tests/test_stdlib.py")
+    _git(repo, "commit", "-qm", "add stdlib test")
+    worktree = _begin(repo, "stdlib-verifier")
+    _implement(worktree, "src/result.txt", "verified\n")
+
+    code, payload = _invariant(
+        repo,
+        "task",
+        "finish",
+        "stdlib-verifier",
+        "--check",
+        "test:tests/test_stdlib.py",
+    )
+
+    assert code == 0, payload
+    assurance = payload["result"]["task"]["assurance"]
+    assert assurance["behavioral"]["status"] == "passed"
 
 
 def test_concurrent_lease_acquisition_grants_one_holder(tmp_path: Path) -> None:

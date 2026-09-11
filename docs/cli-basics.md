@@ -134,6 +134,12 @@ isolated worktrees. When one work item creates or changes a contract, its consum
 start from the converged contract snapshot; unrelated frontend and backend work may still proceed in
 parallel.
 
+Invariant validates the proposed execution plan before starting any worker. It gives the planner up
+to two chances to repair concrete plan errors and falls back to a single work item when safe
+parallelism is unclear. Generated tool caches do not count as worker output. If an independent
+review rejects a candidate, `change` shows and retains its defects, sends them back to the author for
+a bounded correction, reruns the checks, and asks a fresh reviewer before landing.
+
 Establish or refresh durable repository records:
 
 ```bash

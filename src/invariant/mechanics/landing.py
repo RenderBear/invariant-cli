@@ -645,6 +645,11 @@ def _nearest_project(repo: Path, candidate: Path, marker: str) -> Path | None:
 def _python_test_command(repo: Path, spec: str) -> ResolvedVerifier:
     path, separator, selector = spec.partition("::")
     candidate = _repository_path(repo, path, "test verifier")
+    if not candidate.is_file():
+        raise Blocked(
+            f"Invariant: test verifier 'test:{spec}' is absent from the candidate",
+            code="verification_failed",
+        )
     workspace = _nearest_project(repo, candidate, "pyproject.toml") or repo
     relative = candidate.relative_to(workspace).as_posix()
     selected = f"{relative}::{selector}" if separator else relative
@@ -652,8 +657,15 @@ def _python_test_command(repo: Path, spec: str) -> ResolvedVerifier:
         command = ("uv", "run", "--frozen", "pytest", selected)
         runner = "uv-pytest"
         cache = "exact-tree"
+    elif not separator and re.search(
+        r"(?m)^\s*(?:from\s+unittest\s+import|import\s+unittest\b)",
+        candidate.read_text(encoding="utf-8", errors="replace"),
+    ):
+        command = (sys.executable, "-m", "unittest", relative)
+        runner = "python-unittest"
+        cache = "never"
     else:
-        command = ("python3", "-m", "pytest", selected)
+        command = (sys.executable, "-m", "pytest", selected)
         runner = "python-pytest"
         cache = "never"
     return ResolvedVerifier(
@@ -822,6 +834,7 @@ def _verification_paths(repo: Path, key: str) -> tuple[Path, Path]:
 
 def _verification_environment(command: tuple[str, ...]) -> dict[str, str]:
     environment = os.environ.copy()
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
     if command[:2] == ("uv", "run"):
         # A verifier executes from an exact candidate worktree. Reusing the parent command's
         # project environment can make uv wait on or silently select a different checkout's

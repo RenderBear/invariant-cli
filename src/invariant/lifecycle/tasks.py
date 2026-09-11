@@ -1598,6 +1598,7 @@ def _apply_core_review(
     source: str,
 ) -> CandidateReview:
     review = CandidateReview.load(source)
+    local = receipts.task_root(repo, task)
     context = request.get("context") if isinstance(request.get("context"), dict) else {}
     if (
         review.review_id != context.get("review_id")
@@ -1608,9 +1609,26 @@ def _apply_core_review(
             code="stale_candidate_review",
         )
     if review.verdict != "accepted" or review.candidate_defects:
+        rejection_path = local / "rejected-reviews" / f"{review.digest}.yml"
+        dump_yaml(rejection_path, review.as_dict())
+        lines = [
+            f"REVIEW: {review.verdict} — {review.review_mode} — {review.authority}",
+            f"SUMMARY: {review.summary}",
+            *[f"DEFECT: {item}" for item in review.candidate_defects],
+            "RECOVERY: candidate, evidence, and rejected review retained; integration target unchanged",
+            f"NEXT: correct the candidate in its managed worktree, then rerun 'invariant change --id {task} <same request>'",
+        ]
         raise Blocked(
             "Invariant: candidate review must accept the candidate without unresolved candidate defects",
             code="candidate_not_accepted",
+            lines=lines,
+            data={
+                "task": task,
+                "stage": "awaiting-review",
+                "action": str(request.get("id") or "core:candidate-review"),
+                "review": review.as_dict(),
+                "rejection": str(rejection_path),
+            },
         )
     allowed_discoveries = {
         str(item)
@@ -1638,7 +1656,6 @@ def _apply_core_review(
             "Invariant: this candidate requires a human or independent semantic review",
             code="independent_review_required",
         )
-    local = receipts.task_root(repo, task)
     assessment_path = local / "prepared-assessment.yml"
     raw = load_yaml(assessment_path)
     if not isinstance(raw, dict):

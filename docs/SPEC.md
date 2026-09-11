@@ -527,7 +527,10 @@ agent again. Newly generated record locators are validated when the audit is sav
 in the harness's bounded semantic correction loop.
 
 Ordinary `test:` verifier locators require no configuration. The verifier resolves execution from
-the exact candidate: Python tests locate the nearest `pyproject.toml`; shell tests in a locked uv
+the exact candidate: Python tests locate the nearest `pyproject.toml`; files that use the standard
+library `unittest` framework run with that framework, while other Python tests use pytest. The
+interpreter running Invariant is used for an unlocked fallback so resolution does not silently drift
+to a different PATH environment. Shell tests in a locked uv
 project execute through `uv run --frozen`; standalone shell tests execute through POSIX `sh`.
 Candidate uv execution discards host-checkout virtual-environment selection so invoking Invariant
 itself through `uv run` cannot redirect or stall the verifier environment.
@@ -1203,6 +1206,11 @@ The public `change` host performs a read-only classification before implementati
 tightly coupled request remains one work item. A request becomes a parallel plan only when at least
 two useful work items have disjoint path, interface, and governance claims. The host dispatches all
 ready work items concurrently, up to its worker limit, and orders overlapping or dependent work.
+Every proposed plan is validated before dispatch. Invalid structured output is returned to the
+planner with its concrete diagnostics for at most two repair attempts; failed attempts create no
+leases or workers. `provides` and `relies_on` accept only exact `contract:<id>` locators. Paths,
+schema fragments, code symbols, and tests belong in their corresponding claim fields and cannot be
+smuggled through the contract dependency graph.
 
 An unchanged accepted contract may be consumed by independent work items concurrently. Creating or
 evolving a contract requires exactly one provider work item; affected consumers declare reliance and
@@ -1214,6 +1222,10 @@ review, verification, and atomic landing lifecycle.
 Plans describe units, dependencies, path/interface/governance claims, provides/relies relationships,
 and checks. Leases record temporary ownership against an integration ground and causal branch tip.
 
+Before checking a worker's path claims, the host removes only recognized untracked tool caches such
+as Python bytecode and pytest cache entries. Tracked files are never removed, and ordinary untracked
+files still participate in claim enforcement.
+
 The CLI mechanically validates:
 
 - target and ground existence;
@@ -1222,6 +1234,12 @@ The CLI mechanically validates:
 - unordered claim overlap;
 - selected governance digests;
 - lease freshness and liveness facts.
+
+When an independent candidate review rejects or is uncertain, its exact-tree response is retained in
+task runtime and its summary and defects are shown to the caller. The public change host may dispatch
+a bounded authoring correction pass using those defects. That pass cannot attest its own work: a
+changed candidate is re-evidenced and sent to a fresh independent reviewer. Exhausted correction
+attempts leave the candidate, rejection, and integration target intact for inspection.
 
 The core CLI does not decide to create workers or maintain conversations. Those are public-host and
 harness concerns governed by the policy above.
