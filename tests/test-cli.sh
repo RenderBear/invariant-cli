@@ -277,7 +277,10 @@ assisted_setup_parent=$(git -C "$fixture" rev-parse HEAD)
 git -C "$fixture" commit -q -m "configure assisted execution" -m "Invariant-Unit: test-setup
 Invariant-Scope: area.root
 Invariant-Boundary: no-record
-Invariant-Landing-Parent: $assisted_setup_parent"
+Invariant-Landing-Parent: $assisted_setup_parent
+Invariant-Review-Authority: user:test-setup
+Invariant-Review-Mode: independent
+Invariant-Review-Digest: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
 out=$(cd "$fixture" && "$cli" task begin assisted-flow --goal "Pause before branch creation" \
   --boundary no-record --path src/a.txt)

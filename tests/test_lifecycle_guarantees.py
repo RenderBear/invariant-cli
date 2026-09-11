@@ -124,16 +124,7 @@ def test_assessment_cannot_land_governed_prose_without_a_review(tmp_path: Path) 
         "architecture: [architecture:docs/architecture.md#source-ownership]\n"
     )
     _git(repo, "add", "-A")
-    seed_parent = _git(repo, "rev-parse", "HEAD")
-    _git(
-        repo,
-        "commit",
-        "-qm",
-        "record ownership",
-        "-m",
-        "Invariant-Unit: seed\nInvariant-Scope: area.root\n"
-        f"Invariant-Boundary: no-record\nInvariant-Landing-Parent: {seed_parent}",
-    )
+    _git(repo, "commit", "-qm", "record ownership")
     worktree = _begin(repo, "rewrite")
     _implement(
         worktree,

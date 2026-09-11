@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import tempfile
@@ -123,6 +124,16 @@ def _save_unlocked(value: dict[str, Any]) -> None:
         pending.unlink(missing_ok=True)
 
 
+def revision() -> int:
+    """A cheap change marker for the workspace file: its size and modification time."""
+
+    try:
+        stat = workspace_path().stat()
+    except OSError:
+        return 0
+    return stat.st_mtime_ns ^ (stat.st_size << 1)
+
+
 def _read() -> dict[str, Any]:
     with _file_lock():
         return _load_unlocked()
@@ -157,7 +168,7 @@ def _session_view(session: dict[str, Any]) -> dict[str, Any]:
         key: value
         for key, value in session.items()
         if key != "provider_session_id"
-    }
+    } | {"live": session_presence(str(session.get("id") or ""))}
 
 
 def _session_summary(session: dict[str, Any]) -> dict[str, Any]:
@@ -166,7 +177,54 @@ def _session_summary(session: dict[str, Any]) -> dict[str, Any]:
         key: value
         for key, value in session.items()
         if key not in {"provider_session_id", "messages"}
-    } | {"message_count": len(messages) if isinstance(messages, list) else 0}
+    } | {
+        "message_count": len(messages) if isinstance(messages, list) else 0,
+        "live": session_presence(str(session.get("id") or "")),
+    }
+
+
+PRESENCE_STALE_SECONDS = 300
+
+
+def _presence_path(identifier: str) -> Path:
+    return preferences.global_root() / "sessions" / f"{identifier}.live"
+
+
+def mark_session_live(identifier: str, *, surface: str) -> None:
+    """Record that a console on this machine currently holds the session."""
+
+    path = _presence_path(identifier)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps({"pid": os.getpid(), "surface": surface, "updated_at": _timestamp()}),
+        encoding="utf-8",
+    )
+
+
+def clear_session_live(identifier: str) -> None:
+    _presence_path(identifier).unlink(missing_ok=True)
+
+
+def session_presence(identifier: str) -> dict[str, Any] | None:
+    """The console holding the session right now, or None. Presence is a hint, never authority."""
+
+    path = _presence_path(identifier)
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(raw, dict):
+        return None
+    pid = raw.get("pid")
+    updated = raw.get("updated_at")
+    try:
+        os.kill(int(pid), 0)
+        stamp = datetime.fromisoformat(str(updated).replace("Z", "+00:00"))
+    except (OSError, TypeError, ValueError):
+        return None
+    if (datetime.now(timezone.utc) - stamp).total_seconds() > PRESENCE_STALE_SECONDS:
+        return None
+    return {"pid": int(pid), "surface": str(raw.get("surface") or "console"), "since": str(updated)}
 
 
 def add_project(folder: Path | str) -> dict[str, Any]:

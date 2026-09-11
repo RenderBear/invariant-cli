@@ -433,6 +433,8 @@ def _landing_history(repo: Path) -> list[str]:
             "Invariant-Review-Authority",
             "Invariant-Review-Mode",
             "Invariant-Review-Digest",
+            "Invariant-Review-Tree",
+            "Invariant-Retired",
         ),
         after=parent,
     )
@@ -451,6 +453,8 @@ def _landing_history(repo: Path) -> list[str]:
         review_authorities = list(entry.trailers["Invariant-Review-Authority"])
         review_modes = list(entry.trailers["Invariant-Review-Mode"])
         review_digests = list(entry.trailers["Invariant-Review-Digest"])
+        review_trees = list(entry.trailers["Invariant-Review-Tree"])
+        retired = list(entry.trailers["Invariant-Retired"])
         label = f"landing history commit {commit[:12]}"
         if not adopted and boundary:
             adopted = True
@@ -496,11 +500,60 @@ def _landing_history(repo: Path) -> list[str]:
             errors.append(f"{label} has invalid Invariant-Review-Mode")
         if len(review_digests) == 1 and not re.fullmatch(r"[0-9a-f]{64}", review_digests[0]):
             errors.append(f"{label} has invalid Invariant-Review-Digest")
+        if review_trees and (
+            len(review_trees) != 1
+            or not re.fullmatch(r"[0-9a-f]{40}", review_trees[0])
+            or review_counts != (1, 1, 1)
+        ):
+            errors.append(f"{label} has an invalid Invariant-Review-Tree binding")
+        # Trailers never make a commit a landing on their own: the first-parent diff decides
+        # whether review provenance was owed, and policy changes are owed to the user.
+        first_parent = entry.parents[0] if entry.parents else None
+        try:
+            touched = governance.governed_material(repo, first_parent, commit)
+        except InvariantError as exc:
+            errors.append(f"{label} {exc.message.removeprefix('Invariant: ')}")
+            touched = []
+        if touched and review_counts != (1, 1, 1):
+            errors.append(
+                f"{label} changed governed material ({touched[0]}) without review provenance"
+            )
+        if (
+            governance.USER_OWNED_PATHS.intersection(touched)
+            and review_counts == (1, 1, 1)
+            and not review_authorities[0].startswith("user:")
+        ):
+            errors.append(
+                f"{label} changed user-owned material ({sorted(governance.USER_OWNED_PATHS.intersection(touched))[0]}) "
+                "without a user: review authority"
+            )
+        retired_ids: set[str] = set()
+        for reference in retired:
+            kind, separator, identifier = reference.partition(":")
+            if not separator or kind not in governance.RECORD_DIRECTORIES or not git.valid_id(identifier):
+                errors.append(f"{label} has invalid Invariant-Retired '{reference}'")
+                continue
+            if reference not in governance_refs:
+                errors.append(f"{label} retires {reference} without Invariant-Governance")
+            if first_parent is None or git.run(
+                ["cat-file", "-e", f"{first_parent}:{governance.RECORD_DIRECTORIES[kind]}/{identifier}.yml"],
+                cwd=repo,
+                check=False,
+            ).returncode:
+                errors.append(f"{label} retires {reference} which its first parent did not carry")
+            if git.run(
+                ["cat-file", "-e", f"{commit}:{governance.RECORD_DIRECTORIES[kind]}/{identifier}.yml"],
+                cwd=repo,
+                check=False,
+            ).returncode == 0:
+                errors.append(f"{label} retires {reference} but still carries it")
+            if kind == "semantic":
+                retired_ids.add(identifier)
         semantic_refs = {
             reference.removeprefix("semantic:")
             for reference in governance_refs
             if reference.startswith("semantic:")
-        }
+        } - retired_ids
         parsed_attestations: dict[str, str] = {}
         for attestation in semantic_attestations:
             identifier, separator, digest = attestation.partition("@")
@@ -545,6 +598,8 @@ def _landing_history(repo: Path) -> list[str]:
         for identifier in sorted(set(parsed_attestations) - semantic_refs):
             errors.append(
                 f"{label} attests semantic record '{identifier}' without Invariant-Governance"
+                if identifier not in retired_ids
+                else f"{label} attests retired semantic record '{identifier}'"
             )
         if last:
             if gap:

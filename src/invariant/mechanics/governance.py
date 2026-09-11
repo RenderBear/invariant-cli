@@ -57,6 +57,81 @@ def record_kind(relative: str) -> str | None:
     return None
 
 
+POLICY_PATH = ".invariant/config.yml"
+SOURCES_PATH = ".invariant/SOURCES.yml"
+USER_OWNED_PATHS = frozenset({POLICY_PATH, SOURCES_PATH})
+EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+_document_cache: dict[tuple[str, str], frozenset[str]] = {}
+
+
+def record_reference(relative: str) -> str | None:
+    """Return ``<kind>:<id>`` for a record file path, or None for any other path."""
+
+    kind = record_kind(relative)
+    if kind is None or not relative.endswith(".yml"):
+        return None
+    return f"{kind}:{relative.rsplit('/', 1)[1][: -len('.yml')]}"
+
+
+def governed_documents(repo: Path, at: str | None) -> frozenset[str]:
+    """Canonical prose paths referenced by every record accepted at ``at`` (HEAD-relative tree).
+
+    Cached per records tree so a history walk pays once per distinct record set.
+    """
+
+    if at:
+        tree = git.resolve(repo, f"{at}:{RECORD_ROOT}", "tree") or "empty"
+        key = (str(git.common_dir(repo)), tree)
+        cached = _document_cache.get(key)
+        if cached is not None:
+            return cached
+    documents: set[str] = set()
+
+    def add(locators: Any) -> None:
+        for locator in refs(locators):
+            if locator.startswith("architecture:"):
+                documents.add(locator.removeprefix("architecture:").split("#", 1)[0])
+
+    try:
+        for domain in domains(repo, at):
+            add(domain.architecture)
+        for row in contracts(repo, at):
+            add(row.get("architecture", row.get("material")))
+        for row in constraints(repo, at):
+            add(row.get("architecture"))
+            add(row.get("material"))
+        for record in semantic_records(repo, at):
+            add([record.document])
+    except InvariantError:
+        pass
+    result = frozenset(documents)
+    if at:
+        _document_cache[key] = result
+    return result
+
+
+def governed_material(repo: Path, base: str | None, tip: str) -> list[str]:
+    """Paths changed between ``base`` and ``tip`` that carry governed material.
+
+    Governed material is every record file, the policy file, the source index, and the
+    canonical prose documents of records accepted at either end of the range.
+    """
+
+    changed = git.changed_paths(repo, base or EMPTY_TREE, tip)
+    if not changed:
+        return []
+    documents = governed_documents(repo, tip)
+    if base:
+        documents = documents | governed_documents(repo, base)
+    return sorted(
+        path
+        for path in changed
+        if path in {POLICY_PATH, SOURCES_PATH}
+        or path.startswith(f"{RECORD_ROOT}/")
+        or path in documents
+    )
+
+
 def is_governance_path(relative: str, kind: str | None = None) -> bool:
     if kind is not None:
         directory = RECORD_DIRECTORIES[kind]

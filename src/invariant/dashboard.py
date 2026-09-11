@@ -27,7 +27,7 @@ HTML = """<!doctype html>
     <aside class="projects-pane" aria-labelledby="projects-title">
       <div class="pane-head"><p class="eyebrow">Machine</p><h1 id="projects-title">Projects</h1></div>
       <nav id="projects" class="nav-list" aria-label="Registered projects"></nav>
-      <div id="projects-empty" class="empty" hidden><p>No folders registered.</p><code>invariant project add &lt;folder&gt;</code></div>
+      <div id="projects-empty" class="empty" hidden><p>No repositories registered.</p><code>invariant init</code></div>
       <p class="pane-note">Folders are registered explicitly. Invariant never scans this computer.</p>
     </aside>
 
@@ -98,7 +98,7 @@ button, input, select, textarea { color: inherit; font: inherit; } button { curs
 .muted { color: var(--muted); }
 .workspace { display: grid; grid-template-columns: 220px 280px minmax(0, 1fr); min-height: calc(100vh - 70px); }
 .projects-pane, .sessions-pane { border-right: 1px solid var(--line); min-width: 0; padding: 24px 14px; }
-.sessions-pane { background: var(--surface); } .work-pane { min-width: 0; padding: 28px clamp(22px, 4vw, 54px) 54px; }
+.sessions-pane { background: var(--surface); } .nav-item em.live { font-style: normal; font-size: 10px; letter-spacing: .08em; text-transform: uppercase; margin-left: 6px; color: var(--accent, #2a7); } .work-pane { min-width: 0; padding: 28px clamp(22px, 4vw, 54px) 54px; }
 .pane-head { padding: 0 8px 20px; } .session-heading { align-items: end; display: flex; justify-content: space-between; }
 .eyebrow { color: var(--muted); font: 9px/1.4 var(--mono); letter-spacing: .08em; margin: 0 0 6px; text-transform: uppercase; }
 h1, h2, h3 { letter-spacing: -.025em; margin: 0; } h1 { font-size: 24px; } h2 { font-size: 23px; } h3 { font-size: 17px; }
@@ -172,13 +172,13 @@ function renderProjects() {
 function renderSessions() {
   const sessions = projectSessions(); if (!sessions.some(item => item.id === selectedSession)) selectedSession = sessions[0]?.id || "";
   $("sessions-empty").hidden = sessions.length !== 0;
-  $("sessions").innerHTML = sessions.map(item => `<button type="button" class="nav-item ${item.id === selectedSession ? "active" : ""}" data-session="${esc(item.id)}"><strong>${esc(item.theme)}</strong><span>${esc(item.mode)} · ${item.message_count ?? (item.messages || []).length} messages</span></button>`).join("");
+  $("sessions").innerHTML = sessions.map(item => `<button type="button" class="nav-item ${item.id === selectedSession ? "active" : ""}" data-session="${esc(item.id)}"><strong>${esc(item.theme)}${item.live ? ' <em class="live" title="a console holds this session">live</em>' : ''}</strong><span>${esc(item.mode)} · ${item.message_count ?? (item.messages || []).length} messages</span></button>`).join("");
   $("sessions").querySelectorAll("[data-session]").forEach(button => button.addEventListener("click", () => selectSession(button.dataset.session)));
 }
 function renderConversation() {
   const project = currentProject(); const session = currentSession(); $("project-path").textContent = project?.path || "Choose a project";
   $("conversation-empty").hidden = Boolean(session); $("conversation").hidden = !session;
-  if (!session) { $("session-title").textContent = project ? "Open a session" : "Register a project"; $("session-meta").textContent = project ? "Sessions keep one theme grounded in one folder." : "Use invariant project add <folder> in a terminal."; return; }
+  if (!session) { $("session-title").textContent = project ? "Open a session" : "Initialize a repository"; $("session-meta").textContent = project ? "Sessions keep one theme grounded in one folder." : "Use invariant project add <folder> in a terminal."; return; }
   $("session-title").textContent = session.theme; $("session-meta").textContent = `${session.id} · ${session.provider || "provider on first turn"} · updated ${session.updated_at || "now"}`;
   $("composer-scope").textContent = session.mode === "change" ? "Coordinator may start a managed change" : "Read-only repository conversation";
   $("prompt").placeholder = session.mode === "change" ? "Ask, or request a managed change…" : "Ask about this project…";

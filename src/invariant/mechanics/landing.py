@@ -43,6 +43,8 @@ class LandRequest:
     review_authority: str | None = None
     review_mode: str | None = None
     review_digest: str | None = None
+    review_tree: str | None = None
+    retired: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,6 +114,16 @@ def _validate_request(request: LandRequest) -> None:
         raise InvariantError("Invariant: review authority must be one line")
     if request.review_digest and not re.fullmatch(r"[0-9a-f]{64}", request.review_digest):
         raise InvariantError("Invariant: review digest must be a SHA-256 value")
+    if request.review_tree and not request.review_authority:
+        raise InvariantError("Invariant: a reviewed tree binding requires review provenance")
+    for reference in request.retired:
+        kind, separator, identifier = reference.partition(":")
+        if not separator or kind not in governance.RECORD_DIRECTORIES or not git.valid_id(identifier):
+            raise InvariantError(f"Invariant: invalid retired record reference '{reference}'")
+        if reference not in request.governance_refs:
+            raise InvariantError(
+                f"Invariant: retired record '{reference}' must be named in the governance references"
+            )
     if request.mode == "merge" and not request.merge_branch:
         raise InvariantError("Invariant: merge landing requires a branch")
     if request.mode == "staged" and (
@@ -133,6 +145,12 @@ def _last_attested(repo: Path, old: str) -> str | None:
         if git.trailers(repo, commit, "Invariant-Boundary"):
             return commit
     return None
+
+
+def last_attested(repo: Path, old: str) -> str | None:
+    """The most recent attested landing at or before ``old`` on its first-parent line."""
+
+    return _last_attested(repo, old)
 
 
 def _message(
@@ -168,9 +186,10 @@ def _message(
         else {}
     )
     content_cache: dict[str, str] = {}
+    retired = set(request.retired)
     for reference in request.governance_refs:
         message += f"Invariant-Governance: {reference}\n"
-        if reference.startswith("semantic:"):
+        if reference.startswith("semantic:") and reference not in retired:
             identifier = reference.removeprefix("semantic:")
             record = semantic_records.get(identifier)
             if record is None:
@@ -181,6 +200,8 @@ def _message(
                 repo, record, candidate_tree, content_cache
             )
             message += f"Invariant-Semantic: {identifier}@{digest}\n"
+    for reference in sorted(retired):
+        message += f"Invariant-Retired: {reference}\n"
     for reference in request.reviewed:
         if reference.startswith("architecture:"):
             message += f"Invariant-Architecture: {reference}\n"
@@ -188,6 +209,8 @@ def _message(
         message += f"Invariant-Review-Authority: {request.review_authority}\n"
         message += f"Invariant-Review-Mode: {request.review_mode}\n"
         message += f"Invariant-Review-Digest: {request.review_digest}\n"
+        if request.review_tree and request.review_tree != candidate_tree:
+            message += f"Invariant-Review-Tree: {request.review_tree}\n"
     return message
 
 
@@ -345,8 +368,9 @@ def _construct(repo: Path, request: LandRequest, target: str) -> Candidate:
         if git.run(["diff", "--cached", "--quiet", "--"], cwd=repo, check=False).returncode == 0:
             raise InvariantError("Invariant: staged landing requires staged changes")
     elif target_worktree and not git.tracked_worktree_clean(target_worktree):
-        raise InvariantError(
-            f"Invariant: integration worktree '{target_worktree}' has tracked changes; landing cannot synchronize it safely"
+        raise Blocked(
+            f"Invariant: integration worktree '{target_worktree}' has tracked changes; landing cannot synchronize it safely",
+            code="dirty_integration_checkout",
         )
 
     branch_ref: str | None = None
@@ -562,22 +586,24 @@ def _checkout_safe(repo: Path, request: LandRequest, candidate: Candidate) -> No
         )
 
 
-def _governance_exists(repo: Path, reference: str) -> bool:
+def _governance_exists(repo: Path, reference: str, at: str | None = None) -> bool:
+    """Whether a governance reference resolves in the candidate, or at ``at`` for a retired record."""
+
     if ":" not in reference:
         return False
     kind, identifier = reference.split(":", 1)
     if kind == "semantic":
         return identifier in {
             record.identifier
-            for record in governance.semantic_records(repo)
+            for record in governance.semantic_records(repo, at)
             if record.status == "active"
         }
     if kind == "domain":
-        return identifier in governance.domain_index(repo).identifiers
+        return identifier in governance.domain_index(repo, at).identifiers
     if kind == "contract":
-        return identifier in {str(row.get("id")) for row in governance.contracts(repo)}
+        return identifier in {str(row.get("id")) for row in governance.contracts(repo, at)}
     if kind == "constraint":
-        return identifier in {str(row.get("id")) for row in governance.constraints(repo)}
+        return identifier in {str(row.get("id")) for row in governance.constraints(repo, at)}
     if kind == "architecture":
         path = identifier.split("#", 1)[0]
         if not (repo / path).is_file():
@@ -952,7 +978,9 @@ def _run_locator(
     return [*output, f"CHECK: passed — {locator}", f"LOG: {log_path}"], False, result_payload
 
 
-def _boundary_review(repo: Path, request: LandRequest, reach_lines: list[str]) -> list[str]:
+def _boundary_review(
+    repo: Path, request: LandRequest, reach_lines: list[str], landing_parent: str | None = None
+) -> list[str]:
     governance_changed = any(line.startswith("GOVERNANCE:") for line in reach_lines)
     boundary = BoundaryDisposition.parse(request.boundary, allow_unresolved=False)
     if boundary.kind == BoundaryKind.NO_RECORD:
@@ -987,7 +1015,19 @@ def _boundary_review(repo: Path, request: LandRequest, reach_lines: list[str]) -
             )
         audit.fresh(repo, identifier, "HEAD")
         return [f"BOUNDARY-REVIEW: audit:{identifier} — no governance adoption required"]
+    retired = set(request.retired)
     for reference in request.governance_refs:
+        if reference in retired:
+            if (
+                landing_parent
+                and _governance_exists(repo, reference, at=landing_parent)
+                and not _governance_exists(repo, reference)
+            ):
+                continue
+            raise Blocked(
+                f"Invariant: retired record '{reference}' must exist at the landing parent and be absent from the candidate",
+                code="invalid_boundary",
+            )
         if not _governance_exists(repo, reference):
             raise Blocked(
                 f"Invariant: boundary governance '{reference}' is not an accepted candidate record"
@@ -1301,7 +1341,7 @@ def _verify_and_land_once(
                 data={"violations": state_lines},
             )
         governance.validate_trailer(verify_dir, candidate.commit)
-        output.extend(_boundary_review(verify_dir, request, reach_lines))
+        output.extend(_boundary_review(verify_dir, request, reach_lines, candidate.old))
 
         executed: set[str] = set()
         reused = 0

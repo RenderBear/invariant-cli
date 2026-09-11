@@ -71,6 +71,110 @@ def _automatic_open_authority(
     return resolved.authority == "agent" and accepted.authority == "agent"
 
 
+_POLICY_REQUIREMENT: dict[str, object] = {
+    "field": "review_authority",
+    "reason": "the candidate changes repository policy, which only the user accepts",
+    "value": "user:<locator>",
+}
+
+
+def _policy_change(repo: Path, target: str, paths: Iterable[str]) -> bool:
+    """True when the candidate, or the range it must cover, changes user-owned material.
+
+    User-owned material is the policy file and the source index: an agent never accepts a
+    change to either (protocol §1.1, §2.5).
+    """
+
+    if governance.USER_OWNED_PATHS.intersection(paths):
+        return True
+    head = git.resolve(repo, f"refs/heads/{target}")
+    if not head:
+        return False
+    last = landing.last_attested(repo, head)
+    if not last or last == head:
+        return False
+    return bool(
+        governance.USER_OWNED_PATHS.intersection(governance.governed_material(repo, last, head))
+    )
+
+
+def _branch_head(repo: Path, receipt: Mapping[str, object]) -> str:
+    lifecycle = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    branch = str(lifecycle.get("branch") or "")
+    return (git.resolve(repo, f"refs/heads/{branch}") if branch else None) or ""
+
+
+def _inert_movement(
+    repo: Path,
+    receipt: Mapping[str, object],
+    reviews: list[str],
+    candidate_paths: list[str],
+    target: str,
+    branch: str,
+) -> bool:
+    """Decide whether the target moved in a way that leaves the accepted review valid.
+
+    Protocol §4.3: the movement's first-parent diff must touch no candidate path, no record,
+    policy, or source index, and no canonical prose of a record the candidate affects; the
+    candidate itself must be unchanged since the review.
+    """
+
+    reviewed_head = str(receipt.get("review_integration_head") or "")
+    current = git.resolve(repo, f"refs/heads/{target}")
+    if not reviewed_head or reviewed_head == "unborn" or not current or reviewed_head == current:
+        return False
+    reviewed_branch_head = str(receipt.get("review_branch_head") or "")
+    branch_head = git.resolve(repo, f"refs/heads/{branch}") if branch else None
+    if not reviewed_branch_head or branch_head != reviewed_branch_head:
+        return False
+    if not git.is_ancestor(repo, reviewed_head, current):
+        return False
+    changed = git.changed_paths(repo, reviewed_head, current)
+    if not changed:
+        return True
+    forbidden = set(candidate_paths)
+    forbidden.update(
+        locator.removeprefix("architecture:").split("#", 1)[0]
+        for locator in reviews
+        if locator.startswith("architecture:")
+    )
+    for path in changed:
+        if (
+            path in forbidden
+            or path in {governance.POLICY_PATH, governance.SOURCES_PATH}
+            or path.startswith(f"{governance.RECORD_ROOT}/")
+        ):
+            return False
+    return True
+
+
+def _reusable_review(
+    repo: Path,
+    receipt: Mapping[str, object],
+    candidate: landing.Candidate,
+    candidate_paths: list[str],
+    reviews: list[str],
+    target: str,
+    branch: str,
+) -> CandidateReview | None:
+    """The accepted review for this task when it still covers the freshly built candidate."""
+
+    task = str(receipt.get("task") or "")
+    review_path = receipts.task_root(repo, task) / "candidate-review.yml"
+    if not task or not review_path.is_file():
+        return None
+    review = CandidateReview.load(review_path)
+    if review.verdict != "accepted":
+        return None
+    if review.candidate_tree == candidate.tree:
+        return review
+    if candidate.unborn or not branch:
+        return None
+    if _inert_movement(repo, receipt, reviews, candidate_paths, target, branch):
+        return review
+    return None
+
+
 def _branch_name(repo: Path, task: str, head: str) -> str:
     nonce = git.hash_text(
         repo,
@@ -866,8 +970,18 @@ def finish(
     )
     reach_lines = context.lines
     scopes = context.topology or ("area.root",)
-    _require_candidate_review(
-        repo, task, context, assessment.boundary.disposition, target, base, active_stage, branch
+    policy = _policy_change(repo, target, actual_paths)
+    receipt = _require_candidate_review(
+        repo,
+        task,
+        context,
+        assessment.boundary.disposition,
+        target,
+        base,
+        active_stage,
+        branch,
+        policy=policy,
+        candidate_paths=assessment.paths,
     )
     expected_tree = str(receipt.get("review_candidate_tree") or "") or None
     if expected_tree:
@@ -959,6 +1073,8 @@ def finish(
         review_authority=(accepted_review.authority if accepted_review else None),
         review_mode=(accepted_review.review_mode if accepted_review else None),
         review_digest=(accepted_review.digest if accepted_review else None),
+        review_tree=(str(receipt.get("review_tree") or "") or None) if accepted_review else None,
+        retired=tuple(assessment.retired),
     )
     if resolved.execution == "assisted" and not continuation_apply:
         local = receipts.task_root(repo, task)
@@ -1015,24 +1131,54 @@ def _require_candidate_review(
     base: str,
     active_stage: TaskStage,
     branch: str,
-) -> None:
+    *,
+    policy: bool = False,
+    candidate_paths: list[str] | None = None,
+) -> dict[str, object]:
     """Semantic acknowledgements bind to the exact candidate through the review action.
 
     An assessment file carries the caller's mechanical selections; it cannot assert
     architecture reviews or open authority on its own, because nothing binds those
-    assertions to the tree being landed.
+    assertions to the tree being landed. Returns the receipt, rebound when an inert
+    movement of the target let the accepted review carry over.
     """
 
+    receipt = receipts.load(repo, task)
     automatic = _automatic_open_authority(repo, target, base, context.reach, disposition)
-    if not context.reviews and (not context.reach.needs_explicit_authority or automatic):
-        return
+    if not policy and not context.reviews and (
+        not context.reach.needs_explicit_authority or automatic
+    ):
+        return receipt
     candidate_tree = landing.prospective_tree(
         repo, target, None if active_stage == TaskStage.IMPLEMENTING_UNBORN else branch
     )
     review_path = receipts.task_root(repo, task) / "candidate-review.yml"
     review = CandidateReview.load(review_path) if review_path.is_file() else None
-    if review and review.verdict == "accepted" and review.candidate_tree == candidate_tree:
-        return
+    covered = bool(review and review.verdict == "accepted" and review.candidate_tree == candidate_tree)
+    if (
+        review
+        and review.verdict == "accepted"
+        and not covered
+        and active_stage == TaskStage.IMPLEMENTING
+        and _inert_movement(repo, receipt, list(context.reviews), candidate_paths or [], target, branch)
+    ):
+        receipt["review_tree"] = review.candidate_tree
+        receipt["review_candidate_tree"] = candidate_tree
+        receipt["review_integration_head"] = git.resolve(repo, f"refs/heads/{target}") or "unborn"
+        receipts.save(repo, task, receipt)
+        covered = True
+    if covered and review is not None:
+        if policy and not review.authority.startswith("user:"):
+            raise Blocked(
+                "Invariant: the candidate changes repository policy; only a user: review authority can accept it",
+                code="policy_review_required",
+                lines=[
+                    f"POLICY: {governance.POLICY_PATH}",
+                    f"REVIEW-AUTHORITY: {review.authority}",
+                    f"NEXT: respond to the review action of task '{task}' with a user: authority",
+                ],
+            )
+        return receipt
     raise Blocked(
         "Invariant: the candidate requires an accepted semantic review before landing",
         code="semantic_review_required",
@@ -1151,6 +1297,14 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         *[f"constraint:{row['id']}" for row in changed_constraints],
         *changed_architecture,
     ]
+    retired = sorted(
+        reference
+        for path in paths
+        if (reference := governance.record_reference(path)) is not None
+        and not (candidate_repo / path).exists()
+    )
+    governance_refs.extend(retired)
+    policy_change = bool(governance.USER_OWNED_PATHS.intersection(paths))
     durable_registry_changed = any(governance.is_governance_path(path) for path in paths)
     change_classification = (
         receipt.get("change_classification")
@@ -1180,8 +1334,11 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
         "architecture_reviews": [],
         "checks": [],
         "allow_open": allow_open,
+        "retired": retired,
     }
     required: list[dict[str, object]] = []
+    if policy_change:
+        required.append(_POLICY_REQUIREMENT)
     if boundary == "unresolved":
         required.append(
             {
@@ -1217,6 +1374,7 @@ def prepare_assessment(repo: Path, task: str) -> tuple[dict[str, object], dict[s
     analysis: dict[str, object] = {
         "candidate_tree": candidate_tree,
         "adapters": [],
+        "policy_change": policy_change,
         "reach": reach.value,
         "inferred": {
             "paths": paths,
@@ -1254,6 +1412,8 @@ def _request_packet(
         "evidence_ids": [item.identifier for item in evidence],
         "retained_discoveries": retained_discoveries,
         "review_requirement": analysis.get("review_requirement", "self-attested"),
+        "policy_change": bool(analysis.get("policy_change")),
+        "retired": list(assessment.get("retired", [])),
     }
     review_id = git.hash_text(repo, repr(packet_body))
     packet = {**packet_body, "review_id": review_id}
@@ -1321,6 +1481,7 @@ def _land_request_from_assessment(
         target=str(receipt.get("integration_target") or ""),
         plan=plan,
         allow_open=bool(assessment.get("allow_open", False)),
+        retired=tuple(str(item) for item in assessment.get("retired", [])),
     )
 
 
@@ -1421,6 +1582,13 @@ def _prepare_finish_once(
         )
         raise
     analysis["candidate_tree"] = candidate.tree
+    if candidate.covers and not analysis.get("policy_change"):
+        covered_old, _, covered_new = candidate.covers.partition("..")
+        if governance.USER_OWNED_PATHS.intersection(
+            governance.governed_material(repo, covered_old, covered_new)
+        ):
+            analysis["policy_change"] = True
+            analysis["required"] = [*analysis.get("required", []), _POLICY_REQUIREMENT]
     exact_reviews = list(candidate_context.reviews)
     analysis["reach"] = candidate_context.reach.value
     analysis["reach_records"] = candidate_context.lines
@@ -1505,8 +1673,19 @@ def _prepare_finish_once(
     evidence_ids = [item.identifier for item in evidence]
 
     receipt["finish_subject"] = subject or f"Invariant task {task}"
+    lifecycle_state = receipt.get("lifecycle") if isinstance(receipt.get("lifecycle"), dict) else {}
+    reusable = _reusable_review(
+        repo,
+        receipt,
+        candidate,
+        [str(item) for item in assessment.get("paths", [])],
+        exact_reviews,
+        target,
+        str(lifecycle_state.get("branch") or ""),
+    )
     receipt["review_candidate_tree"] = candidate.tree
     receipt["review_integration_head"] = candidate.old or "unborn"
+    receipt["review_branch_head"] = _branch_head(repo, receipt)
     receipt["candidate_evidence_ids"] = evidence_ids
     retained_discoveries = _retained_discoveries(receipt)
     adapters.run_hook(
@@ -1519,7 +1698,25 @@ def _prepare_finish_once(
     )
     requests = adapters.pending(receipt)
     semantic_required = bool(analysis.get("required"))
+    completion_assessment = prepared
+    if semantic_required and reusable is not None:
+        # The accepted review survives an inert movement of the target (protocol §4.3): the
+        # candidate is rebuilt and re-verified, the semantics are not restarted.
+        semantic_required = False
+        if reusable.candidate_tree != candidate.tree:
+            receipt["review_tree"] = reusable.candidate_tree
+        else:
+            receipt.pop("review_tree", None)
+        accepted_path = local / "accepted-assessment.yml"
+        accepted = load_yaml(accepted_path) if accepted_path.is_file() else None
+        if isinstance(accepted, dict):
+            accepted["checks"] = assessment["checks"]
+            accepted["paths"] = assessment["paths"]
+            accepted["retired"] = assessment.get("retired", [])
+            dump_yaml(accepted_path, accepted)
+            completion_assessment = accepted_path
     if semantic_required:
+        receipt.pop("review_tree", None)
         packet, core_request = _request_packet(
             repo,
             task,
@@ -1567,7 +1764,7 @@ def _prepare_finish_once(
     finish(
         repo,
         task,
-        assessment_path=str(prepared),
+        assessment_path=str(completion_assessment),
         subject=subject,
     )
     return FlowResult(
@@ -1646,6 +1843,15 @@ def _apply_core_review(
         raise Blocked(
             "Invariant: human semantic authority requires an attributable user: locator",
             code="authority_required",
+        )
+    if context.get("policy_change") and not review.authority.startswith("user:"):
+        raise Blocked(
+            "Invariant: the candidate changes repository policy; only a user: review authority can accept it",
+            code="policy_review_required",
+            lines=[
+                f"POLICY: {governance.POLICY_PATH}",
+                f"REVIEW-AUTHORITY: {review.authority}",
+            ],
         )
     if (
         context.get("review_requirement") == "independent"

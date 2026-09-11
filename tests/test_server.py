@@ -114,16 +114,14 @@ def test_projects_and_sessions_are_machine_local_cli_state(tmp_path: Path) -> No
     assert code == 2
     assert payload["diagnostics"][0]["code"] == "invalid_config_key"
 
-    code, payload = _cli(repo, home, "project", "add", ".")
-    assert code == 0, payload
-    project = payload["result"]["project"]
-    assert project["path"] == str(repo)
-    assert git(repo, "status", "--porcelain") == ""
-
     code, payload = _cli(repo, home, "session", "new", "Authentication redesign", "--mode", "change")
     assert code == 0, payload
     session = payload["result"]["session"]
+    code, payload = _cli(repo, home, "project", "list")
+    assert code == 0, payload
+    project = next(item for item in payload["result"]["projects"] if item["path"] == str(repo))
     assert session["project_id"] == project["id"]
+    assert git(repo, "status", "--porcelain") == ""
     assert session["theme"] == "Authentication redesign"
     assert session["mode"] == "change"
     assert "provider_session_id" not in session

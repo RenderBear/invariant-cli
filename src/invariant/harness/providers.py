@@ -742,6 +742,12 @@ def _invoke_claude_write(
             "Bash(git reset:*)",
             "Bash(invariant:*)",
             "Bash(invariant-agent:*)",
+            # Policy is owned by the user (protocol §1.1); the host discards any edit that
+            # slips through, but the tool boundary refuses it first.
+            "Edit(.invariant/config.yml)",
+            "Write(.invariant/config.yml)",
+            "Edit(**/.invariant/config.yml)",
+            "Write(**/.invariant/config.yml)",
         ]
     )
     argv = [

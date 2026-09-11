@@ -356,6 +356,22 @@ Initialization creates the configuration only. Domain and contract registries ar
 accepted records exist; bootstrap does not manufacture empty semantic authority or write provider
 instruction files.
 
+`config.yml` is policy and is owned by the user (protocol §1.1). It reaches the integration branch
+in two ways only. `invariant init` and `invariant set` write it and, when the working tree carries
+no other change, commit it as an attested landing whose review trailers name `user:initialization`
+or `user:policy-<key>`. Any other route — a hand commit, a candidate produced by a task — is a
+policy change that finish never treats as routine: the candidate review must carry a `user:`
+authority or it is refused as `policy_review_required`, and an unattested range that changed the
+policy file forces the same requirement onto the landing that covers it. The public `change` host
+discards provider edits to the policy file before it commits a candidate and reports the discard;
+Claude Code additionally has the file denied at its tool boundary. Enforcement lives at landing and
+in history validation, not in the file system: nothing stops a process from writing the file, but
+nothing it writes there is accepted policy until a user lands it.
+
+A record is retired by a candidate that removes its file. Finish infers the retired reference into
+the candidate's governance, the change is gated, and the landing carries `Invariant-Retired` per
+removed record; the reference resolves in the landing's first parent.
+
 Generated local state is shared by linked worktrees and self-ignored at its root:
 
 ```text
@@ -1064,9 +1080,18 @@ beyond the separately configured upstream push belong to the host.
 
 `invariant serve` starts one loopback-only HTTP/1.1 host for the current OS user. Its default port is
 `3000`; `--port` selects another machine-local port for that invocation. The host owns the personal
-workspace and conversations, not repository truth. `invariant project add <folder>` explicitly
-registers an initialized repository; the host never searches the machine for folders. Observation
-starts lazily when a client opens a registered project.
+workspace and conversations, not repository truth. `invariant init` registers the repository it
+initializes, together with every nested Git repository it finds and initializes beneath it, and
+`start` and `serve --project` register on use; the host never searches the machine for folders.
+`project list` and `project remove` manage the registrations. Observation starts lazily when a
+client opens a registered project.
+
+A session is one transcript whichever surface holds it. `invariant start` marks its session live
+beneath the user's Invariant configuration directory while the console runs, refreshes the mark on
+every turn, and shows turns that arrived through the served workspace before its next prompt. The
+served workspace reports `live` on each session and may take a turn on a live session; the
+per-session lock serializes the two surfaces. Presence is a hint about a process on this machine,
+never authority over the transcript.
 
 The browser workspace is a focused client: it switches projects, creates and resumes themed
 sessions, sends turns, and shows repository activity. A session turn is handled by the same
@@ -1104,7 +1129,10 @@ state, and evidence remain authoritative.
 
 The workspace and APIs are safe to refresh during active work. Snapshot construction is read-only and
 never calls lifecycle continuation, lease renewal, cleanup, or freshness operations that update a
-receipt. Responses use no-store caching and restrictive browser security headers. Every write route
+receipt. A one-off snapshot read never starts an observer: while no event subscriber holds the
+project, the host reuses its last snapshot for as long as the longer of the poll interval and that
+snapshot's own build time, then rebuilds. An observer that is subscribed widens its poll interval to
+its last build time, so an expensive repository is observed at the rate it can afford. Responses use no-store caching and restrictive browser security headers. Every write route
 requires a process-random same-origin token, validates the loopback Host and Origin, and accepts no
 repository path from the browser. Loopback reachability by itself grants no repository authority.
 
@@ -1177,7 +1205,20 @@ The landing commit records the boundary disposition, accepted governance and arc
 references, review authority, review mode, the SHA-256 digest of the exact accepted review, and
 `Invariant-Landing-Parent` for its original first parent. Landing-history validation rejects
 incomplete review provenance, stale semantic bindings, incorrect coverage ranges, and commits whose
-recorded original parent no longer matches. Cherry-picked landing trailers must therefore be removed;
+recorded original parent no longer matches. It also derives, for every attested landing, the
+governed material its first-parent diff touched (record files, the policy file, the source index,
+and the canonical prose documents of records accepted at either end); a landing that touched any
+of it without complete review provenance, or touched the policy file without a `user:` review
+authority, is invalid state. Copied trailers therefore never turn a hand commit into a landing.
+
+When the integration target moves under a candidate whose review is already accepted, finish
+classifies the movement before it restarts anything. The movement is inert when its first-parent
+diff from the reviewed head touches none of the candidate's paths, no record, policy, or source
+file, and none of the canonical prose the candidate affects, and the candidate branch is unchanged
+since the review. An inert movement rebuilds the candidate on the new head, re-verifies it, and
+lands it with the accepted review, recording the reviewed tree in `Invariant-Review-Tree`. Any other
+movement returns the task to review. The public `change` host retries a finish interrupted by
+concurrent movement instead of exiting. Cherry-picked landing trailers must therefore be removed;
 the next normal landing covers that out-of-band commit. A backport that retains an attestation is a
 new task and review against the backport branch.
 
@@ -1361,8 +1402,8 @@ With automatic execution, the CLI:
 4. resumes at `task finish`, captures candidate-bound evidence, and exposes any
    `candidate.evidenced` actions;
 5. advances through final verification and local landing after the last action is resolved;
-6. rebuilds and re-verifies routine candidates when concurrent landings move the target, while
-   preserving exact-tree review boundaries; and
+6. rebuilds and re-verifies candidates when concurrent landings move the target, keeping an
+   accepted review only across an inert movement (§10); and
 7. stops only for missing semantic authority, failed checks, conflict, movement that invalidates
    reviewed evidence, persistent movement, or unauthorized external effects.
 

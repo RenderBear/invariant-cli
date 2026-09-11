@@ -390,7 +390,8 @@ integration_branch: main
 push_remote: off
 EOF
 out=$(cd "$unborn" && "$compat" land direct "initial commit" --unit initial --scope area.root \
-  --paths README.md --paths .invariant/config.yml --boundary-review no-record)
+  --paths README.md --paths .invariant/config.yml --boundary-review no-record \
+  --review-authority "$review_authority" --review-mode independent --review-digest "$review_digest")
 printf '%s\n' "$out" | grep -q '^LANDED:' || die "unborn direct landing failed"
 ok "direct landing remains available only for an unborn integration branch"
 

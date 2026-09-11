@@ -49,9 +49,8 @@ printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens
 
 def _human_repository(tmp_path: Path) -> tuple[Path, dict[str, str]]:
     repo = repository(tmp_path / "repo")
-    code, _ = invariant(repo, "set", "authority", "human")
-    assert code == 0
-    git(repo, "commit", "-qam", "human authority")
+    code, payload = invariant(repo, "set", "authority", "human")
+    assert code == 0 and payload["result"]["policy_commit"], payload
     environment = {
         "INVARIANT_CODEX": str(_fake_codex(tmp_path)),
         "INVARIANT_HOME": str(tmp_path / "invariant-home"),

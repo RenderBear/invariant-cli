@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -68,6 +68,7 @@ class Assessment:
     checks: list[str]
     allow_open: bool = False
     prose: str = ""
+    retired: list[str] = field(default_factory=list)
 
     @classmethod
     def load(cls, path: str | Path) -> "Assessment":
@@ -86,6 +87,7 @@ class Assessment:
             "checks",
             "allow_open",
             "prose",
+            "retired",
         }
         unknown = sorted(set(raw) - allowed)
         if unknown:
@@ -128,4 +130,5 @@ class Assessment:
             checks=string_list(raw.get("checks"), "assessment checks"),
             allow_open=allow_open,
             prose=prose,
+            retired=string_list(raw.get("retired") or [], "assessment retired"),
         )

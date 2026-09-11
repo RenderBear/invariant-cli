@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import concurrent.futures
+import hashlib
 import json
 import re
 import secrets
@@ -171,9 +172,6 @@ def build_parser() -> argparse.ArgumentParser:
     project_commands = projects.add_subparsers(
         dest="project_command", required=True, parser_class=Parser
     )
-    project_add = project_commands.add_parser("add", help="register a repository folder")
-    project_add.add_argument("path", nargs="?", default=".")
-    project_add.set_defaults(handler=_project_add)
     project_list = project_commands.add_parser("list", help="list registered projects")
     project_list.set_defaults(handler=_project_list)
     project_remove = project_commands.add_parser("remove", help="forget a project and its sessions")
@@ -600,24 +598,15 @@ def _init(args: argparse.Namespace) -> CommandResult:
     setup_commit = ""
     setup_paths = git.changed_paths(repo)
     if not existing_changes and setup_paths:
-        setup_parent = git.resolve(repo, "HEAD") or "unborn"
-        git.run(["add", "--", *setup_paths], cwd=repo)
-        git.run(
-            [
-                "commit",
-                "-q",
-                "-m",
-                "Reconfigure Invariant" if replacing else "Initialize Invariant",
-                "-m",
-                "Invariant-Unit: initialization\n"
-                "Invariant-Scope: area.root\n"
-                "Invariant-Boundary: no-record\n"
-                f"Invariant-Landing-Parent: {setup_parent}",
-            ],
-            cwd=repo,
+        setup_commit = _commit_policy(
+            repo,
+            "Reconfigure Invariant" if replacing else "Initialize Invariant",
+            unit="initialization",
+            paths=setup_paths,
         )
-        setup_commit = git.resolve(repo, "HEAD") or ""
+    registered = _register_repositories(repo, settings, defaults=args.defaults)
     lines: list[str] = []
+    lines.extend(registered)
     lines.extend(warning_lines)
     chosen_state = next(
         (item for item in attempts if item["provider"] == selected_provider.value),
@@ -808,19 +797,6 @@ def _ask(args: argparse.Namespace) -> CommandResult:
     )
 
 
-def _project_add(args: argparse.Namespace) -> CommandResult:
-    selected = workspace.add_project(Path(args.path))
-    return CommandResult(
-        [
-            f"PROJECT: {selected['id']}",
-            f"NAME: {selected['name']}",
-            f"FOLDER: {selected['path']}",
-            "STATUS: registered",
-        ],
-        {"project": selected},
-    )
-
-
 def _project_list(_: argparse.Namespace) -> CommandResult:
     projects = workspace.list_projects()
     lines = [
@@ -834,7 +810,7 @@ def _project_list(_: argparse.Namespace) -> CommandResult:
         for item in projects
     ]
     if not lines:
-        lines = ["STATUS: no registered projects", "NEXT: invariant project add <folder>"]
+        lines = ["STATUS: no registered projects", "NEXT: run 'invariant init' inside a repository"]
     return CommandResult(lines, {"projects": projects})
 
 
@@ -1111,6 +1087,21 @@ def _start(args: argparse.Namespace) -> CommandResult:
     return _console_session(args, repo, provider, active=active, pending=pending)
 
 
+def _show_transcript_message(provider: AgentProvider, item: dict[str, Any]) -> None:
+    role = str(item.get("role") or "")
+    content = str(item.get("content") or "").strip()
+    if not content:
+        return
+    if role == "user":
+        rendered = style.redraw_user_line(content, "workspace")
+        if rendered:
+            print(rendered)
+    elif role == "assistant":
+        _show_agent(provider, content)
+    else:
+        _show("Workspace", [content])
+
+
 def _console_session(
     args: argparse.Namespace,
     repo: Path,
@@ -1135,9 +1126,44 @@ def _console_session(
         (item for item in sessions if item.identifier == active.identifier),
         active,
     )
+    live_session = active.identifier
+    workspace.mark_session_live(live_session, surface="console")
+    presence_marked = time.monotonic()
+    seen_messages = len(workspace.session(live_session).get("messages", []))
+    seen_revision = workspace.revision()
+    checked = time.monotonic()
     print(style.session_intro(provider.value, active.mode, active.identifier))
+
+    def catch_up() -> None:
+        # Turns taken through the served workspace land in the same transcript; show them
+        # before the next prompt so both surfaces read one conversation. A stat decides
+        # whether anything changed, at most once a second, so the prompt is never delayed.
+        nonlocal seen_messages, seen_revision, checked
+        if time.monotonic() - checked < 1.0:
+            return
+        checked = time.monotonic()
+        revision = workspace.revision()
+        if revision == seen_revision:
+            return
+        transcript = workspace.session(live_session).get("messages", [])
+        for item in transcript[seen_messages:]:
+            if isinstance(item, dict):
+                _show_transcript_message(provider, item)
+        seen_messages = len(transcript)
+        seen_revision = revision
+
     try:
         while True:
+            if active.identifier != live_session:
+                workspace.clear_session_live(live_session)
+                live_session = active.identifier
+                workspace.mark_session_live(live_session, surface="console")
+                seen_messages = len(workspace.session(live_session).get("messages", []))
+                seen_revision = workspace.revision()
+            elif time.monotonic() - presence_marked > 60:
+                workspace.mark_session_live(live_session, surface="console")
+                presence_marked = time.monotonic()
+            catch_up()
             if pending:
                 message = pending
                 pending = ""
@@ -1314,8 +1340,12 @@ def _console_session(
                 print(style.error(exc.message), file=sys.stderr)
             if sys.stdin.isatty() and sys.stdout.isatty():
                 print(style.turn_separator())
+            seen_messages = len(workspace.session(active.identifier).get("messages", []))
+            seen_revision = workspace.revision()
     except (EOFError, KeyboardInterrupt):
         pass
+    finally:
+        workspace.clear_session_live(live_session)
     outro = style.session_outro()
     print(f"\n{outro}\n" if style.interactive() else outro)
     return CommandResult(
@@ -1608,13 +1638,13 @@ def _source_add(args: argparse.Namespace) -> CommandResult:
             if not added and candidate_commit == base:
                 _core(repo, "task", "invalidate", change_id)
                 return _source_result(source, "already added")
-        finished = _finish_change(
+        # Source registration is the user's act: the person running the command accepts the
+        # exact candidate, so the review carries a user: authority rather than the provider's.
+        finished = _finish_as_user(
             repo,
             change_id,
-            provider,
             subject=f"Add grounding source {source.identifier}",
-            model=getattr(args, "model", None),
-            timeout=int(getattr(args, "timeout", 600)),
+            authority=f"user:source-add#{source.identifier}",
         )
     except InvariantError as exc:
         raise _identify(exc, "SOURCE", source.reference)
@@ -2906,6 +2936,7 @@ def _run_parallel_change(
                     try:
                         result = future.result()
                         _discard_disposable_untracked(worktree)
+                        _discard_policy_edits(worktree)
                         changed = git.changed_paths(worktree)
                         _validate_unit_paths(unit, changed)
                         commit = _commit_candidate(worktree, unit.objective)
@@ -3001,7 +3032,9 @@ def _change_prompt(repo: Path, change_id: str, goal: str) -> str:
         "Implement the request completely and run focused checks when useful. Work only inside "
         "the current checkout. Do not invoke Invariant, edit its runtime receipts, create commits, "
         "push, publish, or perform unrelated external actions; Invariant owns verification and "
-        "landing. Leave the completed edits in the working tree and end with a concise summary.\n\n"
+        "landing. Never edit .invariant/config.yml: repository policy is written by the user only, "
+        "and any provider edit to it is discarded. Leave the completed edits in the working tree "
+        "and end with a concise summary.\n\n"
         f"Change ID: {change_id}\nRequest:\n{goal.strip()}\n"
         f"{_grounding_prompt(repo)}"
     )
@@ -3046,8 +3079,27 @@ def _latest_rejected_review(
     return max(matches, key=lambda item: item[0])[1] if matches else None
 
 
+_MOVEMENT_RETRIES = 6
+_discarded_policy_edits: list[str] = []
+
+
+def _discard_policy_edits(worktree: Path) -> None:
+    """Policy is written by the user only (protocol §1.1); a provider edit never reaches a candidate."""
+
+    policy = governance.POLICY_PATH
+    if policy not in git.changed_paths(worktree):
+        return
+    tracked = git.run(["ls-files", "--error-unmatch", policy], cwd=worktree, check=False)
+    if tracked.returncode == 0:
+        git.run(["checkout", "--", policy], cwd=worktree)
+    else:
+        (worktree / policy).unlink(missing_ok=True)
+    _discarded_policy_edits.append(f"POLICY: discarded provider edit to {policy}")
+
+
 def _commit_candidate(worktree: Path, subject: str) -> str:
     _discard_disposable_untracked(worktree)
+    _discard_policy_edits(worktree)
     paths = git.changed_paths(worktree)
     if not paths:
         raise Blocked(
@@ -3058,6 +3110,77 @@ def _commit_candidate(worktree: Path, subject: str) -> str:
     concise = re.sub(r"\s+", " ", subject).strip()[:64].rstrip(" .")
     git.run(["commit", "-q", "-m", f"Invariant change: {concise}"], cwd=worktree)
     return git.resolve(worktree, "HEAD") or ""
+
+
+def _finish_as_user(
+    repo: Path, change_id: str, *, subject: str, authority: str
+) -> dict[str, Any]:
+    """Finish a task whose candidate the invoking user accepts directly.
+
+    Used by user-driven commands that change user-owned material. Every pending candidate
+    review is answered with the given user: authority; nothing is routed to a provider.
+    """
+
+    task: dict[str, Any] = {}
+    for _ in range(_MOVEMENT_RETRIES):
+        try:
+            _core(repo, "task", "finish", change_id, "--subject", subject)
+        except InvariantError as exc:
+            if exc.code != "concurrent_ref_movement":
+                raise
+            continue
+        for _ in range(6):
+            task = _task(repo, change_id)
+            actions = [
+                item for item in task.get("actions") or [] if isinstance(item, dict) and item.get("id")
+            ]
+            if not actions:
+                break
+            action_id = str(actions[0]["id"])
+            action = _result(_core(repo, "task", "action", change_id, action_id), "action")
+            context = action.get("context") if isinstance(action, dict) else {}
+            if not isinstance(context, dict) or action.get("kind") != "review_semantics":
+                raise Blocked(
+                    f"Invariant: change '{change_id}' needs input that this command cannot supply",
+                    code="change_needs_input",
+                )
+            prepared = load_yaml(receipts.task_root(repo, change_id) / "prepared-assessment.yml")
+            boundary = prepared.get("boundary") if isinstance(prepared, dict) else {}
+            disposition = (
+                str(boundary.get("disposition") or "no-record") if isinstance(boundary, dict) else "no-record"
+            )
+            if disposition == "unresolved":
+                disposition = "recorded" if context.get("governance") else "no-record"
+            response = {
+                "version": 1,
+                "review_id": str(context.get("review_id") or ""),
+                "candidate_tree": str(context.get("candidate_tree") or ""),
+                "verdict": "accepted",
+                "summary": subject,
+                "semantic_effect": disposition,
+                "authority": authority,
+                "review_mode": "independent",
+                "candidate_defects": [],
+                "retained_discoveries": [
+                    str(item) for item in context.get("retained_discoveries", []) if isinstance(item, str)
+                ],
+            }
+            with tempfile.TemporaryDirectory(prefix="invariant-user-review.") as directory:
+                source = Path(directory) / "review.json"
+                source.write_text(json.dumps(response), encoding="utf-8")
+                try:
+                    _core(repo, "task", "respond", change_id, action_id, "--input", str(source))
+                except InvariantError as exc:
+                    if exc.code != "concurrent_ref_movement":
+                        raise
+        task = _task(repo, change_id)
+        if task.get("stage") == "completed":
+            return {"task": task}
+    raise Blocked(
+        f"Invariant: change '{change_id}' still needs input",
+        code="change_needs_input",
+        lines=[f"CHANGE: {change_id}", f"STATUS: {task.get('stage') or 'unknown'}"],
+    )
 
 
 def _finish_change(
@@ -3073,19 +3196,31 @@ def _finish_change(
     arguments = ["task", "finish", change_id, "--subject", subject]
     for check in checks:
         arguments.extend(["--check", check])
-    payload = _core(repo, *arguments)
-    if config.resolve(repo).authority == "human":
-        _human_candidate_decisions(
-            repo,
-            change_id,
-            next_step=(
-                f"rerun the same invariant change command with --id {change_id} "
-                "in an interactive terminal"
-            ),
-        )
-    else:
-        _resolve_actions(repo, change_id, provider, model=model, timeout=timeout)
-    task = _task(repo, change_id)
+    payload: dict[str, Any] = {}
+    task: dict[str, Any] = {}
+    # A landing that moves the target under this candidate is a normal event, not a failure:
+    # the core rebuilds the candidate, and an inert movement keeps the accepted review.
+    for attempt in range(_MOVEMENT_RETRIES):
+        try:
+            payload = _core(repo, *arguments)
+            if config.resolve(repo).authority == "human":
+                _human_candidate_decisions(
+                    repo,
+                    change_id,
+                    next_step=(
+                        f"rerun the same invariant change command with --id {change_id} "
+                        "in an interactive terminal"
+                    ),
+                )
+            else:
+                _resolve_actions(repo, change_id, provider, model=model, timeout=timeout)
+        except InvariantError as exc:
+            if exc.code != "concurrent_ref_movement" or attempt == _MOVEMENT_RETRIES - 1:
+                raise
+            continue
+        task = _task(repo, change_id)
+        if task.get("stage") == "completed" or task.get("actions"):
+            break
     if task.get("stage") != "completed":
         raise Blocked(
             f"Invariant: change '{change_id}' still needs input",
@@ -3377,12 +3512,14 @@ def _change(args: argparse.Namespace) -> CommandResult:
         lines.append(f"SUMMARY: {summary_text}")
     if review_repairs:
         lines.append(f"REVIEW-REPAIRS: {len(review_repairs)}")
+    lines.extend(sorted(set(_discarded_policy_edits)))
     return CommandResult(
         lines,
         {
             **preview,
             "invoked": True,
             "status": "completed",
+            "policy_edits_discarded": len(_discarded_policy_edits),
             "candidate_commit": candidate_commit,
             "commit": landed,
             "session_id": agent.session_id,
@@ -3895,14 +4032,147 @@ def _set(args: argparse.Namespace) -> CommandResult:
             [f"SET: harness={args.value}", "SCOPE: this clone only — not committed"],
             {"setting": {"key": "harness", "value": args.value, "scope": "local"}},
         )
+    other_changes = [
+        path for path in git.changed_paths(repo) if path != governance.POLICY_PATH
+    ]
     payload = _core(repo, "config", "set", args.key, args.value)
+    lines = [f"SET: {args.key}={args.value}"]
+    commit = ""
+    if governance.POLICY_PATH in git.changed_paths(repo):
+        if other_changes:
+            lines.append("POLICY-COMMIT: not created — repository has other changes; commit the policy yourself")
+        else:
+            commit = _commit_policy(
+                repo,
+                f"Set Invariant policy {args.key}",
+                unit=f"policy-{re.sub(r'[^A-Za-z0-9._-]', '-', args.key)}",
+                paths=[governance.POLICY_PATH],
+            )
+            lines.append(f"POLICY-COMMIT: {commit}")
     return CommandResult(
-        [f"SET: {args.key}={args.value}"],
+        lines,
         {
             "setting": {"key": args.key, "value": args.value},
+            "policy_commit": commit,
             "protocol": payload.get("result", {}),
         },
     )
+
+
+def _commit_policy(repo: Path, subject: str, *, unit: str, paths: list[str]) -> str:
+    """Commit a user-driven policy write as an attested landing carrying user provenance.
+
+    The person running the command is the authority (protocol §1.1); the commit binds that
+    with the same review trailers a reviewed landing carries, so history validation can tell
+    a user's policy write from a copied trailer.
+    """
+
+    parent = git.resolve(repo, "HEAD") or "unborn"
+    git.run(["add", "--", *paths], cwd=repo)
+    tree = git.run(["write-tree"], cwd=repo).stdout.strip()
+    authority = f"user:{unit}"
+    review = {
+        "version": 1,
+        "review_id": unit,
+        "candidate_tree": tree,
+        "verdict": "accepted",
+        "summary": subject,
+        "semantic_effect": "no-record",
+        "authority": authority,
+        "review_mode": "independent",
+        "candidate_defects": [],
+        "retained_discoveries": [],
+    }
+    digest = hashlib.sha256(
+        json.dumps(review, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    git.run(
+        [
+            "commit",
+            "-q",
+            "-m",
+            subject,
+            "-m",
+            f"Invariant-Unit: {unit}\n"
+            "Invariant-Scope: area.root\n"
+            "Invariant-Boundary: no-record\n"
+            f"Invariant-Landing-Parent: {parent}\n"
+            f"Invariant-Review-Authority: {authority}\n"
+            "Invariant-Review-Mode: independent\n"
+            f"Invariant-Review-Digest: {digest}",
+        ],
+        cwd=repo,
+    )
+    return git.resolve(repo, "HEAD") or ""
+
+
+_SKIPPED_DIRECTORIES = {".git", ".invariant", "node_modules", ".venv", "venv", "__pycache__", "target", "dist", "build"}
+
+
+def _nested_repositories(root: Path, *, depth: int = 4) -> list[Path]:
+    """Git repositories beneath ``root`` (nested checkouts and submodules), shallowest first."""
+
+    found: list[Path] = []
+
+    def walk(directory: Path, remaining: int) -> None:
+        try:
+            children = sorted(child for child in directory.iterdir() if child.is_dir())
+        except OSError:
+            return
+        for child in children:
+            if child.name in _SKIPPED_DIRECTORIES or child.name.startswith("."):
+                continue
+            if (child / ".git").exists():
+                found.append(child)
+                continue
+            if remaining > 1:
+                walk(child, remaining - 1)
+
+    walk(root, depth)
+    return found
+
+
+def _register_repositories(
+    repo: Path, settings: Any, *, defaults: bool
+) -> list[str]:
+    """Bind this repository and every nested one to the per-user workspace.
+
+    Each Git repository is its own kernel (protocol §1). Initialization is the moment the user
+    names a project, so it registers the repository for ``start`` and ``serve`` and brings
+    nested repositories under the same policy.
+    """
+
+    lines: list[str] = []
+    try:
+        selected = workspace.add_project(repo)
+        lines.append(f"PROJECT: {selected['id']} — registered for start and serve")
+    except InvariantError as exc:
+        lines.append(f"PROJECT: not registered — {exc.message.removeprefix('Invariant: ')}")
+    for nested in _nested_repositories(repo):
+        try:
+            nested_root = git.root(nested)
+        except InvariantError:
+            continue
+        if nested_root == repo:
+            continue
+        relative = nested_root.relative_to(repo).as_posix() if repo in nested_root.parents else str(nested_root)
+        if not config.initialized(nested_root):
+            if git.changed_paths(nested_root):
+                lines.append(f"NESTED: {relative} — skipped, repository has uncommitted changes")
+                continue
+            bootstrap.initialize(nested_root, settings)
+            nested_paths = git.changed_paths(nested_root)
+            if nested_paths:
+                _commit_policy(nested_root, "Initialize Invariant", unit="initialization", paths=nested_paths)
+            state = "initialized"
+        else:
+            state = "already initialized"
+        try:
+            nested_project = workspace.add_project(nested_root)
+            lines.append(f"NESTED: {relative} — {state}, project {nested_project['id']}")
+        except InvariantError as exc:
+            lines.append(f"NESTED: {relative} — {state}, not registered: {exc.message.removeprefix('Invariant: ')}")
+    return lines
 
 
 def _help(args: argparse.Namespace) -> CommandResult:

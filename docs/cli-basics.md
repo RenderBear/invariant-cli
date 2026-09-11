@@ -155,7 +155,6 @@ Inspect without model invocation:
 ```bash
 invariant status
 invariant settings
-invariant project add .
 invariant serve
 invariant ask --dry-run "Where is retry behavior defined?"
 invariant change --dry-run "Restore active jobs after restart"
@@ -163,10 +162,11 @@ invariant establish --dry-run
 ```
 
 `invariant serve` runs the local workspace at `http://127.0.0.1:3000` for the current OS user until
-that process stops. Register initialized repositories explicitly with `invariant project add
-<folder>`; `project list` and `project remove` manage that machine-local list. The workspace switches
-between project folders, creates and resumes themed sessions, sends session turns, and shows active
-lifecycle work. It observes only the selected project and receives change notifications through
+that process stops. `invariant init` registers the repository it initializes (and nested
+repositories it finds) for the workspace; `project list` and `project remove` manage that
+machine-local list. The workspace switches between project folders, creates and resumes themed
+sessions, sends session turns, and shows active lifecycle work. A session held by a running
+`invariant start` shows as live, and turns taken from either surface appear in both. It observes only the selected project and receives change notifications through
 Server-Sent Events. Use `invariant serve --port <port>` when the default machine-local port is busy.
 
 Browser session writes require a process-random same-origin token. The browser cannot register an

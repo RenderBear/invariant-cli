@@ -5,15 +5,22 @@ import secrets
 import subprocess
 import sys
 import threading
+import time
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlsplit
 
 from invariant import conversation, dashboard, workspace
 from invariant.errors import InvariantError
 from invariant.harness.providers import AgentInvocationError, AgentProvider, invoke_session
-from invariant.observer import EVENT_HEARTBEAT_SECONDS, SnapshotStore
+from invariant.observer import (
+    EVENT_HEARTBEAT_SECONDS,
+    SNAPSHOT_INTERVAL_SECONDS,
+    SnapshotStore,
+    build_snapshot,
+)
 
 
 MAX_REQUEST_BYTES = 1_000_000
@@ -49,6 +56,7 @@ class WorkspaceHTTPServer(ThreadingHTTPServer):
         self.stopping = threading.Event()
         self._stores: dict[str, SnapshotStore] = {}
         self._store_references: dict[str, int] = {}
+        self._recent: dict[str, tuple[Path, dict[str, Any], float, float]] = {}
         self._stores_lock = threading.Lock()
         super().__init__(address, WorkspaceRequestHandler)
 
@@ -80,11 +88,30 @@ class WorkspaceHTTPServer(ThreadingHTTPServer):
         store.stop()
 
     def project_snapshot(self, project_id: str) -> dict[str, Any]:
-        store = self.snapshot_store(project_id)
-        try:
-            return store.current()
-        finally:
-            self.release_snapshot_store(project_id)
+        """Serve a snapshot without starting an observer for a one-off read.
+
+        A live store (an events subscriber) is authoritative. Otherwise the last built
+        snapshot is reused while it is younger than the longer of the poll interval and the
+        time its own build took, so an expensive repository is never rebuilt per request.
+        """
+
+        repo = workspace.project_repo(project_id)
+        with self._stores_lock:
+            store = self._stores.get(project_id)
+            if store is not None and store.repo == repo:
+                return store.current()
+            recent = self._recent.get(project_id)
+        if recent is not None:
+            cached_repo, snapshot, built_at, build_seconds = recent
+            if cached_repo == repo and time.monotonic() - built_at < max(
+                SNAPSHOT_INTERVAL_SECONDS, build_seconds
+            ):
+                return snapshot
+        started = time.monotonic()
+        snapshot = build_snapshot(repo)
+        with self._stores_lock:
+            self._recent[project_id] = (repo, snapshot, started, time.monotonic() - started)
+        return snapshot
 
     def stop_stores(self) -> None:
         self.stopping.set()

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import time
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -606,7 +607,9 @@ class SnapshotStore:
     def __init__(self, repo: Path) -> None:
         self.repo = repo
         self.condition = threading.Condition()
+        started = time.perf_counter()
         self.snapshot = build_snapshot(repo)
+        self.build_seconds = time.perf_counter() - started
         self.stop_event = threading.Event()
         self.thread = threading.Thread(
             target=self._poll,
@@ -634,11 +637,15 @@ class SnapshotStore:
             return self.snapshot
 
     def _poll(self) -> None:
-        while not self.stop_event.wait(SNAPSHOT_INTERVAL_SECONDS):
+        # A rebuild that takes longer than the interval widens the interval to match, so an
+        # expensive repository is observed at the rate it can afford rather than continuously.
+        while not self.stop_event.wait(max(SNAPSHOT_INTERVAL_SECONDS, self.build_seconds)):
+            started = time.perf_counter()
             try:
                 candidate = build_snapshot(self.repo)
             except Exception as exc:
                 candidate = _failed_snapshot(self.snapshot, exc)
+            self.build_seconds = time.perf_counter() - started
             with self.condition:
                 if candidate["revision"] != self.snapshot["revision"]:
                     self.snapshot = candidate

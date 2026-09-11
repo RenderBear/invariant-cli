@@ -46,6 +46,13 @@ Initialization creates `config.yml` only. Record directories exist only once acc
 exist; there is no tracked aggregate index. Implementations derive indexes deterministically from
 the record files and never manufacture empty semantic authority.
 
+`config.yml` is **policy**. Policy is owned by the user: an agent never accepts a policy change.
+A candidate that changes the policy file is never routine, and its candidate review must carry a
+`user:` authority whatever `authority` the policy itself declares (§3.3). The policy accepted at the
+integration head governs the landing that changes it, so a candidate cannot relax the rules it is
+landed under. Hosts that run provider write phases MUST discard provider edits to the policy file
+before constructing a candidate, and human-facing configuration commands write it directly.
+
 ### 1.2 Runtime
 
 Generated state is shared by linked worktrees and self-ignored at its root. It is outside history
@@ -155,6 +162,12 @@ Fixed fields and their meaning:
 | `relations`, `facets` | open vocabularies; never given mechanical behavior implicitly |
 
 The filename is `<id>.yml` and must equal the enclosed `id`. One file contains exactly one record.
+
+A record is **retired** by a candidate that removes its file. Retirement is a gated change (§4.2):
+the candidate's governance references name the retired record, the review is independent or
+human, and the landing carries `Invariant-Retired: <kind>:<id>` for each removed record. A retired
+record's references resolve in the landing's first parent, never in the landed tree. A semantic
+record that is revised rather than retired keeps its history through `status: superseded`.
 
 `revisit_on: semantic:<id>` is an explicit dependency edge. Retrieval follows those edges so a
 dependent record is present whenever its premise is. Invalidation propagates only when the
@@ -332,6 +345,11 @@ Rules:
     acceptance: every corrected tree receives new evidence and, when independence is required, a
     fresh independent review.
 
+11. A candidate that changes the policy file (§1.1), or that covers an integration range which
+    changed it (§4.5), requires an accepted review whose `authority` is a `user:` locator. Any other
+    authority is refused as `policy_review_required`. Independence does not substitute for the
+    user here.
+
 Responses are submitted by action id. Editing runtime files is not a response.
 
 ### 3.4 The candidate review response
@@ -375,6 +393,7 @@ path and produces a `candidate.evidenced` action or a blocking diagnostic:
 
 - a changed path is covered by a record's `applies_to`;
 - the candidate touches a record's canonical prose or record file;
+- the candidate changes the policy file;
 - the integration range contains commits not landed through the lifecycle that touched governed
   prose (§4.5);
 - tracked state is invalid;
@@ -470,9 +489,13 @@ Any conflict, failed check, changed candidate, missing review, stale assessment,
 target advance leaves the target unchanged.
 
 If the target moved under a routine candidate, the implementation rebuilds the candidate on the new
-head and re-verifies without restarting semantics. If the target moved under a reviewed candidate
-and the movement expands semantic scope, changes governing material, or conflicts, the task returns
-to the earlier stage and the old review is invalid.
+head and re-verifies without restarting semantics. If the target moved under a reviewed candidate,
+the implementation classifies the movement. The movement is **inert** when its first-parent diff
+from the reviewed head to the current head touches no path the candidate changes, no record file,
+policy, or source index, and no canonical prose of any record the candidate affects, and the
+candidate still merges cleanly. An inert movement rebuilds and re-verifies the candidate and reuses
+the accepted review; the landing binds both trees by carrying `Invariant-Review-Tree` (§4.4). Any
+other movement returns the task to review and the old review is invalid.
 
 A dirty integration worktree (tracked changes present) is not synchronized; landing is refused and
 the changes are left alone. A finish invoked from inside a task worktree instead of the integration
@@ -497,12 +520,20 @@ The landing commit is the durable, greppable record of the change. It carries tr
 | `Invariant-Review-Authority: <locator>` | the human or agent authority that accepted the exact candidate |
 | `Invariant-Review-Mode: <mode>` | `self-attested` or `independent` |
 | `Invariant-Review-Digest: <sha256>` | digest of the accepted candidate review |
+| `Invariant-Review-Tree: <tree>` | the exact tree the review accepted, when an inert movement (§4.3) landed a rebuilt tree |
+| `Invariant-Retired: <kind>:<id>` | each accepted record the landing removed (§2.1) |
 
 Every attested landing binds its original first parent with `Invariant-Landing-Parent`; validation
 therefore detects copied or rewritten landing commits. The three review trailers appear together
-whenever a candidate review was required. Landing-history
-validation rejects incomplete review provenance and missing, malformed, or stale
-`Invariant-Semantic` bindings.
+whenever a candidate review was required. Landing-history validation rejects incomplete review
+provenance and missing, malformed, or stale `Invariant-Semantic` bindings.
+
+Trailers never make a commit a landing on their own. For every attested landing, validation derives
+the **governed material** its first-parent diff touched: record files, the policy file, the source
+index, and the canonical prose documents of every record accepted at that commit or at its first
+parent. A landing that touched governed material MUST carry complete review provenance, and one that
+touched the policy file MUST carry a `user:` review authority. A commit that carries landing trailers
+without meeting these obligations is invalid state.
 
 ### 4.5 Attestation of the integration range
 
@@ -514,7 +545,8 @@ Finish computes the range between the last attested commit and the current head.
 non-empty, the next landing carries `Invariant-Covers: <old>..<new>`. If nothing in that range
 touched governed prose or registries, coverage is automatic and the change stays routine. If it did,
 the affected sections are added to the next candidate's review, whatever that candidate changed.
-Until then, validation reports the unattested range as invalid state.
+If the range changed the policy file, that review requires a `user:` authority (§3.3). Until then,
+validation reports the unattested range as invalid state.
 
 A cherry-pick does not preserve lifecycle identity: copied `Invariant-*` trailers describe the
 original first-parent candidate and MUST be removed before the commit is introduced out of band.
@@ -688,6 +720,7 @@ Codes are stable identifiers. Messages are for humans and may change.
 | `empty_change` | the candidate contains no changes |
 | `dirty_worktree` | the task worktree has uncommitted changes; the implementation must be committed before finish |
 | `untracked_collision` | landing would overwrite an untracked file in the integration worktree |
+| `dirty_integration_checkout` | the integration checkout has tracked changes; landing is refused and the changes are left alone |
 | `stale_receipt`, `corrupt_receipt` | the receipt no longer matches the repository, or cannot be read |
 | `lifecycle_paused`, `change_paused` | assisted execution is waiting for approval |
 | `change_needs_input`, `establish_needs_input`, `hook_input_required` | a blocking action is pending |
@@ -713,6 +746,8 @@ Codes are stable identifiers. Messages are for humans and may change.
 | `stale_governance` | selected governance changed since the receipt was taken |
 | `invalid_assessment`, `invalid_boundary`, `invalid_review_discovery` | malformed semantic inputs |
 | `authority_required` | the configured authority does not permit the agent to decide this |
+| `policy_review_required` | the candidate changes or covers a change to the policy file and the review authority is not a `user:` locator |
+| `independent_review_required` | a gated or contract-defining candidate was reviewed as self-attested |
 | `intent_questions_unanswered`, `intent_not_accepted` | intent-brief adapter responses incomplete or rejected |
 
 **Governance and audits**
@@ -751,7 +786,8 @@ An implementation of this protocol guarantees, for every task:
 1. **Isolation.** Implementation happens in a worktree the integration checkout never sees until
    landing.
 2. **Exactness.** Every review, every piece of evidence, and every landing is bound to an exact
-   tree id. A response for another tree is refused.
+   tree id. A response for another tree is refused. The one carry-over is an inert movement
+   (§4.3), which is decided mechanically and recorded in the landing.
 3. **Atomicity.** The integration ref moves by compare-and-swap or not at all. Interruption at any
    point leaves either the old head or the new one, never a partial state, and the same finish
    resumes to completion.
@@ -763,6 +799,6 @@ An implementation of this protocol guarantees, for every task:
    range a later landing covers; validation reports the gap until then.
 7. **Bounded authority.** Nothing an adapter or provider returns becomes accepted meaning without
    passing through a candidate review bound to an exact tree and carrying an attributable
-   authority.
+   authority. Policy is accepted only by the user.
 8. **Inspectability.** Every state named here is readable by a typed operation without reading
    runtime files, and every refusal carries a stable code.
