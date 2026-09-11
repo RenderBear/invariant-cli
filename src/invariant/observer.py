@@ -4,12 +4,13 @@ import json
 import os
 import sys
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Iterator
 from urllib.parse import urlsplit
 
 from invariant import dashboard
@@ -785,7 +786,10 @@ class _RequestHandler(BaseHTTPRequestHandler):
     do_DELETE = _method_not_allowed
 
 
-def serve(repo: Path, port: int, ready: Callable[[], None]) -> None:
+@contextmanager
+def running_server(repo: Path, port: int) -> Iterator[None]:
+    """Run the observation server for the lifetime of its owning console session."""
+
     store = SnapshotStore(repo)
     try:
         server = _ObservationHTTPServer(("127.0.0.1", port), store)
@@ -795,12 +799,17 @@ def serve(repo: Path, port: int, ready: Callable[[], None]) -> None:
             code="server_unavailable",
         ) from exc
     store.start()
-    ready()
+    thread = threading.Thread(
+        target=server.serve_forever,
+        kwargs={"poll_interval": 0.5},
+        name="invariant-observation-server",
+    )
+    thread.start()
     try:
-        server.serve_forever(poll_interval=0.5)
-    except KeyboardInterrupt:
-        pass
+        yield
     finally:
         server.stopping.set()
         store.stop()
+        server.shutdown()
         server.server_close()
+        thread.join(timeout=3)

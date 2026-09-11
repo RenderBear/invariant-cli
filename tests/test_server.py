@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import signal
 import socket
 import subprocess
 import time
@@ -20,6 +19,19 @@ def _available_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
         return int(listener.getsockname()[1])
+
+
+def _fake_codex(path: Path) -> Path:
+    executable = path / "codex"
+    executable.write_text(
+        "#!/bin/sh\n"
+        "if [ \"${1:-}\" = \"--version\" ]; then\n"
+        "  echo 'codex-cli server-test'\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    executable.chmod(0o755)
+    return executable
 
 
 def _wait_for_json(url: str, process: subprocess.Popen[str]) -> dict:
@@ -71,12 +83,17 @@ def test_server_port_is_tracked_configuration(tmp_path: Path) -> None:
         "port"
     ] == 43123
 
+    code, payload = invariant(repo, "--server")
+    assert code == 2
+    assert payload["outcome"] == "failed"
+
 
 def test_server_exposes_read_only_snapshot_and_changed_sse_events(tmp_path: Path) -> None:
     repo = repository(tmp_path / "repo")
     port = _available_port()
     code, payload = invariant(repo, "set", "server.port", str(port))
     assert code == 0, payload
+    fake = _fake_codex(tmp_path)
     domain = repo / ".invariant" / "records" / "domain" / "observer.yml"
     domain.parent.mkdir(parents=True)
     domain.write_text(
@@ -117,9 +134,15 @@ def test_server_exposes_read_only_snapshot_and_changed_sse_events(tmp_path: Path
     assert code == 0, payload
 
     process = subprocess.Popen(
-        [str(CLI), "--server"],
+        [str(CLI), "start", "--server", "--using", "codex"],
         cwd=repo,
-        env={**os.environ, "PYTHONUNBUFFERED": "1"},
+        env={
+            **os.environ,
+            "INVARIANT_CODEX": str(fake),
+            "INVARIANT_HOME": str(tmp_path / "invariant-home"),
+            "PYTHONUNBUFFERED": "1",
+        },
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
@@ -138,7 +161,7 @@ def test_server_exposes_read_only_snapshot_and_changed_sse_events(tmp_path: Path
         assert any(item.get("task") == "landed-change" for item in snapshot["evidence"])
         assert snapshot["tasks"][0]["freshness"] == "fresh"
         assert any(
-            item["command"] == "server" and item["state"] == "running"
+            item["command"] == "start" and item["state"] == "running"
             for item in snapshot["processes"]
         )
         assert {"plans", "leases", "governance", "evidence", "history"}.issubset(
@@ -195,10 +218,20 @@ def test_server_exposes_read_only_snapshot_and_changed_sse_events(tmp_path: Path
         if stream is not None:
             stream.close()
         if process.poll() is None:
-            process.send_signal(signal.SIGINT)
-        stdout, stderr = process.communicate(timeout=10)
+            stdout, stderr = process.communicate(input=":exit\n", timeout=10)
+        else:
+            stdout, stderr = process.communicate(timeout=10)
         assert process.returncode == 0, (stdout, stderr)
+        assert f"http://127.0.0.1:{port}" in stdout
+        assert "SESSION: ended" in stdout
         assert "Fatal Python error" not in stderr
+
+    try:
+        urllib.request.urlopen(f"{base_url}/healthz", timeout=1)
+    except urllib.error.URLError:
+        pass
+    else:
+        raise AssertionError("server outlived its owning console session")
 
     process_files = list(
         (repo / ".invariant" / "runtime" / "processes").glob("*.yml")

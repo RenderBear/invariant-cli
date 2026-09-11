@@ -102,10 +102,10 @@ Diagrams are semantic HTML laid out with Grid or Flexbox; never raster images.
 
 ## Observation dashboard
 
-The local `--server` dashboard translates the terminal language into a continuously updated read
-surface. It uses the document palette on Paper, with cyan reserved for the Invariant wordmark and
-live-connection mark. Green, amber, and red retain their terminal meanings for healthy, waiting, and
-invalid or stale state. No state relies on colour alone.
+The local `start --server` dashboard translates the terminal language into a continuously updated
+read surface for the owning console session. It uses the document palette on Paper, with cyan
+reserved for the Invariant wordmark and live-connection mark. Green, amber, and red retain their
+terminal meanings for healthy, waiting, and invalid or stale state. No state relies on colour alone.
 
 - The page is one centred column without a sidebar, application launcher, chat composer, or write
   control.

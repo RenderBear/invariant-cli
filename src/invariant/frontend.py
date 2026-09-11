@@ -89,13 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="include diagnostic detail (or complete text in JSON responses)",
     )
-    parser.add_argument(
-        "--server",
-        action="store_true",
-        help="serve the read-only local repository observer",
-    )
     parser.add_argument("--version", action="version", version=f"invariant {__version__}")
-    commands = parser.add_subparsers(dest="command", parser_class=Parser)
+    commands = parser.add_subparsers(dest="command", required=True, parser_class=Parser)
 
     initialize = commands.add_parser(
         "init", help="set up this repository"
@@ -141,6 +136,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["ask", "change"],
         help="override the repository's default session mode",
+    )
+    start.add_argument(
+        "--server",
+        action="store_true",
+        help="serve the read-only repository observer for this session",
     )
     start.add_argument("prompt", nargs="?", help="optional first message")
     start.set_defaults(handler=_start)
@@ -918,11 +918,36 @@ def _start(args: argparse.Namespace) -> CommandResult:
         raise UsageError("Invariant: start is an interactive text command")
     repo = git.root()
     provider = _resolve_provider(repo, args.using)
+    if args.server:
+        port = config.resolve(repo).server.port
+        server_url = f"http://127.0.0.1:{port}"
+        with observer.running_server(repo, port):
+            return _console_session(args, repo, provider, server_url=server_url)
+    return _console_session(args, repo, provider)
+
+
+def _console_session(
+    args: argparse.Namespace,
+    repo: Path,
+    provider: AgentProvider,
+    *,
+    server_url: str = "",
+) -> CommandResult:
     default_mode = args.mode or preferences.session_mode(repo)
     sessions = [_ConsoleSession(1, default_mode)]
     active = sessions[0]
     pending = args.prompt.strip() if isinstance(args.prompt, str) else ""
     print(style.session_intro(provider.value, active.mode, active.identifier))
+    if server_url:
+        _show(
+            "Observation server",
+            [
+                f"ADDRESS: {server_url}",
+                "PROTOCOL: HTTP/1.1 snapshots + Server-Sent Events",
+                "ACCESS: loopback only — read only",
+                "LIFETIME: this console session",
+            ],
+        )
     try:
         while True:
             if pending:
@@ -3685,39 +3710,6 @@ def _help(args: argparse.Namespace) -> CommandResult:
     return CommandResult([], {})
 
 
-def _serve(args: argparse.Namespace) -> int:
-    repo = git.root()
-    port = config.resolve(repo).server.port
-    url = f"http://127.0.0.1:{port}"
-    result = CommandResult(
-        [
-            "STATUS: serving",
-            f"ADDRESS: {url}",
-            "PROTOCOL: HTTP/1.1 snapshots + Server-Sent Events",
-            "ACCESS: loopback only — read only",
-            "NEXT: press Ctrl-C to stop",
-        ],
-        {
-            "status": "serving",
-            "address": url,
-            "protocol": "http+sse",
-            "access": "loopback-read-only",
-        },
-    )
-
-    def ready() -> None:
-        if args.format == "json":
-            emit_success("server", result, "json", verbose=args.verbose)
-        else:
-            rendered = style.render("server", result.lines)
-            if rendered:
-                print(rendered)
-        sys.stdout.flush()
-
-    observer.serve(repo, port, ready)
-    return 0
-
-
 def run(argv: list[str] | None = None) -> int:
     values = hoist_global_options(sys.argv[1:] if argv is None else argv)
     command = _top_level_command(values)
@@ -3725,22 +3717,16 @@ def run(argv: list[str] | None = None) -> int:
         return protocol_cli.run(values)
     format_name = "json" if requested_format(values) == "json" else "text"
     verbose = False
-    selected_command = "server" if "--server" in values else command or "help"
+    selected_command = command or "help"
     try:
         args = build_parser().parse_args(values)
         format_name = args.format
         verbose = args.verbose
-        if args.server and args.command is not None:
-            raise UsageError("Invariant: --server cannot be combined with a command")
-        if not args.server and args.command is None:
-            raise UsageError("Invariant: choose a command or use --server")
         if args.command not in {"connect", "help", "init"}:
             config.require_initialized(git.root())
-        if args.server:
-            with observer.track_process(git.root(), "server"):
-                return _serve(args)
-        tracked = selected_command in {"change", "establish", "source"} and not bool(
-            getattr(args, "dry_run", False)
+        tracked = (
+            selected_command in {"start", "change", "establish", "source"}
+            and not bool(getattr(args, "dry_run", False))
         )
         task = str(
             getattr(args, "change_id", "")

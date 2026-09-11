@@ -778,11 +778,10 @@ The executable is named `invariant`. Its primary human surface is:
 LOCAL   invariant init [--defaults] [--agent <auto|codex|claude>]
 GLOBAL  invariant connect [codex|claude] [--default <codex|claude>]
 LOCAL   invariant ask [--using <provider>] [--dry-run] <prompt>
-LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [<prompt>]
+LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [--server] [<prompt>]
 LOCAL   invariant change [--using <provider>] [--id <change-id>] [--dry-run] <prompt>
 LOCAL   invariant establish [--using <provider>] [--id <establishment-id>] [--goal <focus>] [--dry-run | --discard]
 LOCAL   invariant status [<change-id>]
-LOCAL   invariant --server
 LOCAL   invariant settings
 LOCAL   invariant set <key> <value>
 GLOBAL  invariant help protocol
@@ -1059,9 +1058,10 @@ beyond the separately configured upstream push belong to the host.
 
 ### 8.5 Local observation server
 
-`invariant --server` starts a foreground, loopback-only HTTP/1.1 server on the configured
-`server.port`. It is an observation surface, not a chat surface or an alternate lifecycle API. It
-does not invoke a model and exposes no write endpoint.
+`invariant start --server` starts a loopback-only HTTP/1.1 server on the configured `server.port`
+for the lifetime of that foreground console session. Ending the console also stops the server. The
+server is an observation surface, not a chat surface or an alternate lifecycle API. It does not
+invoke a model and exposes no write endpoint.
 
 The stable versioned routes are:
 

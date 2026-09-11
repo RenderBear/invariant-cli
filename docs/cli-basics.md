@@ -151,16 +151,17 @@ Inspect without model invocation:
 ```bash
 invariant status
 invariant settings
-invariant --server
+invariant start --server
 invariant ask --dry-run "Where is retry behavior defined?"
 invariant change --dry-run "Restore active jobs after restart"
 invariant establish --dry-run
 ```
 
-`invariant --server` keeps a read-only local dashboard running at
-`http://127.0.0.1:3000`. It shows live Invariant processes, active changes, review and verification
-state, coordination, governance freshness, evidence, and recent landings; it is deliberately not a
-chat interface. The browser receives an initial HTTP snapshot and then change notifications over
+`invariant start --server` keeps a read-only local dashboard running at
+`http://127.0.0.1:3000` while that console session is open. Ending the console stops the server. The
+dashboard shows live Invariant processes, active changes, review and verification state,
+coordination, governance freshness, evidence, and recent landings; it is deliberately not a chat
+interface. The browser receives an initial HTTP snapshot and then change notifications over
 Server-Sent Events. Set another port with `invariant set server.port <port>`; the server remains
 bound to the local machine.
 
