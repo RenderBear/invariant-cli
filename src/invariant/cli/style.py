@@ -269,11 +269,11 @@ def agent_message(
     if not terminal:
         return content
     body = "\n".join(prose(content))
-    # The final newline becomes deliberate breathing room when the caller prints the block.
+    # A settled activity heading owns the preceding line; keep one blank line before its prose.
     if not heading:
-        return f"{body}\n"
+        return f"\n{body}\n"
     head = speaker(name)
-    return f"{head}\n{body}\n"
+    return f"{head}\n\n{body}\n"
 
 
 def session_intro(name: str, mode: str, identifier: str | int) -> str:
@@ -433,8 +433,13 @@ class Turn(Activity):
         self._stop.set()
         if self._thread is not None:
             self._thread.join(timeout=max(0.2, self.interval * 2))
+        duration = paint(
+            MUTED,
+            elapsed(time.monotonic() - self._started),
+            stream=self.stream,
+        )
         mark = "" if exc_type is None else f" {paint(BAD, CROSS, stream=self.stream)}"
-        self.stream.write(f"\r\033[2K{speaker(self.name)}{mark}\n")
+        self.stream.write(f"\r\033[2K{speaker(self.name)} {duration}{mark}\n")
         self.stream.flush()
         self.rendered = True
 
