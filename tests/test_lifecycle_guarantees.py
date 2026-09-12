@@ -53,7 +53,7 @@ def test_parallel_units_use_isolated_refs_and_converge_one_candidate(tmp_path: P
                 {
                     "id": "left",
                     "objective": "write left",
-                    "claims": ["repo:src/left.txt"],
+                    "claims": ["repo:src/left/new.txt"],
                     "provides": [],
                     "relies_on": [],
                     "depends_on": [],
@@ -62,7 +62,7 @@ def test_parallel_units_use_isolated_refs_and_converge_one_candidate(tmp_path: P
                 {
                     "id": "right",
                     "objective": "write right",
-                    "claims": ["repo:src/right.txt"],
+                    "claims": ["repo:src/right/new.txt"],
                     "provides": [],
                     "relies_on": [],
                     "depends_on": [],
@@ -72,19 +72,20 @@ def test_parallel_units_use_isolated_refs_and_converge_one_candidate(tmp_path: P
         }
 
     app = repository(tmp_path / "repo", planner=planner)
+    _two_domains(app)
     app.change_open(
         "parallel",
         intent="write two independent files",
         supplier="user:test",
-        paths=["src/left.txt", "src/right.txt"],
+        paths=["src/left/new.txt", "src/right/new.txt"],
         operation_id="open-parallel",
     )
     app.change_recommend("parallel", operation_id="recommend-parallel")
     left_attempt, left = begin(app, "parallel", "left")
     right_attempt, right = begin(app, "parallel", "right")
     assert left != right
-    implement(left, "src/left.txt", "left\n")
-    implement(right, "src/right.txt", "right\n")
+    implement(left, "src/left/new.txt", "left\n")
+    implement(right, "src/right/new.txt", "right\n")
     for attempt in (left_attempt, right_attempt):
         app.work_submit(
             "parallel",
@@ -116,10 +117,10 @@ def test_parallel_units_use_isolated_refs_and_converge_one_candidate(tmp_path: P
     state = app.change_inspect("parallel").result["change"]
     assert set(state["candidate"]["units"]) == {"left", "right"}
     assert git.run(
-        ["show", f"{state['candidate']['commit']}:src/left.txt"], cwd=app.repository.root
+        ["show", f"{state['candidate']['commit']}:src/left/new.txt"], cwd=app.repository.root
     ).stdout == "left"
     assert git.run(
-        ["show", f"{state['candidate']['commit']}:src/right.txt"], cwd=app.repository.root
+        ["show", f"{state['candidate']['commit']}:src/right/new.txt"], cwd=app.repository.root
     ).stdout == "right"
 
 
@@ -245,6 +246,27 @@ def test_post_landing_cleanup_does_not_change_attested_decisions(tmp_path: Path)
         operation_id="cleanup-cleaned",
     )
     assert app.state_validate().result["valid"] is True
+
+
+def _two_domains(app: InvariantApplication) -> None:
+    """Land left and right domains with direct user authority so a planner is consulted."""
+
+    root = app.repository.root
+    (root / "docs").mkdir(exist_ok=True)
+    (root / "docs/architecture.md").write_text("# A\n\n## Left {#left}\n\nl\n\n## Right {#right}\n\nr\n", encoding="utf-8")
+    for side in ("left", "right"):
+        (root / "src" / side).mkdir(parents=True, exist_ok=True)
+        (root / "src" / side / "seed.txt").write_text(side + "\n", encoding="utf-8")
+    git.run(["add", "-A"], cwd=root)
+    git.run(["commit", "-qm", "two domains"], cwd=root)
+    tree = _record_candidate(app, "domains", {
+        f".invariant/records/domain/{side}.yml": json.dumps({"version": 1, "id": side, "responsibility": side, "scope": [f"repo:src/{side}"], "architecture": [f"architecture:docs/architecture.md#{side}"]})
+        for side in ("left", "right")
+    })
+    request = _land_request(app, "domains", tree, "first")
+    action = request.result["action"]
+    app.action_respond("domains", action["id"], response={"bindings": action["bindings"], "resolution": "accepted"}, actor="user:test", operation_id="accept-domains")
+    app.integration_land("domains", token=_land_request(app, "domains", tree, "second").result["token"], operation_id="land-domains")
 
 
 def _governed_seed(app: InvariantApplication) -> None:
@@ -376,31 +398,46 @@ def test_unbounded_reach_is_rejected(tmp_path: Path) -> None:
     assert captured.value.code == "unbounded_scope"
 
 
-def _units(n: int, prefix: str = "src/par") -> dict:
+def _units(n: int) -> dict:
+    sides = ["left", "right"]
     return {
         "units": [
-            {"id": f"u{i}", "objective": f"write {i}", "claims": [f"repo:{prefix}_{i}.txt"], "provides": [], "relies_on": [], "depends_on": [], "checks": []}
+            {"id": f"u{i}", "objective": f"write {i}", "claims": [f"repo:src/{sides[i % 2]}/par_{i}.txt"], "provides": [], "relies_on": [], "depends_on": [], "checks": []}
             for i in range(n)
         ]
     }
 
 
+def test_routine_shape_skips_the_planner(tmp_path: Path) -> None:
+    def planner(_: object) -> dict:
+        raise AssertionError("the planner must not be consulted for a routine shape")
+
+    app = repository(tmp_path / "repo", planner=planner)
+    app.change_open("routine", intent="two files in one area", supplier="user:test", paths=["src/a.txt", "src/b.txt"], operation_id="open-routine")
+    app.change_recommend("routine", operation_id="recommend-routine")
+    state = app.change_inspect("routine").result["change"]
+    assert [unit["id"] for unit in state["recommendation"]["units"]] == ["change"]
+    recorded = app.store.load("routine").event_for("recommend-routine")
+    assert recorded is not None and recorded.payload["planner"] == "not-consulted:routine-shape"
+
+
 def test_submitted_units_release_frontier_slots(tmp_path: Path) -> None:
     app = repository(tmp_path / "repo", planner=lambda _: _units(3), parallelism_maximum=2)
-    app.change_open("slots", intent="three files", supplier="user:test", paths=[f"src/par_{i}.txt" for i in range(3)], operation_id="open-slots")
+    _two_domains(app)
+    app.change_open("slots", intent="three files", supplier="user:test", paths=[f"src/{s}/par_{i}.txt" for i, s in enumerate(["left", "right", "left"])], operation_id="open-slots")
     app.change_recommend("slots", operation_id="recommend-slots")
     state = app.change_inspect("slots").result["change"]
     assert state["recommendation"]["maximum_parallelism"] == 2
     assert state["frontier"] == ["u0", "u1"]
     attempts = []
-    for unit in ("u0", "u1"):
+    for unit, side in (("u0", "left"), ("u1", "right")):
         attempt, worktree = begin(app, "slots", unit)
-        implement(worktree, f"src/par_{unit[1]}.txt", f"{unit}\n")
+        implement(worktree, f"src/{side}/par_{unit[1]}.txt", f"{unit}\n")
         app.work_submit("slots", attempt_id=attempt, actor="agent:test/worker", operation_id=f"submit-{attempt}")
         attempts.append(attempt)
     assert app.change_inspect("slots").result["change"]["frontier"] == ["u2"]
     third, worktree = begin(app, "slots", "u2")
-    implement(worktree, "src/par_2.txt", "u2\n")
+    implement(worktree, "src/left/par_2.txt", "u2\n")
     app.work_submit("slots", attempt_id=third, actor="agent:test/worker", operation_id=f"submit-{third}")
     for attempt in (*attempts, third):
         token = grant(app, "slots", "candidate.converge", attempt, attempt=attempt, operation=f"grant-converge-{attempt}")
@@ -410,11 +447,12 @@ def test_submitted_units_release_frontier_slots(tmp_path: Path) -> None:
 
 def test_invalid_proposal_is_recorded_then_conservative(tmp_path: Path) -> None:
     overlapping = {"units": [
-        {"id": "a", "objective": "a", "claims": ["repo:src/x"], "provides": [], "relies_on": [], "depends_on": [], "checks": []},
-        {"id": "b", "objective": "b", "claims": ["repo:src/x/y.txt"], "provides": [], "relies_on": [], "depends_on": [], "checks": []},
+        {"id": "a", "objective": "a", "claims": ["repo:src/left"], "provides": [], "relies_on": [], "depends_on": [], "checks": []},
+        {"id": "b", "objective": "b", "claims": ["repo:src/left/y.txt"], "provides": [], "relies_on": [], "depends_on": [], "checks": []},
     ]}
     app = repository(tmp_path / "repo", planner=lambda _: overlapping)
-    app.change_open("bad", intent="overlap", supplier="user:test", paths=["src/x"], operation_id="open-bad")
+    _two_domains(app)
+    app.change_open("bad", intent="overlap", supplier="user:test", paths=["src/left", "src/right"], operation_id="open-bad")
     app.change_recommend("bad", operation_id="recommend-bad")
     state = app.change_inspect("bad").result["change"]
     assert [unit["id"] for unit in state["recommendation"]["units"]] == ["change"]

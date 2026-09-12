@@ -679,6 +679,12 @@ recommended_frontier: [api]
 governance: [record:contract:ocr.engine-protocol.v1@<digest>]
 ```
 
+A change has a **routine shape** when the selected governance at its base contains no contract, at
+most one domain, and no `serialize` directive. Nothing in such a change can be contractually
+independent of anything else, so the recommendation is the conservative single unit over the reach
+estimate and the semantic planner is not consulted; the ledger records that it was not. A proposal
+the harness supplies explicitly is still validated as a proposal.
+
 The recommendation has a digest and is appended to the change ledger. A semantic planner MAY help
 construct it, but the planner receives only Invariant-selected context, returns typed output, and
 has no authority to validate or issue grants. A harness MAY supply the planner's proposal itself

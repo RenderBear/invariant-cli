@@ -45,6 +45,7 @@ class RecommendationService:
         host_capacity: int | None = None,
         planning: Mapping[str, Any] | None = None,
         proposal: Mapping[str, Any] | None = None,
+        consult_planner: bool = True,
     ) -> RecommendationResult:
         context = {
             "change": change,
@@ -56,7 +57,7 @@ class RecommendationService:
             "host_capacity": host_capacity,
             "planning": dict(planning or {}),
         }
-        if proposal is None and self.planner:
+        if proposal is None and self.planner and consult_planner:
             proposal = self.planner(context)
         conservative = [{
             "id": "change",

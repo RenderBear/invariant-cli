@@ -11,6 +11,7 @@ from invariant.ledger import handoff
 from invariant.mechanics import git
 from invariant.planning import RecommendationService
 from invariant.planning import context as planning_context
+from invariant.planning.context import routine_shape
 from invariant.protocol import (
     ActionKind,
     CapabilityName,
@@ -167,6 +168,7 @@ class ChangeService:
             obligations=obligations,
             scope=scope.as_dict(),
         )
+        routine = routine_shape(selection, obligations)
         result = self.recommendations.recommend(
             change=change_id,
             base=requested.state["base"],
@@ -178,6 +180,7 @@ class ChangeService:
             host_capacity=host_capacity,
             planning=planning,
             proposal=proposal,
+            consult_planner=not routine,
         )
         current = requested
         if result.rejection is not None:
@@ -202,7 +205,15 @@ class ChangeService:
             operation_id=operation_id,
             kind=EventKind.RECOMMENDATION_RECORDED,
             actor="kernel:repository/planning",
-            payload={"recommendation": result.recommendation.as_dict()},
+            payload={
+                "recommendation": result.recommendation.as_dict(),
+                "planner": (
+                    "proposal" if proposal is not None
+                    else "not-consulted:routine-shape" if routine
+                    else "consulted" if self.recommendations.planner
+                    else "unavailable"
+                ),
+            },
             expected_head=current.head,
         )
 

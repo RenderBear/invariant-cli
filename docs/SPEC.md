@@ -515,6 +515,12 @@ at 400 entries), and the one question the planner answers. `context.plan` return
 The same module renders `guidance_lines`, the plain form the host puts in front of every worker and
 reviewer, so context selection is a delivered consequence rather than a stored one.
 
+`routine_shape` decides whether a planner is worth consulting: when the selection at the base has
+no contract, at most one domain, and no `serialize` directive, `change.recommend` records the
+conservative single unit directly and the recommendation event notes `not-consulted:routine-shape`.
+A small change inside one area therefore costs the coordinator turn and the worker turn only. An
+explicit `proposal` is always validated.
+
 The semantic planner produces a typed proposal. The host's planner is a read-only provider run over
 that context; an MCP harness that is itself the model passes `proposal` to `change.recommend`. The
 planner does not receive a worker-creation tool. The deterministic validator either accepts and

@@ -90,6 +90,17 @@ def build(
     }
 
 
+def routine_shape(selection: GovernanceSelection, obligations: ObligationSet) -> bool:
+    """No contract, at most one domain, nothing serialized: nothing here can split independently."""
+
+    kinds = [record.kind for record in selection.records]
+    return (
+        "contract" not in kinds
+        and kinds.count("domain") <= 1
+        and not obligations.serialize_on
+    )
+
+
 def guidance_lines(context: Mapping[str, Any]) -> list[str]:
     """Plain lines a worker or reviewer prompt carries so selected meaning is actually delivered."""
 
