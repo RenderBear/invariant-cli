@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -16,6 +17,18 @@ from invariant.protocol import PROTOCOL_VERSION
 
 
 CONFIG_PATH = Path(".invariant/config.yml")
+TRACKED_SETTING_ALIASES = {
+    "intent": "authority.intent.suppliers",
+    "authority.intent.suppliers": "authority.intent.suppliers",
+    "resolution": "authority.resolution.delegation",
+    "authority.resolution.delegation": "authority.resolution.delegation",
+    "execution": "execution.transitions",
+    "execution.transitions": "execution.transitions",
+    "integration_branch": "integration_branch",
+    "publication": "publication",
+    "parallelism": "parallelism.maximum",
+    "parallelism.maximum": "parallelism.maximum",
+}
 @dataclass(frozen=True)
 class IntentAuthority:
     suppliers: tuple[str, ...] = ("user",)
@@ -314,6 +327,70 @@ def initialize(repo: Path, **values: Any) -> list[str]:
         separator = "" if not current_excludes or current_excludes.endswith("\n") else "\n"
         exclude.write_text(current_excludes + separator + ignored + "\n", encoding="utf-8")
     return [f"CONFIG: created {CONFIG_PATH.as_posix()}", *lines(resolve(repo))]
+
+
+def updated_document(
+    repo: Path,
+    ref: str,
+    integration_branch: str,
+    key: str,
+    value: str,
+) -> tuple[str, dict[str, Any], bool]:
+    """Build and validate one deterministic policy edit without writing the checkout."""
+
+    canonical = TRACKED_SETTING_ALIASES.get(key)
+    if canonical is None:
+        raise InvariantError(
+            f"Invariant: unknown tracked setting '{key}'",
+            code="invalid_config_key",
+        )
+    result = git.run(
+        ["show", f"{ref}:{CONFIG_PATH.as_posix()}"], cwd=repo, check=False
+    )
+    if result.returncode:
+        raise InvariantError(
+            "Invariant: accepted policy does not resolve",
+            code="invalid_policy",
+        )
+    try:
+        raw = parse_config_yaml(result.stdout)
+    except yaml.YAMLError as exc:
+        raise InvariantError(
+            f"Invariant: invalid accepted policy: {exc}", code="invalid_policy"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise InvariantError(
+            "Invariant: accepted policy must be a mapping", code="invalid_policy"
+        )
+    document = deepcopy(raw)
+    if canonical == "authority.intent.suppliers":
+        suppliers = [item.strip() for item in value.split(",") if item.strip()]
+        document["authority"]["intent"]["suppliers"] = suppliers
+    elif canonical == "authority.resolution.delegation":
+        document["authority"]["resolution"]["delegation"] = value
+    elif canonical == "execution.transitions":
+        document["execution"]["transitions"] = value
+    elif canonical == "integration_branch":
+        if value not in {"auto", integration_branch}:
+            raise InvariantError(
+                "Invariant: changing the integration branch requires an explicit ref-transition design",
+                code="unsupported_policy_transition",
+            )
+        document["integration_branch"] = value
+    elif canonical == "publication":
+        document["publication"] = value
+    else:
+        document["parallelism"]["maximum"] = (
+            int(value) if value.isdigit() else value
+        )
+    _from_raw(
+        repo,
+        document,
+        source=f"candidate policy based on {ref}",
+        fallback_branch=integration_branch,
+        fallback_source="accepted",
+    )
+    return canonical, document, document != raw
 
 
 def lines(value: Config) -> list[str]:

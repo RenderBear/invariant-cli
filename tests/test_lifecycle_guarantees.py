@@ -11,6 +11,7 @@ import pytest
 from invariant.application import InvariantApplication
 from invariant.errors import Blocked
 from invariant.mechanics import git
+from invariant.protocol import canonical_json
 
 from lifecycle_support import begin, finish, grant, implement, open_change, repository
 
@@ -208,4 +209,35 @@ def test_landing_attestation_binds_intent_plan_units_and_parent(tmp_path: Path) 
     assert "Invariant-Plan: " in message
     assert "Invariant-Unit: change " in message
     assert "Invariant-Landing-Parent: " in message
+    assert app.state_validate().result["valid"] is True
+
+
+def test_post_landing_cleanup_does_not_change_attested_decisions(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    open_change(app, "cleaned")
+    attempt, worktree = begin(app, "cleaned")
+    implement(worktree, "src/cleaned.txt", "cleaned\n")
+    finish(app, "cleaned", attempt)
+    state = app.change_inspect("cleaned").result["change"]
+    refs = sorted(
+        [
+            *(str(item["ref"]) for item in state["attempts"].values()),
+            "refs/invariant/candidates/cleaned",
+        ]
+    )
+    requested = app.capability_request(
+        "cleaned",
+        capability="work.discard",
+        actor="user:test",
+        resource=canonical_json(refs),
+        operation_id="grant-cleanup-cleaned",
+    )
+    token = requested.result.get("token")
+    assert isinstance(token, str), requested.result
+    app.work_discard(
+        "cleaned",
+        refs=refs,
+        token=token,
+        operation_id="cleanup-cleaned",
+    )
     assert app.state_validate().result["valid"] is True

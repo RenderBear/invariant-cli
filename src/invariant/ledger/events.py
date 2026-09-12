@@ -262,8 +262,16 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         state["landing"] = deepcopy(event.payload["landing"])
         state["stage"] = "cleanup-required"
     elif event.kind in {EventKind.LANDING_COMPLETED, EventKind.LANDING_RECONCILED}:
-        state["landing"] = {**(state.get("landing") or {}), **deepcopy(event.payload["landing"])}
-        state["stage"] = "completed" if event.payload.get("completed", True) else "ready-to-land"
+        completed = event.payload.get("completed", True)
+        landing = {
+            **(state.get("landing") or {}),
+            **deepcopy(event.payload["landing"]),
+        }
+        if completed:
+            landing["event"] = event.digest
+            landing["sequence"] = event.sequence
+        state["landing"] = landing
+        state["stage"] = "completed" if completed else "ready-to-land"
     elif event.kind in {EventKind.PUBLICATION_COMPLETED, EventKind.PUBLICATION_FAILED}:
         state["publication"] = deepcopy(event.payload["publication"])
     elif event.kind is EventKind.CHANGE_INVALIDATED:

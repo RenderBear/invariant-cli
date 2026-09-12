@@ -456,10 +456,27 @@ def validate_landing_attestation(repo: Path, state: Mapping[str, Any]) -> None:
     if sorted(git.trailers(repo, commit, "Invariant-Governance")) != expected_governance:
         failures.append("Invariant-Governance")
 
+    landing_sequence = landing.get("sequence")
+    operations = state.get("operations", {})
+    if not isinstance(landing_sequence, int) or not isinstance(operations, Mapping):
+        failures.append("landing event")
+        landing_sequence = -1
+        operations = {}
+
+    def consumed_before_landing(grant: Mapping[str, Any]) -> bool:
+        closed_by = grant.get("closed_by")
+        operation = operations.get(closed_by) if isinstance(closed_by, str) else None
+        sequence = operation.get("sequence") if isinstance(operation, Mapping) else None
+        return (
+            grant.get("status") == "consumed"
+            and isinstance(sequence, int)
+            and sequence <= landing_sequence
+        )
+
     expected_decisions = sorted(
         str(grant["decision_digest"])
         for grant in state.get("grants", {}).values()
-        if grant.get("status") == "consumed"
+        if consumed_before_landing(grant)
     )
     if sorted(git.trailers(repo, commit, "Invariant-Decision")) != expected_decisions:
         failures.append("Invariant-Decision")

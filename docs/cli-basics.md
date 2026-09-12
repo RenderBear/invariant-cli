@@ -1,101 +1,131 @@
-# Invariant CLI and MCP basics
+# Invariant CLI basics
 
-The CLI is the operator and recovery surface. The repository-bound MCP server is the harness
-surface. Both call the same in-process `InvariantApplication`; Git-backed state is authoritative.
+The CLI is a visual local host over the v1 protocol. It owns setup, agent connections, durable
+conversations, and the read-only workspace. Git refs and objects remain the authority for repository
+work; transcripts and provider handles remain local presentation state.
 
-## Initialize and inspect
+The human surface is:
+
+```text
+init  status  start  connect  set  serve
+```
+
+## Initialize a project
 
 ```bash
 invariant init
+```
+
+Guided setup asks how semantic resolution may be delegated, whether valid transitions continue
+automatically, whether publication can be requested, and which connected agent new sessions prefer.
+The user remains the intent supplier. `invariant init --defaults` chooses the safe defaults without
+questions.
+
+Initialization commits `.invariant/config.yml` as one deterministic bootstrap commit and registers the
+project in the per-user workspace. It performs its own staging; there is no `git add` step. Running
+it again keeps the accepted policy and points to `invariant set` for one-key changes.
+
+## See project state
+
+```bash
 invariant status
-invariant governance explain --path src/payments
+invariant --format json status
 ```
 
-Initialization writes v1 policy and commits it as an isolated Git change before opening a governed
-change. Existing tracked edits block initialization; unrelated untracked files are not included.
+Status combines repository truth with local host state. It shows the integration branch, validation
+state, intent source, resolution delegation, parallel execution policy, Git-grounded lifecycle,
+accepted semantic-kernel record count, latest audit, audit staleness, and the project's durable and
+currently live sessions.
 
-Intent supply and resolution delegation are authority policy. Policy changes are made as isolated
-work inside an ordinary governed change and accepted under the integration parent's policy. There
-is no direct configuration editor in the operator CLI.
+## Connect an agent
 
-## Open a change
+Invariant uses an existing Codex or Claude Code installation and stores no provider credentials.
 
 ```bash
-invariant change open change-id \
-  --intent "Desired repository outcome" \
-  --supplier user:alice \
-  --path src/service
-
-invariant change recommend change-id
-invariant change inspect change-id
-invariant change handoff change-id
+invariant connect
+invariant connect codex
+invariant connect claude
+invariant connect --default codex
 ```
 
-The ledger is durable under `refs/invariant/changes/change-id`. The recommendation identifies the
-current maximum parallelism and frontier.
+Without a provider, the command reports installation and native authentication state. A repository
+can follow the machine default or select a clone-local preference with `invariant set harness`.
 
-## Governed execution
-
-The lower-level CLI groups mirror the protocol for operator recovery:
-
-```text
-capability request|inspect|revoke
-work create|submit|discard
-candidate converge|evidence
-action inspect|respond
-integration land|reconcile
-publication publish
-```
-
-Each state-changing request may carry `--operation-id` for idempotency. Capabilities return bearer
-tokens once. Inspection and handoff redact them.
-
-Destructive cleanup binds the exact sorted ref list as compact JSON. For example, a discard of one
-attempt requests `work.discard` with resource
-`["refs/invariant/work/change-id/unit-id/attempt-id"]`; the resulting token is usable only with
-that exact list.
-
-Resolution and execution tokens are not interchangeable:
-
-- `intent.resolve` answers one bound action and may be given to an eligible model actor.
-- `worktree.create`, `worktree.write`, `verification.run`, `candidate.converge`,
-  `integration.land`, `remote.publish`, `change.invalidate`, and `work.discard` govern operational
-  consequences.
-
-## MCP
+## Start a durable conversation
 
 ```bash
-invariant-mcp \
-  --repository /absolute/path/to/repository \
-  --principal harness:local
+invariant start
+invariant start "Explain the recovery boundary"
+invariant start --session s-ab12cd34ef
+invariant start --using claude --theme "Payment retries"
 ```
 
-The stdio gateway exposes typed tools only. It has no generic command, repository, Git, environment,
-network, remote, or credential parameter. Restarting it reloads the same ledgers and refs.
+Each session has a stable Invariant id, theme, transcript, selected provider, and opaque native
+provider handle. The transcript survives console exit and appears in `status` and `serve`, but it is
+not repository authority.
 
-Denied, stale, and needs-input results are successful protocol exchanges. They do not authorize a
-bypass.
+The session controls are:
 
-## JSON envelope
+| Control | Effect |
+| --- | --- |
+| `:new [theme]` | Create and enter another session. |
+| `:sessions` | List this project's sessions. |
+| `:switch ID` | Switch to a listed session; an ordinal also works. |
+| `:agent codex\|claude` | Switch this session's provider and start a new native provider thread. |
+| `:mode ask\|change` | Choose question-only or change-capable classification. |
+| `:status` | Show sessions and governance freshness. |
+| `:settings` | Show tracked policy and clone-local preferences. |
+| `:set KEY VALUE` | Apply the same one-setting operation as `invariant set`. |
+| `:accept [CHANGE]` | Accept one exact pending governance candidate with direct user authority. |
+| `:exit` | Leave while preserving the session. |
 
-Use `--format json` before the command:
+Conversation turns are read-only while the provider interprets the message. When a change is
+requested, the host uses the original user message as intent, opens a durable change, obtains an
+isolated worktree for the provider principal, commits the provider's candidate, runs compiled
+verification, obtains a separate review when required, and lands atomically. If the candidate
+changes governance, it remains pending until `:accept`.
+
+## Change one setting
+
+Clone-local preferences update immediately:
 
 ```bash
-invariant --format json change inspect change-id
+invariant set harness codex
+invariant set mode change
 ```
 
-Every result has:
+Tracked policy changes use the governed lifecycle:
 
-```json
-{
-  "protocol": 1,
-  "command": "change.inspect",
-  "status": "ok",
-  "outcome": "completed",
-  "result": {},
-  "diagnostics": []
-}
+```bash
+invariant set resolution secondary-agent
+invariant set execution assisted
+invariant set publication on
+invariant set parallelism 4
 ```
 
-Outcomes `completed`, `ready`, `needs_input`, `denied`, and `stale` exit zero. Mechanical blocks
-exit one. Invalid input, corrupt state, transport failures, and internal failures exit two.
+The shorthand deterministically constructs exactly one config candidate, obtains direct user
+acceptance from the invoking CLI principal, verifies and lands it, then removes disposable attempt
+refs. It never treats mutable primary-worktree config as policy. Changing to another integration
+branch is deliberately blocked until the required atomic ref transition has a protocol design.
+
+## Open the global workspace
+
+```bash
+invariant serve
+invariant serve --port 3100
+invariant serve --project /path/to/another/repository
+```
+
+The foreground service binds only to `127.0.0.1`. It shows every explicitly registered project,
+their durable sessions, live console presence, transcripts, lifecycle changes, governance state,
+and audit freshness. The browser and HTTP API are read-only; only GET and HEAD are accepted.
+
+## Harness protocol
+
+```bash
+invariant-mcp --repository /absolute/path/to/repository --principal harness:local
+```
+
+The repository-bound MCP gateway is the typed automation surface. It exposes governance,
+recommendation, action, capability, isolated-work, candidate, verification, landing, and publication
+operations without offering a generic shell or accepting a repository path per call.

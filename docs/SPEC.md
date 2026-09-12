@@ -652,34 +652,49 @@ authentication and principal-binding design.
 
 ## 9. CLI and human interaction
 
-The operator CLI exposes the same typed operations without asking humans to handle grant tokens in
-ordinary use. Compound CLI commands request and immediately consume the minimum required grants,
-while JSON mode exposes the underlying decision ids and redacted grant metadata.
+The installed `invariant` entry point is a local human host over the application boundary. It owns
+terminal presentation, provider processes, durable local conversations, project registration, and
+the read-only web workspace. None of those objects is repository authority. Repository changes are
+still performed by composing typed application operations and consuming the minimum exact grants.
 
 The stable human surface is:
 
 ```text
-invariant init
+invariant init [--defaults]
 invariant status
-invariant governance explain [--path ...] [--interface ...] [--domain ...]
-invariant change open <id> --intent ... --supplier user:<id> [--path ...]
-invariant change recommend <id>
-invariant change inspect <id>
-invariant change handoff <id>
-invariant change resume <capsule>
-invariant change invalidate <id>
-invariant action inspect|respond ...
-invariant capability request|inspect|revoke ...
-invariant work create|submit|discard ...
-invariant candidate converge|evidence ...
-invariant integration land|reconcile ...
-invariant publication publish ...
+invariant start [--session <id>] [--using codex|claude] [<prompt>]
+invariant connect [codex|claude] [--default codex|claude]
+invariant set <key> <value>
+invariant serve [--port <port>] [--project <folder>]...
 invariant-mcp --repository <path>
 ```
 
-Provider-backed conversational commands MAY remain as higher-level hosts, but they must call the
-same application service. They are not part of the kernel contract and cannot create worktrees,
-accept governance, or land by editing repository state directly.
+`init` is guided setup and commits only the deterministic bootstrap policy; `--defaults` skips the
+questions. It also registers the repository in the per-user workspace. `status` joins exact
+repository state with local sessions and reports governance record count, validation state, latest
+audit, and audit staleness.
+
+`start` creates or resumes one durable project session. `:new`, `:sessions`, and `:switch` navigate
+sessions; `:agent` switches the provider for one session; `:status`, `:settings`, and `:set` expose
+the same local host operations; `:accept` supplies direct user authority for one exact pending
+governance candidate; and `:exit` releases live presence without deleting the transcript. Provider
+handles and transcripts live in the per-user workspace and never become semantic evidence.
+
+The conversational coordinator is read-only. When it classifies a user message as a write, the host
+opens a durable change from the user's original message, obtains scoped worktree capabilities for a
+provider-specific principal, runs the provider in the isolated worktree, commits the result itself,
+verifies the exact candidate, obtains a distinct secondary review when compiled governance requires
+one, and lands only through `integration.land`. Governance candidates pause for `:accept`.
+
+`set harness` and `set mode` update clone-local host preferences. Every tracked setting is a
+deterministic one-file governance candidate evaluated under the parent policy, directly accepted by
+the invoking `user:cli`, attested, landed, and cleaned up. The command stages only the isolated
+attempt; it never edits or asks the user to stage primary-worktree config. A transition to a
+different integration branch is rejected until an atomic multi-ref transition is specified.
+
+`serve` is one foreground, loopback-only service over the current user's workspace. It presents all explicitly
+registered projects and their durable sessions, marks live consoles, and streams read-only project
+snapshots over Server-Sent Events. The HTTP surface permits only GET and HEAD.
 
 Text output leads with the decision and next permitted action. It distinguishes:
 
@@ -892,13 +907,20 @@ src/invariant/
     semantic_planner.py       bounded model-backed recommendation proposal
     semantic_review.py        exact-context review proposal
   mcp_server.py               repository-bound typed MCP transport
-  cli/                        operator parsing and presentation
+  frontend.py                 interactive human host and compact command surface
+  conversation.py             read-only conversational classification and prompts
+  surface.py                  compound human operations over the application boundary
+  workspace.py                per-user project, session, transcript, and presence state
+  observer.py                 read-only project snapshots and SSE polling
+  host.py / dashboard.py      loopback workspace service and visual assets
+  harness/                    native Codex and Claude connection and invocation adapters
+  cli/style.py                terminal palette, wordmark, panels, turns, and motion
 ```
 
 Dependency direction is:
 
 ```text
-CLI / MCP
+Human host / CLI / MCP
     -> application
         -> lifecycle / gateway / planning
             -> governance
@@ -990,6 +1012,8 @@ The implementation is complete when:
 - every privileged operation consumes the correct causally current grant;
 - decisions distinguish authorization from managed or advisory enforcement;
 - MCP exposes only the repository-bound typed tools in §8.2 and calls the application in-process;
+- the human CLI exposes interactive setup, durable multi-session chat, provider connection and
+  switching, governed one-setting changes, governance-aware status, and the loopback workspace;
 - no tool accepts a repository escape hatch, raw command, Git arguments, remote, or credential;
 - one exact aggregate candidate receives the complete evidence and semantic review required by
   actual reach;

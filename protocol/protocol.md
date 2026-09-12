@@ -101,6 +101,13 @@ The three parties have non-overlapping responsibilities.
 A model response is a proposal or an assertion. It is never a capability, verification result, or
 accepted repository meaning merely because a model produced it.
 
+A human host MAY retain conversations, provider handles, project registrations, and live-presence
+hints outside repository truth. It MAY compose several typed protocol operations into an interactive
+command, but every repository consequence still passes through the same capability, exact-candidate,
+authority, and landing rules. A one-setting policy command counts as fresh direct user intent only
+when it deterministically constructs that exact policy candidate, obtains user acceptance, and lands
+it through the governed lifecycle; command convenience is not a policy bypass.
+
 ### 1.4 Managed and advisory consequences
 
 A **managed consequence** is an operation for which the worker has no path around Invariant. The
@@ -235,6 +242,10 @@ The primary worktree may contain self-ignored caches:
 Losing this directory may cost worktree checkouts, logs, and reusable computation. It MUST NOT lose
 an accepted record, active change, work commit, candidate, decision, grant, pending action, or
 completion fact. An implementation reconstructs those from Git refs and objects.
+
+Host-owned session transcripts, provider conversation handles, provider preferences, registered
+project paths, and web-observer state are also non-authoritative local data. Losing them MUST NOT
+change accepted governance or the durable change ledger.
 
 ### 2.4 Standing
 

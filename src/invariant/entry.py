@@ -1,4 +1,4 @@
-from invariant.cli.app import main
+from invariant.frontend import main
 
 
 __all__ = ["main"]
