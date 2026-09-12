@@ -1,7 +1,28 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="790" viewBox="0 0 1200 790" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="840" viewBox="0 0 1200 840" role="img" aria-labelledby="title desc">
   <title id="title">Invariant governance layer</title>
-  <desc id="desc">A user supplies intent. Agents execute under scoped capabilities. Between them the governance layer holds the semantic kernel of accepted records and the Git mechanics that bind every consequence to exact state. Resolution is a separate plane: a bound question is signed off by the user directly or by a secondary agent holding one scoped capability, grounded in supplied sources or human-presented evaluation skills. The lower band expands the Git-grounded lifecycle.</desc>
+  <desc id="desc">A user supplies intent and sources. Agents execute under scoped capabilities. Between them the governance layer holds the semantic kernel of accepted records and the Git mechanics that bind every consequence to exact state. Resolution is a separate plane where the user or a secondary agent signs off one bound question, judged against supplied sources and human-presented skills. The lower band expands the Git-grounded lifecycle from recommendation to atomic landing.</desc>
   <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="12" cy="12" r="1" fill="#e3e5e2"/>
+    </pattern>
+    <linearGradient id="kernel-fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7f8f5"/>
+      <stop offset="1" stop-color="#eceeea"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#4f7d1b"/>
+      <stop offset="1" stop-color="#7fb43a"/>
+    </linearGradient>
+    <radialGradient id="ring" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0.72" stop-color="#eaf2df"/>
+      <stop offset="1" stop-color="#eaf2df" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-6%" y="-10%" width="112%" height="130%">
+      <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#171717" flood-opacity="0.10"/>
+    </filter>
+    <filter id="glow" x="-20%" y="-30%" width="140%" height="160%">
+      <feDropShadow dx="0" dy="0" stdDeviation="5" flood-color="#7fb43a" flood-opacity="0.35"/>
+    </filter>
     <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
       <path d="M0 0L8 4L0 8Z" fill="#5f6368"/>
     </marker>
@@ -11,12 +32,12 @@
     <style>
       .sans{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
       .mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
-      .ink{fill:#171717}.muted{fill:#666}.green{fill:#4f7d1b}
+      .ink{fill:#171717}.muted{fill:#666}.green{fill:#4f7d1b}.white{fill:#fff}
       .eyebrow{font-size:11px;font-weight:750;letter-spacing:1.25px}
-      .hero{font-size:25px;font-weight:680}.title{font-size:18px;font-weight:680}
-      .body{font-size:13px}.small{font-size:11px}
+      .hero{font-size:26px;font-weight:700;letter-spacing:-0.2px}.title{font-size:18px;font-weight:680}
+      .body{font-size:13px}.small{font-size:11px}.badge{font-size:11px;font-weight:750}
       .card{fill:#fff;stroke:#aeb1b4;stroke-width:1.3}
-      .kernel{fill:#f1f2ef;stroke:#171717;stroke-width:2}
+      .kernel{fill:url(#kernel-fill);stroke:#171717;stroke-width:2}
       .row{fill:#fff;stroke:#c9cbcc;stroke-width:1.2}
       .lane{fill:#fafafa;stroke:#aeb1b4;stroke-width:1.3}
       .plane{fill:#fff;stroke:#171717;stroke-width:1.6;stroke-dasharray:6 4}
@@ -24,159 +45,202 @@
       .node-green{fill:#f4f8ef;stroke:#4f7d1b;stroke-width:1.5}
       .ground-box{fill:#fafafa;stroke:#aeb1b4;stroke-width:1.2}
       .pill{fill:#fff;stroke:#aeb1b4;stroke-width:1.2}
-      .icon{fill:none;stroke:#171717;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+      .pill-green{fill:#f4f8ef;stroke:#4f7d1b;stroke-width:1.2}
+      .icon{fill:none;stroke:#171717;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
       .icon-fill{fill:#171717}
       .arrow{fill:none;stroke:#5f6368;stroke-width:1.5;marker-end:url(#arrow)}
       .green-arrow{fill:none;stroke:#4f7d1b;stroke-width:1.8;marker-end:url(#green-arrow)}
       .return{fill:none;stroke:#4f7d1b;stroke-width:1.4;stroke-dasharray:5 4;marker-end:url(#green-arrow)}
       .ground{fill:none;stroke:#9a9da0;stroke-width:1.2;stroke-dasharray:3 4}
+      .flow{stroke-dasharray:7 5;animation:flow 1.6s linear infinite}
+      @keyframes flow{to{stroke-dashoffset:-24}}
+      @media (prefers-reduced-motion: reduce){.flow{animation:none;stroke-dasharray:none}}
     </style>
   </defs>
 
-  <rect width="1200" height="790" fill="#fff"/>
+  <rect width="1200" height="840" fill="#fff"/>
+  <rect width="1200" height="840" fill="url(#grid)"/>
+
   <g class="sans">
-    <text x="24" y="36" class="ink hero">governance layer = semantic kernel + Git mechanics</text>
-    <text x="24" y="60" class="muted body">Intent stays with the user. Execution stays with agents. Signing off is its own plane. Everything between is decided, verified, and recorded.</text>
+    <!-- header -->
+    <text x="600" y="42" text-anchor="middle" class="ink hero">governance layer  =  semantic kernel  +  Git mechanics</text>
+    <text x="600" y="66" text-anchor="middle" class="muted body">Intent stays with the user. Execution stays with agents. Signing off is its own plane. Everything between is decided, verified, and recorded.</text>
 
     <!-- user -->
-    <rect x="24" y="96" width="204" height="236" rx="4" class="card"/>
-    <circle cx="126" cy="140" r="15" class="icon"/>
-    <path d="M96 190a30 30 0 0 1 60 0" class="icon"/>
-    <text x="126" y="222" text-anchor="middle" class="mono green eyebrow">USER</text>
-    <text x="126" y="248" text-anchor="middle" class="ink title">Intent</text>
-    <text x="126" y="272" text-anchor="middle" class="muted body">Says what should change.</text>
-    <text x="126" y="292" text-anchor="middle" class="muted body">Supplies the sources that</text>
-    <text x="126" y="310" text-anchor="middle" class="muted body">meaning is judged against.</text>
-
-    <!-- governance layer -->
-    <rect x="284" y="84" width="632" height="260" rx="4" class="kernel"/>
-    <rect x="284" y="84" width="7" height="260" fill="#4f7d1b"/>
-    <text x="314" y="114" class="mono ink eyebrow">GOVERNANCE LAYER</text>
-    <text x="892" y="114" text-anchor="end" class="mono green small">OPEN SEMANTICS → CLOSED CONSEQUENCES</text>
-
-    <rect x="314" y="130" width="578" height="94" rx="4" class="row"/>
-    <text x="330" y="153" class="mono ink eyebrow">SEMANTIC KERNEL</text>
-    <text x="876" y="153" text-anchor="end" class="muted small">accepted repository meaning</text>
-    <rect x="330" y="170" width="112" height="36" rx="18" class="pill"/>
-    <rect x="452" y="170" width="112" height="36" rx="18" class="pill"/>
-    <rect x="574" y="170" width="150" height="36" rx="18" class="pill"/>
-    <rect x="734" y="170" width="142" height="36" rx="18" class="pill"/>
-    <text x="386" y="193" text-anchor="middle" class="ink body">domains</text>
-    <text x="508" y="193" text-anchor="middle" class="ink body">contracts</text>
-    <text x="649" y="193" text-anchor="middle" class="ink body">ADRs · semantics</text>
-    <text x="805" y="193" text-anchor="middle" class="ink body">constraints</text>
-
-    <rect x="314" y="236" width="578" height="94" rx="4" class="row"/>
-    <text x="330" y="259" class="mono ink eyebrow">GIT MECHANICS</text>
-    <text x="876" y="259" text-anchor="end" class="muted small">every consequence bound to exact state</text>
-    <rect x="330" y="276" width="126" height="36" rx="18" class="pill"/>
-    <rect x="466" y="276" width="140" height="36" rx="18" class="pill"/>
-    <rect x="616" y="276" width="126" height="36" rx="18" class="pill"/>
-    <rect x="752" y="276" width="124" height="36" rx="18" class="pill"/>
-    <text x="393" y="299" text-anchor="middle" class="ink body">change ledger</text>
-    <text x="536" y="299" text-anchor="middle" class="ink body">isolated worktrees</text>
-    <text x="679" y="299" text-anchor="middle" class="ink body">exact candidate</text>
-    <text x="814" y="299" text-anchor="middle" class="ink body">attested landing</text>
+    <g filter="url(#shadow)">
+      <rect x="40" y="96" width="220" height="252" rx="6" class="card"/>
+    </g>
+    <circle cx="150" cy="158" r="40" fill="url(#ring)"/>
+    <circle cx="150" cy="148" r="16" class="icon"/>
+    <path d="M118 198a32 32 0 0 1 64 0" class="icon"/>
+    <text x="150" y="234" text-anchor="middle" class="mono green eyebrow">USER</text>
+    <text x="150" y="260" text-anchor="middle" class="ink title">Intent</text>
+    <text x="150" y="284" text-anchor="middle" class="muted body">Says what should change.</text>
+    <text x="150" y="304" text-anchor="middle" class="muted body">Supplies the sources that</text>
+    <text x="150" y="322" text-anchor="middle" class="muted body">meaning is judged against.</text>
 
     <!-- agents -->
-    <rect x="972" y="96" width="204" height="236" rx="4" class="card"/>
-    <rect x="1052" y="126" width="44" height="34" rx="7" class="icon"/>
-    <circle cx="1066" cy="143" r="3" class="icon-fill"/>
-    <circle cx="1082" cy="143" r="3" class="icon-fill"/>
-    <path d="M1074 126V114" class="icon"/>
-    <circle cx="1074" cy="110" r="3.5" class="icon-fill"/>
-    <path d="M1044 190a30 30 0 0 1 60 0" class="icon"/>
-    <text x="1074" y="222" text-anchor="middle" class="mono green eyebrow">AGENTS</text>
-    <text x="1074" y="248" text-anchor="middle" class="ink title">Execution</text>
-    <text x="1074" y="272" text-anchor="middle" class="muted body">Plan and implement under</text>
-    <text x="1074" y="292" text-anchor="middle" class="muted body">scoped capabilities.</text>
-    <text x="1074" y="310" text-anchor="middle" class="muted body">Never authority.</text>
+    <g filter="url(#shadow)">
+      <rect x="940" y="96" width="220" height="252" rx="6" class="card"/>
+    </g>
+    <circle cx="1050" cy="158" r="40" fill="url(#ring)"/>
+    <rect x="1027" y="134" width="46" height="36" rx="8" class="icon"/>
+    <circle cx="1042" cy="152" r="3.2" class="icon-fill"/>
+    <circle cx="1058" cy="152" r="3.2" class="icon-fill"/>
+    <path d="M1050 134V122" class="icon"/>
+    <circle cx="1050" cy="118" r="3.6" class="icon-fill"/>
+    <path d="M1018 198a32 32 0 0 1 64 0" class="icon"/>
+    <text x="1050" y="234" text-anchor="middle" class="mono green eyebrow">AGENTS</text>
+    <text x="1050" y="260" text-anchor="middle" class="ink title">Execution</text>
+    <text x="1050" y="284" text-anchor="middle" class="muted body">Plan and implement under</text>
+    <text x="1050" y="304" text-anchor="middle" class="muted body">scoped capabilities.</text>
+    <text x="1050" y="322" text-anchor="middle" class="muted body">Never authority.</text>
+
+    <!-- governance layer -->
+    <g filter="url(#shadow)">
+      <rect x="300" y="84" width="600" height="276" rx="6" class="kernel"/>
+    </g>
+    <rect x="300" y="84" width="8" height="276" rx="2" fill="url(#accent)"/>
+    <rect x="892" y="84" width="8" height="276" rx="2" fill="url(#accent)"/>
+    <text x="600" y="116" text-anchor="middle" class="mono ink eyebrow">GOVERNANCE LAYER</text>
+    <text x="600" y="134" text-anchor="middle" class="mono green small">open semantics → closed consequences</text>
+
+    <rect x="324" y="148" width="552" height="92" rx="5" class="row"/>
+    <text x="340" y="170" class="mono ink eyebrow">SEMANTIC KERNEL</text>
+    <text x="860" y="170" text-anchor="end" class="muted small">accepted repository meaning</text>
+    <rect x="340" y="186" width="126" height="36" rx="18" class="pill"/>
+    <rect x="482" y="186" width="126" height="36" rx="18" class="pill"/>
+    <rect x="624" y="186" width="126" height="36" rx="18" class="pill"/>
+    <rect x="766" y="186" width="94" height="36" rx="18" class="pill"/>
+    <text x="403" y="209" text-anchor="middle" class="ink body">domains</text>
+    <text x="545" y="209" text-anchor="middle" class="ink body">contracts</text>
+    <text x="687" y="209" text-anchor="middle" class="ink body">semantic ADRs</text>
+    <text x="813" y="209" text-anchor="middle" class="ink body">constraints</text>
+
+    <rect x="324" y="252" width="552" height="92" rx="5" class="row"/>
+    <text x="340" y="274" class="mono ink eyebrow">GIT MECHANICS</text>
+    <text x="860" y="274" text-anchor="end" class="muted small">every consequence bound to exact state</text>
+    <rect x="340" y="290" width="126" height="36" rx="18" class="pill-green"/>
+    <rect x="482" y="290" width="126" height="36" rx="18" class="pill-green"/>
+    <rect x="624" y="290" width="126" height="36" rx="18" class="pill-green"/>
+    <rect x="766" y="290" width="94" height="36" rx="18" class="pill-green"/>
+    <text x="403" y="313" text-anchor="middle" class="ink body">change ledger</text>
+    <text x="545" y="313" text-anchor="middle" class="ink body">worktrees</text>
+    <text x="687" y="313" text-anchor="middle" class="ink body">exact candidate</text>
+    <text x="813" y="313" text-anchor="middle" class="ink body">landing</text>
 
     <!-- flows, top row -->
-    <path d="M228 150H276" class="green-arrow"/>
-    <text x="252" y="139" text-anchor="middle" class="mono muted small">intent</text>
-    <path d="M228 300H276" class="arrow"/>
-    <text x="252" y="289" text-anchor="middle" class="mono muted small">sources</text>
-    <path d="M916 150H964" class="green-arrow"/>
-    <text x="940" y="139" text-anchor="middle" class="mono muted small">grants</text>
-    <path d="M972 300C950 300 944 316 916 316" class="return"/>
-    <text x="944" y="332" text-anchor="middle" class="mono muted small">work · evidence</text>
-
-    <!-- resolution plane -->
-    <rect x="24" y="378" width="1152" height="150" rx="4" class="plane"/>
-    <text x="44" y="408" class="mono ink eyebrow">RESOLUTION · SIGNING OFF</text>
-    <text x="1156" y="408" text-anchor="end" class="mono green eyebrow">A PLANE OF ITS OWN, APART FROM INTENT AND EXECUTION</text>
-    <text x="44" y="432" class="muted body">One bound question at a time, over the exact candidate. Who answers is policy; what they judge against is supplied, never invented.</text>
-
-    <rect x="44" y="450" width="180" height="60" rx="4" class="node"/>
-    <circle cx="70" cy="474" r="7" class="icon"/>
-    <path d="M56 496a14 14 0 0 1 28 0" class="icon"/>
-    <text x="150" y="474" text-anchor="middle" class="ink body">User</text>
-    <text x="150" y="493" text-anchor="middle" class="muted small">direct authority</text>
-    <text x="244" y="486" text-anchor="middle" class="muted body">or</text>
-    <rect x="264" y="450" width="220" height="60" rx="4" class="node-green"/>
-    <rect x="280" y="466" width="22" height="17" rx="4" class="icon"/>
-    <circle cx="287" cy="474" r="1.6" class="icon-fill"/>
-    <circle cx="295" cy="474" r="1.6" class="icon-fill"/>
-    <path d="M291 466V461" class="icon"/>
-    <text x="392" y="474" text-anchor="middle" class="ink body">Secondary agent</text>
-    <text x="392" y="493" text-anchor="middle" class="mono green small">one scoped intent.resolve</text>
-
-    <text x="560" y="486" text-anchor="middle" class="mono muted small">judged against</text>
-    <rect x="628" y="450" width="256" height="60" rx="4" class="ground-box"/>
-    <text x="756" y="474" text-anchor="middle" class="ink body">sources</text>
-    <text x="756" y="493" text-anchor="middle" class="muted small">user-supplied and third-party material</text>
-    <rect x="904" y="450" width="256" height="60" rx="4" class="ground-box"/>
-    <text x="1032" y="474" text-anchor="middle" class="ink body">skills</text>
-    <text x="1032" y="493" text-anchor="middle" class="muted small">human-presented evaluation</text>
+    <path d="M260 164H292" class="green-arrow flow"/>
+    <text x="276" y="153" text-anchor="middle" class="mono muted small">intent</text>
+    <path d="M260 308H292" class="arrow"/>
+    <text x="276" y="297" text-anchor="middle" class="mono muted small">sources</text>
+    <path d="M908 164H940" class="green-arrow flow"/>
+    <text x="924" y="153" text-anchor="middle" class="mono muted small">grants</text>
+    <path d="M940 308H908" class="return"/>
+    <text x="924" y="297" text-anchor="middle" class="mono muted small">work</text>
 
     <!-- governance <-> resolution -->
-    <path d="M560 344V372" class="arrow"/>
-    <text x="548" y="362" text-anchor="end" class="mono muted small">questions</text>
-    <path d="M640 372V352" class="return"/>
-    <text x="652" y="362" class="mono muted small">answers, consumed</text>
+    <path d="M572 360V396" class="arrow"/>
+    <text x="560" y="382" text-anchor="end" class="mono muted small">questions</text>
+    <path d="M628 396V366" class="return"/>
+    <text x="640" y="382" class="mono muted small">answers</text>
+
+    <!-- resolution plane -->
+    <rect x="40" y="404" width="1120" height="164" rx="6" class="plane"/>
+    <text x="600" y="432" text-anchor="middle" class="mono ink eyebrow">RESOLUTION · SIGNING OFF · A PLANE OF ITS OWN</text>
+    <text x="600" y="454" text-anchor="middle" class="muted body">One bound question at a time, over the exact candidate. Who answers is policy; what they judge against is supplied, never invented.</text>
+
+    <g filter="url(#shadow)">
+      <rect x="64" y="476" width="220" height="68" rx="5" class="node"/>
+    </g>
+    <circle cx="94" cy="504" r="8" class="icon"/>
+    <path d="M78 530a16 16 0 0 1 32 0" class="icon"/>
+    <text x="184" y="504" text-anchor="middle" class="ink body">User</text>
+    <text x="184" y="524" text-anchor="middle" class="muted small">direct authority</text>
+
+    <g filter="url(#shadow)">
+      <rect x="916" y="476" width="220" height="68" rx="5" class="node-green"/>
+    </g>
+    <rect x="934" y="494" width="26" height="20" rx="5" class="icon"/>
+    <circle cx="942" cy="504" r="1.8" class="icon-fill"/>
+    <circle cx="952" cy="504" r="1.8" class="icon-fill"/>
+    <path d="M947 494V488" class="icon"/>
+    <text x="1040" y="504" text-anchor="middle" class="ink body">Secondary agent</text>
+    <text x="1040" y="524" text-anchor="middle" class="mono green small">one scoped intent.resolve</text>
+
+    <rect x="344" y="476" width="248" height="68" rx="5" class="ground-box"/>
+    <text x="468" y="500" text-anchor="middle" class="ink body">sources</text>
+    <text x="468" y="519" text-anchor="middle" class="muted small">user-supplied and third-party</text>
+    <text x="468" y="534" text-anchor="middle" class="muted small">material a record cites</text>
+    <rect x="608" y="476" width="248" height="68" rx="5" class="ground-box"/>
+    <text x="732" y="500" text-anchor="middle" class="ink body">skills</text>
+    <text x="732" y="519" text-anchor="middle" class="muted small">human-presented evaluation</text>
+    <text x="732" y="534" text-anchor="middle" class="muted small">a resolver must follow</text>
+
+    <path d="M284 510H336" class="arrow"/>
+    <path d="M916 510H864" class="arrow"/>
+    <text x="600" y="561" text-anchor="middle" class="mono muted small">either answers, judged against these — never against the resolver's own opinion</text>
 
     <!-- lifecycle -->
-    <rect x="24" y="560" width="1152" height="214" rx="4" class="lane"/>
-    <text x="44" y="592" class="mono ink eyebrow">GIT-GROUNDED LIFECYCLE</text>
-    <text x="1156" y="592" text-anchor="end" class="mono green eyebrow">THE GIT MECHANICS ROW, EXPANDED</text>
+    <rect x="40" y="596" width="1120" height="224" rx="6" class="lane"/>
+    <text x="600" y="624" text-anchor="middle" class="mono ink eyebrow">GIT-GROUNDED LIFECYCLE · THE GIT MECHANICS ROW, EXPANDED</text>
 
-    <rect x="52" y="634" width="126" height="60" rx="4" class="node"/>
-    <text x="115" y="659" text-anchor="middle" class="ink body">recommend</text>
-    <text x="115" y="679" text-anchor="middle" class="mono muted small">change ledger</text>
+    <g filter="url(#shadow)">
+      <rect x="64" y="676" width="130" height="62" rx="5" class="node"/>
+    </g>
+    <circle cx="80" cy="676" r="10" fill="url(#accent)"/>
+    <text x="80" y="680" text-anchor="middle" class="white badge">1</text>
+    <text x="129" y="702" text-anchor="middle" class="ink body">recommend</text>
+    <text x="129" y="722" text-anchor="middle" class="mono muted small">change ledger</text>
 
-    <rect x="244" y="612" width="112" height="40" rx="4" class="node-green"/>
-    <rect x="244" y="662" width="112" height="40" rx="4" class="node-green"/>
-    <rect x="244" y="712" width="112" height="40" rx="4" class="node-green"/>
-    <text x="300" y="637" text-anchor="middle" class="ink body">unit A</text>
-    <text x="300" y="687" text-anchor="middle" class="ink body">unit B</text>
-    <text x="300" y="737" text-anchor="middle" class="ink body">unit C</text>
+    <g filter="url(#glow)">
+      <rect x="300" y="646" width="112" height="40" rx="5" class="node-green"/>
+      <rect x="300" y="696" width="112" height="40" rx="5" class="node-green"/>
+      <rect x="300" y="746" width="112" height="40" rx="5" class="node-green"/>
+    </g>
+    <circle cx="316" cy="646" r="10" fill="url(#accent)"/>
+    <text x="316" y="650" text-anchor="middle" class="white badge">2</text>
+    <text x="356" y="671" text-anchor="middle" class="ink body">unit A</text>
+    <text x="356" y="721" text-anchor="middle" class="ink body">unit B</text>
+    <text x="356" y="771" text-anchor="middle" class="ink body">unit C</text>
 
-    <rect x="438" y="650" width="150" height="66" rx="4" class="node"/>
-    <text x="513" y="677" text-anchor="middle" class="ink body">exact candidate</text>
-    <text x="513" y="698" text-anchor="middle" class="mono muted small">candidate ref</text>
+    <g filter="url(#shadow)">
+      <rect x="518" y="676" width="150" height="62" rx="5" class="node"/>
+    </g>
+    <circle cx="534" cy="676" r="10" fill="url(#accent)"/>
+    <text x="534" y="680" text-anchor="middle" class="white badge">3</text>
+    <text x="593" y="702" text-anchor="middle" class="ink body">exact candidate</text>
+    <text x="593" y="722" text-anchor="middle" class="mono muted small">candidate ref</text>
 
-    <rect x="660" y="650" width="150" height="66" rx="4" class="node"/>
-    <text x="735" y="677" text-anchor="middle" class="ink body">evidence</text>
-    <text x="735" y="698" text-anchor="middle" class="muted small">verifiers · review · sign-off</text>
+    <g filter="url(#shadow)">
+      <rect x="774" y="676" width="150" height="62" rx="5" class="node"/>
+    </g>
+    <circle cx="790" cy="676" r="10" fill="url(#accent)"/>
+    <text x="790" y="680" text-anchor="middle" class="white badge">4</text>
+    <text x="849" y="702" text-anchor="middle" class="ink body">evidence</text>
+    <text x="849" y="722" text-anchor="middle" class="muted small">verifiers · review · sign-off</text>
 
-    <rect x="882" y="650" width="150" height="66" rx="4" class="node-green"/>
-    <text x="957" y="677" text-anchor="middle" class="ink body">atomic landing</text>
-    <text x="957" y="698" text-anchor="middle" class="mono green small">compare-and-swap</text>
+    <g filter="url(#glow)">
+      <rect x="1030" y="676" width="130" height="62" rx="5" class="node-green"/>
+    </g>
+    <circle cx="1046" cy="676" r="10" fill="url(#accent)"/>
+    <text x="1046" y="680" text-anchor="middle" class="white badge">5</text>
+    <text x="1095" y="702" text-anchor="middle" class="ink body">landing</text>
+    <text x="1095" y="722" text-anchor="middle" class="mono green small">compare-and-swap</text>
 
-    <path d="M178 664H222L244 634" class="green-arrow"/>
-    <path d="M178 664H234L244 682" class="green-arrow"/>
-    <path d="M178 664H214L244 730" class="green-arrow"/>
-    <path d="M356 632L422 670L438 676" class="green-arrow"/>
-    <path d="M356 682H430" class="green-arrow"/>
-    <path d="M356 732L422 700L438 692" class="green-arrow"/>
-    <path d="M588 683H652" class="arrow"/>
-    <path d="M810 683H874" class="arrow"/>
+    <path d="M194 707H246L300 668" class="green-arrow flow"/>
+    <path d="M194 707H260L300 716" class="green-arrow flow"/>
+    <path d="M194 707H236L300 764" class="green-arrow flow"/>
+    <path d="M412 666L466 698L510 704" class="green-arrow flow"/>
+    <path d="M412 716H510" class="green-arrow flow"/>
+    <path d="M412 766L466 718L510 710" class="green-arrow flow"/>
+    <path d="M668 707H766" class="arrow"/>
+    <path d="M924 707H1022" class="arrow"/>
 
-    <path d="M115 694V748H226" class="ground"/>
-    <text x="52" y="765" class="mono muted small">refs/invariant/changes/*</text>
-    <text x="382" y="765" class="mono muted small">attempt refs retain every branch</text>
-    <path d="M1032 683H1105V625" class="ground"/>
-    <text x="1156" y="629" text-anchor="end" class="mono muted small">accepted branch ref</text>
+    <path d="M129 738V790H286" class="ground"/>
+    <text x="64" y="806" class="mono muted small">refs/invariant/changes/*</text>
+    <text x="434" y="806" class="mono muted small">attempt refs retain every branch</text>
+    <path d="M1095 738V790H900" class="ground"/>
+    <text x="1136" y="806" text-anchor="end" class="mono muted small">accepted branch ref</text>
   </g>
 </svg>
