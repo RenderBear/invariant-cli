@@ -13,10 +13,6 @@
       <stop offset="0" stop-color="#4f7d1b"/>
       <stop offset="1" stop-color="#7fb43a"/>
     </linearGradient>
-    <radialGradient id="ring" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0.72" stop-color="#eaf2df"/>
-      <stop offset="1" stop-color="#eaf2df" stop-opacity="0"/>
-    </radialGradient>
     <filter id="shadow" x="-6%" y="-10%" width="112%" height="130%">
       <feDropShadow dx="0" dy="3" stdDeviation="4" flood-color="#171717" flood-opacity="0.10"/>
     </filter>
@@ -35,7 +31,7 @@
       .ink{fill:#171717}.muted{fill:#666}.green{fill:#4f7d1b}.white{fill:#fff}
       .eyebrow{font-size:11px;font-weight:750;letter-spacing:1.25px}
       .hero{font-size:26px;font-weight:700;letter-spacing:-0.2px}.title{font-size:18px;font-weight:680}
-      .body{font-size:13px}.small{font-size:11px}.badge{font-size:11px;font-weight:750}
+      .body{font-size:14px}.small{font-size:12px}.badge{font-size:11px;font-weight:750}
       .card{fill:#fff;stroke:#aeb1b4;stroke-width:1.3}
       .kernel{fill:url(#kernel-fill);stroke:#171717;stroke-width:2}
       .row{fill:#fff;stroke:#c9cbcc;stroke-width:1.2}
@@ -67,10 +63,7 @@
     <text x="600" y="66" text-anchor="middle" class="muted body">Intent stays with the user. Execution stays with agents. Signing off is its own plane. Everything between is decided, verified, and recorded.</text>
 
     <!-- user -->
-    <g filter="url(#shadow)">
-      <rect x="40" y="96" width="220" height="252" rx="6" class="card"/>
-    </g>
-    <circle cx="150" cy="158" r="40" fill="url(#ring)"/>
+    <rect x="40" y="96" width="220" height="252" rx="6" class="card"/>
     <circle cx="150" cy="148" r="16" class="icon"/>
     <path d="M118 198a32 32 0 0 1 64 0" class="icon"/>
     <text x="150" y="234" text-anchor="middle" class="mono green eyebrow">USER</text>
@@ -80,10 +73,7 @@
     <text x="150" y="322" text-anchor="middle" class="muted body">meaning is judged against.</text>
 
     <!-- agents -->
-    <g filter="url(#shadow)">
-      <rect x="940" y="96" width="220" height="252" rx="6" class="card"/>
-    </g>
-    <circle cx="1050" cy="158" r="40" fill="url(#ring)"/>
+    <rect x="940" y="96" width="220" height="252" rx="6" class="card"/>
     <rect x="1027" y="134" width="46" height="36" rx="8" class="icon"/>
     <circle cx="1042" cy="152" r="3.2" class="icon-fill"/>
     <circle cx="1058" cy="152" r="3.2" class="icon-fill"/>
@@ -103,11 +93,9 @@
     <rect x="300" y="84" width="8" height="276" rx="2" fill="url(#accent)"/>
     <rect x="892" y="84" width="8" height="276" rx="2" fill="url(#accent)"/>
     <text x="600" y="116" text-anchor="middle" class="mono ink eyebrow">GOVERNANCE LAYER</text>
-    <text x="600" y="134" text-anchor="middle" class="mono green small">open semantics → closed consequences</text>
 
     <rect x="324" y="148" width="552" height="92" rx="5" class="row"/>
     <text x="340" y="170" class="mono ink eyebrow">SEMANTIC KERNEL</text>
-    <text x="860" y="170" text-anchor="end" class="muted small">accepted repository meaning</text>
     <rect x="340" y="186" width="126" height="36" rx="18" class="pill"/>
     <rect x="482" y="186" width="126" height="36" rx="18" class="pill"/>
     <rect x="624" y="186" width="126" height="36" rx="18" class="pill"/>
@@ -119,7 +107,6 @@
 
     <rect x="324" y="252" width="552" height="92" rx="5" class="row"/>
     <text x="340" y="274" class="mono ink eyebrow">GIT MECHANICS</text>
-    <text x="860" y="274" text-anchor="end" class="muted small">every consequence bound to exact state</text>
     <rect x="340" y="290" width="126" height="36" rx="18" class="pill-green"/>
     <rect x="482" y="290" width="126" height="36" rx="18" class="pill-green"/>
     <rect x="624" y="290" width="126" height="36" rx="18" class="pill-green"/>
@@ -130,14 +117,14 @@
     <text x="813" y="313" text-anchor="middle" class="ink body">landing</text>
 
     <!-- flows, top row -->
-    <path d="M260 164H292" class="green-arrow flow"/>
-    <text x="276" y="153" text-anchor="middle" class="mono muted small">intent</text>
-    <path d="M260 308H292" class="arrow"/>
-    <text x="276" y="297" text-anchor="middle" class="mono muted small">sources</text>
-    <path d="M908 164H940" class="green-arrow flow"/>
-    <text x="924" y="153" text-anchor="middle" class="mono muted small">grants</text>
-    <path d="M940 308H908" class="return"/>
-    <text x="924" y="297" text-anchor="middle" class="mono muted small">work</text>
+    <path d="M260 194H292" class="green-arrow flow"/>
+    <text x="276" y="182" text-anchor="middle" class="mono muted small">intent</text>
+    <path d="M260 298H292" class="arrow"/>
+    <text x="276" y="286" text-anchor="middle" class="mono muted small">sources</text>
+    <path d="M908 194H940" class="green-arrow flow"/>
+    <text x="924" y="182" text-anchor="middle" class="mono muted small">grants</text>
+    <path d="M940 298H908" class="return"/>
+    <text x="924" y="286" text-anchor="middle" class="mono muted small">work</text>
 
     <!-- governance <-> resolution -->
     <path d="M572 360V396" class="arrow"/>
@@ -148,7 +135,7 @@
     <!-- resolution plane -->
     <rect x="40" y="404" width="1120" height="164" rx="6" class="plane"/>
     <text x="600" y="432" text-anchor="middle" class="mono ink eyebrow">RESOLUTION · SIGNING OFF · A PLANE OF ITS OWN</text>
-    <text x="600" y="454" text-anchor="middle" class="muted body">One bound question at a time, over the exact candidate. Who answers is policy; what they judge against is supplied, never invented.</text>
+    <text x="600" y="456" text-anchor="middle" class="muted body">One bound question at a time, over the exact candidate.</text>
 
     <g filter="url(#shadow)">
       <rect x="64" y="476" width="220" height="68" rx="5" class="node"/>
@@ -169,17 +156,15 @@
     <text x="1040" y="524" text-anchor="middle" class="mono green small">one scoped intent.resolve</text>
 
     <rect x="344" y="476" width="248" height="68" rx="5" class="ground-box"/>
-    <text x="468" y="500" text-anchor="middle" class="ink body">sources</text>
-    <text x="468" y="519" text-anchor="middle" class="muted small">user-supplied and third-party</text>
-    <text x="468" y="534" text-anchor="middle" class="muted small">material a record cites</text>
+    <text x="468" y="506" text-anchor="middle" class="ink body">sources</text>
+    <text x="468" y="526" text-anchor="middle" class="muted small">supplied material a record cites</text>
     <rect x="608" y="476" width="248" height="68" rx="5" class="ground-box"/>
-    <text x="732" y="500" text-anchor="middle" class="ink body">skills</text>
-    <text x="732" y="519" text-anchor="middle" class="muted small">human-presented evaluation</text>
-    <text x="732" y="534" text-anchor="middle" class="muted small">a resolver must follow</text>
+    <text x="732" y="506" text-anchor="middle" class="ink body">skills</text>
+    <text x="732" y="526" text-anchor="middle" class="muted small">human-presented evaluation</text>
 
     <path d="M284 510H336" class="arrow"/>
     <path d="M916 510H864" class="arrow"/>
-    <text x="600" y="561" text-anchor="middle" class="mono muted small">either answers, judged against these — never against the resolver's own opinion</text>
+    <text x="600" y="561" text-anchor="middle" class="mono muted small">judged against these, never against the resolver's own opinion</text>
 
     <!-- lifecycle -->
     <rect x="40" y="596" width="1120" height="224" rx="6" class="lane"/>
@@ -218,7 +203,7 @@
     <circle cx="790" cy="676" r="10" fill="url(#accent)"/>
     <text x="790" y="680" text-anchor="middle" class="white badge">4</text>
     <text x="849" y="702" text-anchor="middle" class="ink body">evidence</text>
-    <text x="849" y="722" text-anchor="middle" class="muted small">verifiers · review · sign-off</text>
+    <text x="849" y="722" text-anchor="middle" class="mono muted small">review · sign-off</text>
 
     <g filter="url(#glow)">
       <rect x="1030" y="676" width="130" height="62" rx="5" class="node-green"/>
@@ -239,7 +224,6 @@
 
     <path d="M129 738V790H286" class="ground"/>
     <text x="64" y="806" class="mono muted small">refs/invariant/changes/*</text>
-    <text x="434" y="806" class="mono muted small">attempt refs retain every branch</text>
     <path d="M1095 738V790H900" class="ground"/>
     <text x="1136" y="806" text-anchor="end" class="mono muted small">accepted branch ref</text>
   </g>
