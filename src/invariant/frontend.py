@@ -100,6 +100,12 @@ def build_parser() -> Parser:
     start.add_argument("--mode", choices=("ask", "change"))
     start.add_argument("--timeout", type=_positive_seconds, default=600)
 
+    establish = commands.add_parser(
+        "establish", help="draft and review a repository governance baseline"
+    )
+    establish.add_argument("--using", type=_provider, help="use codex or claude")
+    establish.add_argument("--timeout", type=_positive_seconds, default=600)
+
     connection = commands.add_parser("connect", help="inspect or connect coding agents")
     connection.add_argument("provider", nargs="?", type=_provider)
     connection.add_argument("--default", dest="default_provider", type=_provider)
@@ -159,7 +165,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
             "STATUS: unchanged",
             f"PROJECT: {project['name']}",
             f"POLICY: {config.CONFIG_PATH.as_posix()}",
-            "NEXT: use invariant set KEY VALUE to change one setting",
+            "NEXT: invariant establish",
         ]
     else:
         defaults = args.defaults or not sys.stdin.isatty()
@@ -230,7 +236,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
             "LIFECYCLE: Git-grounded",
             f"HARNESS: {harness}",
             f"POLICY: {config.CONFIG_PATH.as_posix()} @ {str(initialized.result['commit'])[:12]}",
-            "NEXT: invariant start",
+            "NEXT: invariant establish",
         ]
     if args.format == "json":
         _json("init", result)
@@ -250,6 +256,7 @@ def _status(repo: Path, *, format_name: str = "text") -> dict[str, Any]:
     if isinstance(behind, int) and behind:
         staleness += f" · {behind} commits behind"
     repository = snapshot.get("repository", {})
+    record_count = len(snapshot.get("governance", {}).get("records", []))
     lines = [
         f"STATUS: {repository.get('state', 'unknown')}",
         f"PROJECT: {project['name']}",
@@ -258,7 +265,7 @@ def _status(repo: Path, *, format_name: str = "text") -> dict[str, Any]:
         f"INTENT: {repository.get('intent') or repository.get('authority') or '—'}",
         f"RESOLUTION: {repository.get('resolution', '—')}",
         "SEMANTIC-KERNEL: "
-        f"{len(snapshot.get('governance', {}).get('records', []))} accepted records",
+        f"{record_count} accepted records",
         "EXECUTION: parallel work · "
         f"{repository.get('execution', '—')} transitions · max {repository.get('parallelism', '—')}",
         "LIFECYCLE: Git-grounded",
@@ -276,6 +283,8 @@ def _status(repo: Path, *, format_name: str = "text") -> dict[str, Any]:
             f"SESSION: {session['id']} · {session['theme']} · "
             f"{session.get('provider') or 'unassigned'}{live_mark}"
         )
+    if record_count == 0:
+        lines.append("NEXT: invariant establish")
     data = {"project": project, "sessions": sessions, "snapshot": snapshot}
     if format_name == "json":
         _json("status", data)
@@ -417,7 +426,15 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                 message = raw.strip()
             if not message:
                 continue
+            establishing = False
+            transcript_message = message
             if message.startswith(":"):
+                control, _, control_value = message[1:].partition(" ")
+                if control.lower() == "establish":
+                    establishing = True
+                    transcript_message = message
+                    message = conversation.establishment_intent(control_value)
+            if message.startswith(":") and not establishing:
                 command, _, raw_value = message[1:].partition(" ")
                 command, raw_value = command.lower(), raw_value.strip()
                 if command in {"exit", "quit"}:
@@ -434,6 +451,7 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                             "COMMAND: :status · show sessions and governance freshness",
                             "COMMAND: :settings · show current settings",
                             "COMMAND: :set KEY VALUE · apply one setting",
+                            "COMMAND: :establish [focus] · draft a governance baseline",
                             "COMMAND: :accept [CHANGE] · accept an exact governance candidate",
                             "COMMAND: :exit · preserve the session and leave",
                         ],
@@ -556,14 +574,15 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                 _show("status", [f"INVALID: unknown session command ':{command}'"])
                 continue
 
-            workspace.append_message(active_id, "user", message)
+            workspace.append_message(active_id, "user", transcript_message)
             try:
+                turn_mode = "change" if establishing else mode
                 with style.turn(provider.value) as activity:
                     reply = invoke_session(
                         provider,
                         repo,
-                        conversation.prompt(repo, mode, message),
-                        conversation.schema(mode),
+                        conversation.prompt(repo, turn_mode, message),
+                        conversation.schema(turn_mode),
                         session_id=str(private.get("provider_session_id") or "") or None,
                         timeout=args.timeout,
                     )
@@ -574,17 +593,32 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                     provider_session_id=reply.session_id,
                 )
                 answer = str(reply.response.get("message") or "").strip()
-                if mode == "change" and reply.response.get("action") == "change":
+                if turn_mode == "change" and reply.response.get("action") == "change":
                     with style.activity(
-                        f"{provider.value.capitalize()} is implementing the change",
-                        done=f"{provider.value.capitalize()} implemented the candidate",
+                        (
+                            f"{provider.value.capitalize()} is drafting the governance baseline"
+                            if establishing
+                            else f"{provider.value.capitalize()} is implementing the change"
+                        ),
+                        done=(
+                            f"{provider.value.capitalize()} drafted the governance baseline"
+                            if establishing
+                            else f"{provider.value.capitalize()} implemented the candidate"
+                        ),
                     ):
                         result = surface.execute_agent_change(
                             repo,
                             provider,
                             active_id,
                             message,
-                            [str(path) for path in reply.response.get("paths", [])],
+                            (
+                                [".invariant/records", ".invariant/audits"]
+                                if establishing
+                                else [
+                                    str(path)
+                                    for path in reply.response.get("paths", [])
+                                ]
+                            ),
                             timeout=args.timeout,
                         )
                     details = "\n".join(result.lines)
@@ -616,6 +650,21 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
         workspace.clear_session_live(active_id)
         print(style.session_outro())
     return {"project": project, "session": workspace.session(active_id)}
+
+
+def _establish(args: argparse.Namespace) -> dict[str, Any]:
+    if args.format == "json":
+        raise UsageError("Invariant: establish is an interactive text command")
+    return _start(
+        argparse.Namespace(
+            prompt=":establish",
+            session=None,
+            theme="Governance baseline",
+            using=args.using,
+            mode="change",
+            timeout=args.timeout,
+        )
+    )
 
 
 def _serve(args: argparse.Namespace) -> None:
@@ -658,6 +707,8 @@ def run(argv: list[str] | None = None) -> int:
             _connect(args)
         elif args.command == "set":
             _set(args)
+        elif args.command == "establish":
+            _establish(args)
         elif args.command == "start":
             if args.format == "json":
                 raise UsageError("Invariant: start is an interactive text command")

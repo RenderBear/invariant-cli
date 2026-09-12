@@ -9,6 +9,7 @@ from typing import Any
 
 from invariant.application import InvariantApplication
 from invariant.errors import InvariantError
+from invariant.governance import GovernanceSelection, GovernanceStore, compile_obligations
 from invariant.harness import preferences
 from invariant.harness.providers import AgentProvider, invoke, invoke_change
 from invariant.mechanics import config, git
@@ -23,6 +24,102 @@ HARNESS_PRINCIPAL = "harness:cli"
 class SurfaceResult:
     lines: tuple[str, ...]
     data: dict[str, Any]
+
+
+def _governance_preview(repo: Path, state: dict[str, Any]) -> dict[str, Any] | None:
+    """Describe changed records and their closed effects for exact-candidate acceptance."""
+
+    candidate = state.get("candidate") or {}
+    paths = [str(path).removeprefix("repo:") for path in candidate.get("paths", [])]
+    if not any(path.startswith(".invariant/records/") for path in paths):
+        return None
+    store = GovernanceStore(repo)
+    before = store.load(str(state["base"]))
+    after = store.load(str(candidate["commit"]))
+    before_by_id = {(record.kind, record.identifier): record for record in before.records}
+    after_by_id = {(record.kind, record.identifier): record for record in after.records}
+    added: list[str] = []
+    changed: list[str] = []
+    removed: list[str] = []
+    affected = []
+    for key, record in sorted(after_by_id.items()):
+        prior = before_by_id.get(key)
+        if prior is None:
+            added.append(f"{record.kind}:{record.identifier}")
+            affected.append(record)
+        elif prior.digest != record.digest:
+            changed.append(f"{record.kind}:{record.identifier}")
+            affected.append(record)
+    for key, record in sorted(before_by_id.items()):
+        if key not in after_by_id:
+            removed.append(f"{record.kind}:{record.identifier}")
+
+    selection = GovernanceSelection.create(
+        affected,
+        {record.reference: {"changed-in-candidate"} for record in affected},
+    )
+    policy = config.resolve_at(
+        repo,
+        str(candidate["commit"]),
+        str(state["target"]["branch"]),
+    )
+    obligations = compile_obligations(policy, selection).as_dict()
+    return {
+        "candidate": str(candidate["tree"]),
+        "added": added,
+        "changed": changed,
+        "removed": removed,
+        "record_sources": [record.reference for record in affected],
+        "authorities": sorted({record.authority for record in affected}),
+        "directives": [
+            {
+                "record": f"{record.kind}:{record.identifier}",
+                **directive.as_dict(),
+            }
+            for record in affected
+            for directive in record.directives
+        ],
+        "consequences": obligations,
+    }
+
+
+def _preview_lines(preview: dict[str, Any] | None) -> tuple[str, ...]:
+    if preview is None:
+        return ()
+    records = [
+        *(f"+{value}" for value in preview["added"]),
+        *(f"~{value}" for value in preview["changed"]),
+        *(f"-{value}" for value in preview["removed"]),
+    ]
+    consequences = preview["consequences"]
+    record_sources = set(preview["record_sources"])
+    effects: list[str] = []
+    effects.extend(
+        f"context {name}" for name in consequences.get("selected_context", [])
+    )
+    effects.extend(
+        f"deny {name}"
+        for name, sources in consequences.get("denied_capabilities", {}).items()
+        if record_sources.intersection(sources)
+    )
+    effects.extend(
+        f"resolve {name} by {resolver}"
+        for name, resolver in consequences.get("required_resolution", {}).items()
+    )
+    effects.extend(f"{mode} review" for mode in consequences.get("required_reviews", []))
+    effects.extend(f"verify {value}" for value in consequences.get("required_verifiers", []))
+    effects.extend(f"serialize {value}" for value in consequences.get("serialize_on", []))
+    if consequences.get("parallel_limit") is not None and any(
+        directive.get("kind") == "limit-parallelism"
+        for directive in preview["directives"]
+    ):
+        effects.append(f"parallelism ≤ {consequences['parallel_limit']}")
+    return (
+        f"RECORDS: {', '.join(records) or 'none'}",
+        f"DIRECTIVES: {len(preview['directives'])}",
+        f"CONSEQUENCES: {', '.join(effects) or 'context only'}",
+        f"AUTHORITY: {', '.join(preview['authorities']) or 'removed records only'}",
+    )
 
 
 def settings(repo: Path) -> SurfaceResult:
@@ -393,6 +490,7 @@ def execute_agent_change(
 
     state = worker.store.load(change_id).state
     candidate = state["candidate"]
+    preview = _governance_preview(repo, state)
     landing = InvariantApplication.bind(repo, principal=HARNESS_PRINCIPAL)
     requested = landing.capability_request(
         change_id,
@@ -407,6 +505,7 @@ def execute_agent_change(
             (
                 f"CHANGE: {change_id}",
                 f"CANDIDATE: {candidate['tree']}",
+                *_preview_lines(preview),
                 "STATUS: needs your decision",
                 f"REQUEST: :accept {change_id}",
             ),
@@ -414,6 +513,7 @@ def execute_agent_change(
                 "change": change_id,
                 "candidate": candidate["tree"],
                 "action": action,
+                "governance": preview,
                 "pending": True,
                 "message": execution.message,
             },

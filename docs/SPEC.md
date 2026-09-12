@@ -663,6 +663,7 @@ The stable human surface is:
 invariant init [--defaults]
 invariant status
 invariant start [--session <id>] [--using codex|claude] [<prompt>]
+invariant establish [--using codex|claude]
 invariant connect [codex|claude] [--default codex|claude]
 invariant set <key> <value>
 invariant serve [--port <port>] [--project <folder>]...
@@ -674,11 +675,23 @@ questions. It also registers the repository in the per-user workspace. `status` 
 repository state with local sessions and reports governance record count, validation state, latest
 audit, and audit staleness.
 
+`establish` creates a durable governance-baseline session and injects the explicit `:establish`
+control intent. Its read-only coordination turn determines whether the accepted baseline is already
+current. Otherwise an isolated execution turn drafts a minimal full audit and evidence-backed
+semantic, domain, contract, or constraint records. Candidate loading resolves every closed locator
+and validates the complete record graph. The candidate then follows exact-tree evidence and
+landing gates and remains at `accept-governance` until direct `user:cli` acceptance. “Baseline” is
+the resulting record set; “establish” is the operation.
+
 `start` creates or resumes one durable project session. `:new`, `:sessions`, and `:switch` navigate
 sessions; `:agent` switches the provider for one session; `:status`, `:settings`, and `:set` expose
-the same local host operations; `:accept` supplies direct user authority for one exact pending
-governance candidate; and `:exit` releases live presence without deleting the transcript. Provider
+the same local host operations; `:establish` runs the governance-baseline operation with an optional
+focus; `:accept` supplies direct user authority for one exact pending governance candidate; and
+`:exit` releases live presence without deleting the transcript. Provider
 handles and transcripts live in the per-user workspace and never become semantic evidence.
+
+An audit introduced by the current attested governance landing is fresh for that landing. The next
+first-parent commit makes it stale unless a later audit grounds the new state.
 
 The conversational coordinator is read-only. When it classifies a user message as a write, the host
 opens a durable change from the user's original message, obtains scoped worktree capabilities for a
@@ -1012,8 +1025,9 @@ The implementation is complete when:
 - every privileged operation consumes the correct causally current grant;
 - decisions distinguish authorization from managed or advisory enforcement;
 - MCP exposes only the repository-bound typed tools in §8.2 and calls the application in-process;
-- the human CLI exposes interactive setup, durable multi-session chat, provider connection and
-  switching, governed one-setting changes, governance-aware status, and the loopback workspace;
+- the human CLI exposes interactive setup, durable multi-session chat, governed baseline
+  establishment, provider connection and switching, governed one-setting changes,
+  governance-aware status, and the loopback workspace;
 - no tool accepts a repository escape hatch, raw command, Git arguments, remote, or credential;
 - one exact aggregate candidate receives the complete evidence and semantic review required by
   actual reach;

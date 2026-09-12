@@ -33,11 +33,23 @@ never has to operate worktree ids, grant tokens, staging, or landing commands.
 uv tool install git+https://github.com/RenderBear/invariant-cli.git
 cd your-project
 invariant init
+invariant establish
 ```
 
 `init` is guided setup. Use `invariant init --defaults` for the safe local policy without questions.
 It creates and commits `.invariant/config.yml` itself—there is no manual `git add` step—and registers
 the repository in your local Invariant workspace.
+
+`establish` opens a durable governance-baseline session. The connected agent inspects the
+repository and drafts only evidence-backed semantic, domain, contract, and constraint records plus
+the audit that motivated them. Invariant validates the exact candidate and then stops:
+
+```text
+(change) › :accept
+```
+
+Only that direct user action establishes the proposed records. The agent can draft the baseline;
+it cannot accept its own governance.
 
 ```console
 $ invariant status
@@ -83,6 +95,7 @@ Inside the conversation:
 :status            inspect project and governance state
 :settings          inspect policy and local preferences
 :set KEY VALUE     change one setting
+:establish [focus] draft or reconcile the governance baseline
 :accept [CHANGE]   accept an exact pending governance candidate
 :exit              leave without losing the session
 ```

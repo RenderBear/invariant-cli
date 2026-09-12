@@ -8,6 +8,39 @@ from invariant.harness import preferences
 from invariant.harness.providers import AgentProvider, connection_status
 
 
+def establishment_intent(focus: str = "") -> str:
+    """Expand the explicit establish control into bounded user-supplied intent."""
+
+    emphasis = (
+        f"\nGive particular attention to: {focus.strip()}\n"
+        if focus.strip()
+        else ""
+    )
+    return (
+        "Establish or reconcile this repository's governance baseline. Inspect the current "
+        "repository, its normative documentation, architecture, implementation boundaries, "
+        "interfaces, and executable verification. If the accepted record set already captures "
+        "the repository accurately and minimally, explain that no change is needed. Otherwise, "
+        "propose a change that creates or updates only well-supported version-1 records beneath "
+        ".invariant/records/ and one full audit beneath .invariant/audits/.\n\n"
+        "Use semantic records for canonical interpretations, domain records for real ownership "
+        "boundaries, contract records for actual provider-consumer interfaces, and constraint "
+        "records for enforceable restrictions. Do not create one of every kind merely for "
+        "coverage. Inspect protocol/protocol.md section 3, docs/SPEC.md, and the current record "
+        "validator before authoring. Every repo path, document, architecture anchor, contract, "
+        "interface, audit, command, and test locator must resolve in the exact candidate. Never "
+        "invent a verifier or heading anchor. A constraint must have a real verifier or a closed "
+        "directive. Prefer a small high-confidence baseline over speculative records.\n\n"
+        "The audit must describe the inspected base without claiming authority: use a stable "
+        "audit-<UTC timestamp> id and filename, an ISO-8601 created_at value, the current HEAD as "
+        "ground, the current HEAD tree as tree, mode full, and evidence-backed findings. Use "
+        "disposition adoptable only for findings projected into this same candidate. Governance "
+        "acceptance belongs to the user; this request authorizes drafting the exact candidate, "
+        "not accepting or landing it."
+        + emphasis
+    )
+
+
 def resolve_provider(repo: Path, requested: AgentProvider | None = None) -> AgentProvider:
     configured = preferences.repo_harness(repo)
     candidates = [requested] if requested is not None else preferences.harness_candidates(repo)

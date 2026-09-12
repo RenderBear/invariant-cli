@@ -36,6 +36,7 @@ def _last_audit(repo: Path, head: str) -> dict[str, Any]:
         if isinstance(value, dict):
             audits.append(
                 {
+                    "path": path,
                     "id": str(value.get("id") or Path(path).stem),
                     "created_at": str(value.get("created_at") or ""),
                     "ground": str(value.get("ground") or ""),
@@ -49,7 +50,16 @@ def _last_audit(repo: Path, head: str) -> dict[str, Any]:
         return {"status": "absent", "id": "", "created_at": "", "behind": None}
     selected = max(audits, key=lambda item: (item["created_at"], item["id"]))
     head_tree = git.tree_of(repo, head)
-    if selected["tree"] == head_tree or selected["ground"] == head:
+    audit_commit = git.run(
+        ["log", "-1", "--format=%H", head, "--", selected["path"]],
+        cwd=repo,
+        check=False,
+    ).stdout
+    if (
+        audit_commit == head
+        or selected["tree"] == head_tree
+        or selected["ground"] == head
+    ):
         status = "fresh"
         behind: int | None = 0
     elif selected["ground"] and git.run(

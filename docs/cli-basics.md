@@ -7,7 +7,7 @@ work; transcripts and provider handles remain local presentation state.
 The human surface is:
 
 ```text
-init  status  start  connect  set  serve
+init  status  start  establish  connect  set  serve
 ```
 
 ## Initialize a project
@@ -23,7 +23,26 @@ questions.
 
 Initialization commits `.invariant/config.yml` as one deterministic bootstrap commit and registers the
 project in the per-user workspace. It performs its own staging; there is no `git add` step. Running
-it again keeps the accepted policy and points to `invariant set` for one-key changes.
+it again keeps the accepted policy and points to `invariant establish` to reconcile governance.
+
+## Establish governance
+
+```bash
+invariant establish
+invariant establish --using claude
+```
+
+`establish` creates a durable `Governance baseline` session and runs the same operation as the
+in-session `:establish` control. A read-only coordinator inspects the repository first. When the
+accepted baseline is absent or stale, an execution agent drafts a minimal, evidence-backed audit
+and record set in an isolated worktree. It may create semantic, domain, contract, and constraint
+records, but it must not create a record merely to fill a category.
+
+Invariant resolves every locator, validates the candidate record grammar and closed directives,
+captures exact-tree evidence, and presents the resulting candidate. The candidate remains pending
+until the user types `:accept`; neither the drafting agent nor a delegated resolver can establish
+governance. If the current records already describe the repository, the coordinator reports that
+there is no change to accept.
 
 ## See project state
 
@@ -76,6 +95,7 @@ The session controls are:
 | `:status` | Show sessions and governance freshness. |
 | `:settings` | Show tracked policy and clone-local preferences. |
 | `:set KEY VALUE` | Apply the same one-setting operation as `invariant set`. |
+| `:establish [focus]` | Draft or reconcile the repository governance baseline. |
 | `:accept [CHANGE]` | Accept one exact pending governance candidate with direct user authority. |
 | `:exit` | Leave while preserving the session. |
 
