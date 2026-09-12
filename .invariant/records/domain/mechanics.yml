@@ -1,8 +1,13 @@
-version: 1
+version: 2
 id: mechanics
 responsibility: Owns deterministic repository facts, tracked-state validation, exact candidate construction,
   verification evidence, and guarded Git operations.
 authority: design:repo:docs/SPEC.md#mechanics
 parent: null
-architecture: []
+scope:
+- repo:src/invariant/mechanics
+interfaces:
+- interface:git-lifecycle
+architecture:
+- architecture:docs/SPEC.md#mechanics
 contracts: []

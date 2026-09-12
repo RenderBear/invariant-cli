@@ -1,170 +1,110 @@
-# Invariant CLI basics
+# Invariant CLI and MCP basics
 
-Invariant has seven human-facing commands:
+The CLI is the operator and recovery surface. The repository-bound MCP server is the harness
+surface. Both call the same in-process `InvariantApplication`; Git-backed state is authoritative.
 
-```text
-init  connect  start  establish  serve  source  set
-```
-
-Questions, changes, status, recovery, and authority decisions happen inside a durable `start`
-conversation. The user is never asked to operate task IDs, worktrees, review files, or lifecycle
-commands.
-
-## Connect an agent harness
-
-The separate `invariant-mcp` executable is the harness-facing surface. It starts a local stdio MCP
-server bound to exactly one Git repository:
-
-```bash
-invariant-mcp --repository /absolute/path/to/repository
-```
-
-Register that command with any MCP host. The server exposes typed tools for repository status,
-tracked-state validation, semantic retrieval, reach, managed tasks, resumption and recovery,
-candidate evidence, parallel-plan validation, and causal leases. It invokes the same versioned
-command contract as the CLI and returns its JSON envelope unchanged, including valid `blocked`,
-`needs_input`, and `awaiting_approval` outcomes.
-
-The server owns no durable state and accepts no repository argument after startup. Restarting it
-therefore reconnects to the same repository kernel; a harness cannot use one server instance to
-cross into another repository. MCP tool annotations help clients present mutations, but are not a
-security boundary. Invariant's tracked policy, exact-tree checks, and guarded Git operations remain
-the authority boundary.
-
-## Connect a coding agent
-
-Invariant uses an existing Codex or Claude Code installation and stores no provider credentials.
-
-```bash
-invariant connect
-invariant connect codex
-invariant connect claude
-invariant connect --default codex
-```
-
-Without an argument, `connect` reports both providers and the machine default. With a provider it
-opens that tool's native sign-in flow when needed. `--default` also changes the machine preference.
-A repository-specific choice can be made later with `invariant set harness codex|claude|auto`.
-
-## Initialize a repository
-
-```bash
-invariant init
-```
-
-Interactive setup asks four questions: who has authority over repository meaning, whether valid
-local transitions run automatically, which branch receives landed work, and whether successful
-landings are published to an existing upstream. There is no adapter question and the tracked
-configuration contains no adapter registry.
-
-Use the defaults without the questionnaire:
+## Initialize and inspect
 
 ```bash
 invariant init --defaults
+invariant status
+invariant governance explain --path src/payments
 ```
 
-On a clean repository, initialization commits its deterministic configuration locally. Existing
-provider instructions such as `AGENTS.md` and `CLAUDE.md` are untouched. Running `init` again offers
-to keep the complete configuration or replace it; `set` is the normal way to change one preference.
+Initialization writes version-two policy only. Commit it before opening a change.
 
-Initialization is optional ceremony. If `start` or `establish` finds no configuration, it runs the
-same guided setup, takes the user's choices, and then continues into the requested conversation.
-
-## Work through one conversation
+The tracked settings are:
 
 ```bash
-invariant start
-invariant start "Explain how restart recovery is owned"
-invariant start --session <session-id>
-```
-
-A new conversation can answer questions and route requested writes through Invariant's managed
-lifecycle. The agent remains read-only while interpreting the user's message. When a write is
-needed, Invariant creates an isolated worktree, checks the exact candidate against accepted records,
-verifies it, and lands it atomically on the configured local branch.
-
-Sessions are durable files in the local workspace. They retain a theme, transcript, and opaque
-provider handle without becoming repository authority. Useful conversation controls are:
-
-| Control | Effect |
-| --- | --- |
-| `:new [theme]` | Create and enter another durable session. |
-| `:sessions` | List sessions in this project. |
-| `:switch ID` | Return to a listed session. |
-| `:status` | Show deterministic repository and lifecycle status. |
-| `:settings` | Show repository and clone preferences. |
-| `:set KEY VALUE` | Change one preference. |
-| `:source add ...` | Add one scoped grounding source. |
-| `:establish` | Inspect and prepare durable repository records. |
-| `:record` | Accept the exact pending record proposal. |
-| `:exit` | End the console while preserving the session. |
-
-## Establish repository records
-
-```bash
-invariant establish
-```
-
-This is composition, not a separate interaction model. `establish` starts a normal durable session
-themed “Repository records” and seeds it with `:establish`.
-
-With agent authority, the audit, delegated authority review when needed, projection, checking, and
-landing continue automatically. Repository policy is the exception: if the establishment candidate
-changes `.invariant/config.yml`, or covers earlier unattested history that did, Invariant keeps agent
-authority for the record choices and asks the user only to attest that policy boundary. With human
-authority, the complete proposal requires the same user acceptance.
-
-Whenever acceptance is needed, the conversation shows a compact summary and writes a readable
-`.invariant/runtime/tasks/<task-id>/review.md` containing the reason, findings and evidence,
-projected records, changed files, verification results, and exact candidate tree. The user can
-discuss it for as long as needed. Discussion does not accept or mutate it; entering `:record`
-accepts that exact candidate with user authority and continues landing. If the candidate changes,
-Invariant presents a new review instead of carrying the acceptance forward.
-
-Leaving the conversation preserves the proposal. Running `establish` later resumes the newest
-compatible attempt in another durable conversation. When unfinished establishment work exists, the
-conversation first shows when it was last saved and whether its captured Git ground and mechanics
-are current, advanced, or stale. A yes-or-no prompt lets the user continue it or start fresh; Invariant
-never chooses silently.
-
-## Add grounding evidence
-
-```bash
-invariant source add --url https://example.com/api.json --scope contract:payments-api
-invariant source add --path sources/backend.md --scope domain:backend
-invariant source add --url https://example.com/standards --repo
-```
-
-`--path` is relative to `.invariant/` and must remain beneath `.invariant/sources/`. `--scope`
-accepts an established `domain:<id>` or `contract:<id>`; a natural-language description may be
-resolved to one existing scope. `--repo` applies throughout the repository. Source material is
-always untrusted evidence: it cannot create records or grant authority by itself.
-
-## Change preferences
-
-```bash
-invariant set authority human
-invariant set execution auto
+invariant set authority.intent.suppliers user
+invariant set authority.resolution.delegation agent
+invariant set execution.transitions auto
 invariant set integration_branch main
-invariant set push_remote off
-invariant set harness claude
+invariant set publication off
+invariant set parallelism.maximum 4
 ```
 
-The first four values are tracked repository policy. `harness` and the optional session `mode` are
-clone-local preferences. Selecting a concrete harness also runs its native connection flow if needed.
-Adapters are intentionally absent from configuration; a future `invariant add adapter` command can
-introduce that extension explicitly.
+Intent supply and resolution delegation are authority policy. `execution.transitions` is a hint
+for compound host UX only; the low-level CLI remains explicit. It grants no semantic authority.
 
-## View state in the browser
+## Open a change
 
 ```bash
-invariant serve
+invariant change open change-id \
+  --intent "Desired repository outcome" \
+  --supplier user:alice \
+  --path src/service
+
+invariant change recommend change-id
+invariant change inspect change-id
+invariant change handoff change-id
 ```
 
-The loopback browser is a read-only state and lifecycle explorer. Registered repositories appear as
-folders and their sessions as files in one explorer pane. The detail pane shows repository state,
-lifecycle work, evidence, and the selected session log. It cannot create sessions, send messages,
-change settings, or advance work.
+The ledger is durable under `refs/invariant/changes/change-id`. The recommendation identifies the
+current maximum parallelism and frontier.
 
-Use `invariant serve --port <port>` when port 3000 is occupied. Project registrations, transcripts,
-and provider handles live in the user's local Invariant workspace and carry no semantic authority.
+## Governed execution
+
+The lower-level CLI groups mirror the protocol for operator recovery:
+
+```text
+capability request|inspect|revoke
+work create|submit|discard
+candidate converge|evidence
+action inspect|respond
+integration land|reconcile
+publication publish
+```
+
+Each state-changing request may carry `--operation-id` for idempotency. Capabilities return bearer
+tokens once. Inspection and handoff redact them.
+
+Destructive cleanup binds the exact sorted ref list as compact JSON. For example, a discard of one
+attempt requests `work.discard` with resource
+`["refs/invariant/work/change-id/unit-id/attempt-id"]`; the resulting token is usable only with
+that exact list.
+
+Resolution and execution tokens are not interchangeable:
+
+- `intent.resolve` answers one bound action and may be given to an eligible model actor.
+- `worktree.create`, `worktree.write`, `verification.run`, `candidate.converge`,
+  `integration.land`, `remote.publish`, `change.invalidate`, and `work.discard` govern operational
+  consequences.
+
+## MCP
+
+```bash
+invariant-mcp \
+  --repository /absolute/path/to/repository \
+  --principal harness:local
+```
+
+The stdio gateway exposes typed tools only. It has no generic command, repository, Git, environment,
+network, remote, or credential parameter. Restarting it reloads the same ledgers and refs.
+
+Denied, stale, and needs-input results are successful protocol exchanges. They do not authorize a
+bypass.
+
+## JSON envelope
+
+Use `--format json` before the command:
+
+```bash
+invariant --format json change inspect change-id
+```
+
+Every result has:
+
+```json
+{
+  "protocol": 2,
+  "command": "change.inspect",
+  "status": "ok",
+  "outcome": "completed",
+  "result": {},
+  "diagnostics": []
+}
+```
+
+Outcomes `completed`, `ready`, `needs_input`, `denied`, and `stale` exit zero. Mechanical blocks
+exit one. Invalid input, corrupt state, transport failures, and internal failures exit two.

@@ -22,8 +22,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# NOTE: .invariant/ is deliberately NOT ignored. Accepted domains and contracts,
+# NOTE: .invariant/ is deliberately NOT ignored. Policy, accepted records,
 # architecture pointers, discoveries, and audits are reviewed repository state.
-# Every generated task artifact lives under `.invariant/runtime/`. The CLI also
-# creates an ignore marker inside that directory so this holds in adopted repositories.
+# Runtime worktree materializations and caches are disposable; initialization
+# also adds this path to the repository's local info/exclude file.
 .invariant/runtime/

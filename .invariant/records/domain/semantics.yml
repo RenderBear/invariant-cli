@@ -1,8 +1,14 @@
-version: 1
+version: 2
 id: semantics
 responsibility: Interprets requested outcomes, selects relevant semantic scope, authors accepted governance,
   and reviews candidate meaning without mutating Git.
 authority: design:repo:docs/SPEC.md#semantics
 parent: null
-architecture: []
+scope:
+- repo:src/invariant/governance
+interfaces:
+- interface:governance-context
+- interface:intent-resolution
+architecture:
+- architecture:docs/SPEC.md#semantics
 contracts: []

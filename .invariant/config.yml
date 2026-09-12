@@ -1,5 +1,13 @@
-version: 1
-authority: agent
-execution: auto
+version: 2
+authority:
+  intent:
+    suppliers:
+    - user
+  resolution:
+    delegation: agent
+execution:
+  transitions: auto
 integration_branch: auto
-push_remote: off
+publication: off
+parallelism:
+  maximum: auto

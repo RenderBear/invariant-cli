@@ -53,11 +53,21 @@ def require_capabilities(repo: Path) -> None:
     version = run(["--version"], cwd=repo, check=False)
     merge_tree_help = run(["merge-tree", "-h"], cwd=repo, check=False)
     worktrees = run(["worktree", "list", "--porcelain"], cwd=repo, check=False)
+    commit_tree_help = run(["commit-tree", "-h"], cwd=repo, check=False)
+    update_ref_help = run(["update-ref", "-h"], cwd=repo, check=False)
+    symbolic_ref_help = run(["symbolic-ref", "-h"], cwd=repo, check=False)
     missing: list[str] = []
     if "--write-tree" not in f"{merge_tree_help.stdout}\n{merge_tree_help.stderr}":
         missing.append("git merge-tree --write-tree")
     if worktrees.returncode:
         missing.append("git worktree porcelain support")
+    if "commit-tree" not in f"{commit_tree_help.stdout}\n{commit_tree_help.stderr}":
+        missing.append("git commit-tree")
+    update_help = f"{update_ref_help.stdout}\n{update_ref_help.stderr}"
+    if "update-ref" not in update_help or "old" not in update_help:
+        missing.append("git update-ref compare-and-swap")
+    if "symbolic-ref" not in f"{symbolic_ref_help.stdout}\n{symbolic_ref_help.stderr}":
+        missing.append("git symbolic-ref")
     if missing:
         label = version.stdout or version.stderr or "unknown Git version"
         raise InvariantError(
@@ -74,7 +84,7 @@ def require_capabilities(repo: Path) -> None:
 def root(cwd: Path | str | None = None) -> Path:
     result = run(["rev-parse", "--show-toplevel"], cwd=cwd, check=False)
     if result.returncode:
-        raise InvariantError("Invariant: not inside a Git repository", code="not_a_repository")
+        raise InvariantError("Invariant: not inside a Git repository", code="not_repository")
     return Path(result.stdout).resolve()
 
 
@@ -319,3 +329,100 @@ def commits_mentioning(
 
 def valid_id(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", value))
+
+
+def object_format(repo: Path) -> str:
+    result = run(["rev-parse", "--show-object-format"], cwd=repo, check=False)
+    return result.stdout if result.returncode == 0 and result.stdout else "sha1"
+
+
+def zero_oid(repo: Path) -> str:
+    return "0" * (64 if object_format(repo) == "sha256" else 40)
+
+
+def tree_of(repo: Path, commit: str) -> str:
+    value = resolve(repo, commit, "tree")
+    if not value:
+        raise InvariantError(f"Invariant: missing Git object '{commit}'", code="missing_object")
+    return value
+
+
+def write_blob(repo: Path, content: str) -> str:
+    return run(["hash-object", "-w", "--stdin"], cwd=repo, input_text=content).stdout
+
+
+def write_tree(repo: Path, files: Mapping[str, str]) -> str:
+    """Write a flat tree whose values are already-created blob ids."""
+
+    rows = "".join(f"100644 blob {oid}\t{name}\n" for name, oid in sorted(files.items()))
+    return run(["mktree"], cwd=repo, input_text=rows).stdout
+
+
+def commit_tree(
+    repo: Path,
+    tree: str,
+    message: str,
+    *,
+    parents: Iterable[str] = (),
+    timestamp: int | None = None,
+) -> str:
+    args = ["commit-tree", tree]
+    for parent in parents:
+        args.extend(["-p", parent])
+    env = {
+        "GIT_AUTHOR_NAME": "Invariant",
+        "GIT_AUTHOR_EMAIL": "invariant@localhost",
+        "GIT_COMMITTER_NAME": "Invariant",
+        "GIT_COMMITTER_EMAIL": "invariant@localhost",
+    }
+    if timestamp is not None:
+        date = f"{timestamp} +0000"
+        env["GIT_AUTHOR_DATE"] = date
+        env["GIT_COMMITTER_DATE"] = date
+    return run(args, cwd=repo, input_text=message, env=env).stdout
+
+
+def update_ref(repo: Path, ref: str, new: str, old: str | None) -> bool:
+    expected = old or zero_oid(repo)
+    return run(["update-ref", ref, new, expected], cwd=repo, check=False).returncode == 0
+
+
+def delete_ref(repo: Path, ref: str, old: str) -> bool:
+    return run(["update-ref", "-d", ref, old], cwd=repo, check=False).returncode == 0
+
+
+def cat_files(repo: Path, specifications: Iterable[str]) -> dict[str, bytes]:
+    """Read many ``commit:path`` blobs through one Git process."""
+
+    values = list(specifications)
+    completed = subprocess.run(
+        ["git", "cat-file", "--batch"],
+        cwd=repo,
+        input="".join(f"{value}\n" for value in values).encode("utf-8"),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if completed.returncode:
+        raise InvariantError(
+            f"Invariant: {completed.stderr.decode(errors='replace').strip()}",
+            code="git_failed",
+        )
+    stream = io.BytesIO(completed.stdout)
+    result: dict[str, bytes] = {}
+    for specification in values:
+        header = stream.readline().decode("utf-8", errors="replace").rstrip("\n")
+        if header.endswith(" missing"):
+            raise InvariantError(
+                f"Invariant: missing Git object '{specification}'", code="missing_object"
+            )
+        parts = header.split()
+        if len(parts) != 3 or parts[1] != "blob":
+            raise InvariantError(
+                f"Invariant: '{specification}' is not a blob", code="corrupt_ledger"
+            )
+        size = int(parts[2])
+        result[specification] = stream.read(size)
+        if stream.read(1) != b"\n":
+            raise InvariantError("Invariant: malformed Git batch output", code="git_failed")
+    return result

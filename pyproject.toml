@@ -4,8 +4,8 @@ build-backend = "uv_build"
 
 [project]
 name = "invariant-cli"
-version = "0.1.0"
-description = "Scale agentic coding without architectural drift"
+version = "0.2.0"
+description = "A semantic kernel and Git-grounded lifecycle for governed agentic work"
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -26,7 +26,6 @@ classifiers = [
 
 [project.scripts]
 invariant = "invariant.entry:main"
-invariant-agent = "invariant.harness.cli:main"
 invariant-mcp = "invariant.mcp_server:main"
 
 [project.urls]

@@ -1,21 +1,32 @@
 # Invariant protocol
 
-**Version 2.** This document defines the implementation-independent contract for Invariant, the
-governance layer for complex agentic work. It governs one Git common directory and every harness,
-agent, and worker that asks to change it through Invariant.
+**Version 2.** This document defines the implementation-independent contract for Invariant, a
+protocol for constructing a governance layer around complex agentic work. One logical Invariant
+kernel governs one Git common directory and every harness, agent, and worker that asks to change it.
 
-Invariant does not execute agent work. It turns accepted repository meaning into decisions about
-what work may happen, recommends the admissible shape of concurrent work, issues narrowly scoped
-capabilities, verifies the exact result, and records what was authorized. A harness still chooses
-models, starts workers, schedules permitted work, and carries messages. Git still stores the exact
-objects and moves refs.
+The governance layer is the composition of two inseparable parts:
+
+1. a **semantic kernel**, which selects accepted intent, identifies questions that still need
+   resolution, compiles closed consequences, and decides which scoped capabilities may exist; and
+2. a **Git-grounded lifecycle**, which binds those decisions to immutable objects, durable events,
+   isolated work, exact-tree evidence, and compare-and-swap integration.
+
+The semantic kernel without the lifecycle is advice. The lifecycle without the semantic kernel is
+repository automation with no account of meaning. A conforming Invariant implementation provides
+both and keeps their handoff causally explicit.
+
+Invariant does not execute agent work. It turns supplied intent and accepted repository meaning
+into decisions about what work may happen, recommends the admissible shape of concurrent work,
+issues narrowly scoped capabilities, verifies the exact result, and records what was authorized. A
+harness still chooses models, starts workers, schedules permitted work, and carries messages. Git
+still stores the exact objects and moves refs.
 
 The boundary is:
 
 ```text
-harness                         Invariant                         Git
-reason, request, dispatch  ->   interpret, decide, constrain  -> objects, refs, worktrees
-workers, retries, transport     recommend, verify, attest        exact causal history
+intent supplier        harness                 Invariant                         Git
+state desired     ->    reason and execute ->  semantic kernel + lifecycle  -> objects and refs
+accepted promises      workers and tools       decide, verify, attest           exact causal history
 ```
 
 The governing rule is:
@@ -33,22 +44,64 @@ The words **MUST**, **MUST NOT**, **REQUIRED**, **SHOULD**, and **MAY** are norm
 
 ---
 
-## 1. Authority boundary
+## 1. Execution and authority boundary
 
-### 1.1 Ownership
+### 1.1 Execution is not authority
+
+**Execution** is the ability to cause an operational effect: run a worker, write a worktree, execute
+a verifier, move a ref, publish a commit, or remove retained work. **Authority** is the attributable
+right to supply or resolve the intent that makes a consequence legitimate. Possessing one never
+implies the other.
+
+A harness may have broad execution access while having no authority to decide repository meaning.
+An intent supplier may authoritatively state the desired outcome while having no repository or
+shell access. A model may execute work without a resolution capability, or receive a narrowly
+scoped resolution capability without receiving any additional execution tool.
+
+Invariant evaluates these axes independently:
+
+- an **execution capability** permits one closed operational consequence and is subject to
+  containment and causal revalidation; and
+- a **resolution capability** permits one actor to answer one bound semantic action within supplied
+  intent and accepted policy. It supplies decision authority, not operational access.
+
+No field called `auto`, no model selection, and no ability to call a tool grants authority.
+
+### 1.2 Authority has two inputs
+
+Authority is not a single human-versus-agent mode. It consists of:
+
+1. **intent supply** — an attributable statement of the desired state or accepted promise, supplied
+   by a user, accepted policy or record, or another source explicitly allowed by policy; and
+2. **resolution capability** — a narrow, revocable entitlement to settle one identified ambiguity
+   when supplied intent and accepted governance do not determine the answer.
+
+Intent supply establishes the question and its bounds. It is not a bearer capability and cannot be
+manufactured by a model. A resolution capability names the action, actor, accepted intent, exact
+causal state, allowed response schema, and whether delegation to a model is permitted. It MAY be
+passed to a model as part of a typed action request. The response remains a proposal until the
+kernel validates and consumes that exact capability.
+
+A resolution capability cannot widen its intent, change policy, impersonate its supplier, authorize
+execution, or answer a different action. Policy changes always require fresh `user:` intent supply.
+If no valid capability is available, the action remains `needs-authority`; model confidence is
+irrelevant.
+
+### 1.3 Ownership
 
 The three parties have non-overlapping responsibilities.
 
 | Party | Owns | Does not own |
 |---|---|---|
-| Harness | goals, model choice, worker processes, scheduling within an Invariant recommendation, retries, user interaction | governance decisions, integration movement, attestation |
-| Invariant | record selection, normative compilation, work-shape recommendation, capability decisions, isolation, exact-tree verification, integration and publication gates, durable attribution | implementation, model intelligence, general shell execution |
+| Intent supplier | desired state, accepted promises, and explicit policy decisions | worker execution, implied permission beyond the supplied intent |
+| Harness | model choice, worker processes, scheduling within an Invariant recommendation, retries, user interaction | manufacturing intent or resolution authority, governance decisions, integration movement, attestation |
+| Invariant | intent binding, record selection, normative compilation, work-shape recommendation, resolution and execution capability decisions, isolation, exact-tree verification, integration and publication gates, durable attribution | implementation, model intelligence, general shell execution |
 | Git | immutable object identity, refs, linked worktrees, ancestry, compare-and-swap primitives | meaning, authority, safe parallelization |
 
 A model response is a proposal or an assertion. It is never a capability, verification result, or
 accepted repository meaning merely because a model produced it.
 
-### 1.2 Managed and advisory consequences
+### 1.4 Managed and advisory consequences
 
 A **managed consequence** is an operation for which the worker has no path around Invariant. The
 kernel holds the relevant ref, credential, or operating-system permission and performs the operation
@@ -67,7 +120,7 @@ network or Git access sufficient to publish, while the Invariant process alone h
 publication capability. A repository instruction saying “do not push” does not establish that
 condition.
 
-### 1.3 Authority is attributable, not inferred
+### 1.5 Authority is attributable, not inferred
 
 Every normative decision names an **authority locator**. The standard forms are:
 
@@ -119,7 +172,7 @@ the files at an exact tree.
 ### 2.2 Durable operational ledger
 
 Active work MUST NOT depend on a process, conversation, MCP connection, working directory, or
-ignored receipt surviving. Each **change** has a Git-backed ledger rooted at:
+disposable runtime file surviving. Each **change** has a Git-backed ledger rooted at:
 
 ```text
 refs/invariant/changes/<change-id>
@@ -129,7 +182,7 @@ The ref points to an append-only chain of ledger commits. Each commit has the pr
 as its first parent and contains a canonical change snapshot plus the new event. A ledger event binds
 at least:
 
-- repository identity, change id, goal and goal digest;
+- repository identity, change id, supplied intent, supplier, and intent digest;
 - integration target and captured head;
 - selected governance and policy digests;
 - recommendation id and digest;
@@ -178,7 +231,7 @@ completion fact. An implementation reconstructs those from Git refs and objects.
 | Policy | repository authority ceiling | integration history |
 | Semantic, domain, contract, constraint record | accepted governance | integration history |
 | Source, audit, discovery | attributable evidence, never authority by itself | integration history |
-| Recommendation | normative execution envelope for one goal and base | change ledger |
+| Recommendation | normative execution envelope for one supplied intent and base | change ledger |
 | Decision and capability grant | scoped operational authority | change ledger |
 | Action response and review | attributable assertion bound to its inputs | change ledger |
 | Work, candidate, verification | exact causal fact or observation | Git refs/objects and ledger |
@@ -188,7 +241,7 @@ completion fact. An implementation reconstructs those from Git refs and objects.
 ### 2.5 Handoff
 
 `change.handoff` returns a **handoff capsule**, not a prose summary. The capsule identifies the
-ledger head, goal digest, base, current stage, recommendation, ready and active units, exact work and
+ledger head, intent digest, base, current stage, recommendation, ready and active units, exact work and
 candidate tips, outstanding obligations, live grants, pending actions, and attribution chain.
 
 A receiver resumes by presenting that capsule to `change.resume`. Invariant accepts it only when the
@@ -262,9 +315,9 @@ contains no explicit directive: it changes retrieval, review, invalidation, and 
 `revisit_on: semantic:<id>` is a dependency edge. Changing the premise's envelope or canonical prose
 reopens dependents. Open relations never propagate invalidation.
 
-A record is retired only by an accepted candidate that names it, meets its compiled review and
-authority obligations, and carries `Invariant-Retired`. Revision preserves history by supersession;
-there is no in-place erasure of accepted meaning.
+A record is retired only by an accepted candidate that names it and meets its compiled review and
+authority obligations. The retired envelope remains in integration history, and revision preserves
+the relationship by supersession; there is no in-place erasure of accepted meaning.
 
 ### 3.3 Domains
 
@@ -380,14 +433,14 @@ Each directive has a stable `id` unique within its record and exactly one shape:
 | `kind` | Required fields | Consequence |
 |---|---|---|
 | `deny-capability` | `capability` | the capability cannot be granted in the selected scope |
-| `require-authority` | `capability`, `authority` | a matching attributable decision is required |
+| `require-resolution` | `capability`, `resolver` | the capability requires a matching resolution or fresh supplied intent |
 | `require-review` | `mode` | candidate review must be `attributable` or `independent` |
 | `require-verifier` | `locator` | the exact candidate must carry passing evidence |
 | `serialize` | `on` | units reaching any named locator cannot run concurrently |
 | `limit-parallelism` | `maximum` | caps simultaneous write grants for the selected scope |
 | `require-containment` | `capability`, `enforcement` | refuses the capability unless the reported posture is met |
 
-`authority` is `user`, `agent`, or `any-attributable`; `enforcement` is `managed`; `maximum` is a
+`resolver` is `user`, `agent`, or `any-attributable`; `enforcement` is `managed`; `maximum` is a
 positive integer. Unknown values are invalid, not ignored.
 
 ### 4.3 Precedence and composition
@@ -397,7 +450,7 @@ The compiler is deterministic:
 - tracked policy is the authority ceiling and cannot be widened by a record;
 - all applicable restrictions accumulate;
 - denial wins over a policy default or satisfied requirement;
-- the strongest authority, review, and containment requirement wins;
+- the strongest resolver, review, and containment requirement wins;
 - required verifiers form a set union;
 - serialization edges form a set union;
 - parallel limits take the minimum; and
@@ -408,7 +461,7 @@ invalid if its explanation cannot be reconstructed from those sources.
 
 ### 4.4 Selection and actual reach
 
-Compilation first uses the declared goal, paths, interfaces, domains, contracts, and requested
+Compilation first uses the declared intent, paths, interfaces, domains, contracts, and requested
 capability. A capability request always selects active constraints and semantic records that apply
 to `capability:<name>`, even when no source path changes. That produces a pre-work envelope. Before
 convergence and again before landing, Invariant computes the **actual reach** from the exact Git diff
@@ -421,16 +474,27 @@ further grants. Declared scope can never hide observed scope.
 
 ### 5.1 Closed capability vocabulary
 
-The standard capabilities are the consequences that can change accepted authority, execute code,
-create writable state, converge work, move refs, publish, or destroy retained work:
+Capabilities have one of two classes. The distinction is normative and every decision and grant
+records it.
+
+The single standard **resolution capability** is:
 
 | Capability | Permits |
 |---|---|
-| `governance.accept` | accept governance under the required authority |
+| `intent.resolve` | answer one exact typed semantic action within supplied intent and delegated policy |
+
+`intent.resolve` may govern recommendation, semantic review, independent review, or governance
+acceptance responses. Its resource is the action id. It is never a generic permission to decide.
+
+The standard **execution capabilities** are the closed operational consequences that can execute
+code, create writable state, converge work, move refs, publish, invalidate, or destroy retained
+work:
+
+| Capability | Permits |
+|---|---|
 | `worktree.create` | create one isolated unit attempt from its authorized base |
 | `worktree.write` | implement inside that attempt's claims |
 | `verification.run` | run only selected verifier identities against an exact tree |
-| `candidate.review` | submit an attributable semantic review for an exact tree |
 | `candidate.converge` | add one completed unit result to the aggregate candidate |
 | `integration.land` | compare-and-swap one verified candidate onto its target |
 | `remote.publish` | publish the exact landed commit to an already configured upstream |
@@ -440,11 +504,11 @@ create writable state, converge work, move refs, publish, or destroy retained wo
 There is no generic shell, arbitrary Git, arbitrary filesystem, credential, network, or “admin”
 capability.
 
-Read-only inspection, opening a durable ledger, recording Invariant's own recommendation, recording
-a work submission, and requesting or revoking a grant do not themselves require a grant: none
-changes accepted governance, executes a verifier, exposes a writable worktree, converges a
-candidate, moves an integration ref, publishes, or discards work. They remain schema-validated,
-causally bound ledger operations.
+Read-only inspection, opening a durable ledger from attributable supplied intent, recording a work
+submission, and requesting or revoking a grant do not themselves require a recursive grant.
+Recording a semantic recommendation or review is an action response and consumes `intent.resolve`
+unless the response is direct intent supply from an allowed supplier. These operations remain
+schema-validated and causally bound.
 
 ### 5.2 Decisions
 
@@ -465,7 +529,8 @@ Denial and missing authority are durable events, not transport failures.
 
 ### 5.3 Grants
 
-A **grant** is an opaque bearer handle to one narrow consequence. It binds:
+A **grant** is an opaque bearer handle to one narrow consequence. It records its class as
+`resolution` or `execution` and binds:
 
 - decision digest, actor, capability, repository, change, unit, and attempt;
 - integration target and exact base;
@@ -476,9 +541,10 @@ A **grant** is an opaque bearer handle to one narrow consequence. It binds:
 - use count or `single_use`; and
 - causal invalidators.
 
-The grant event is appended to the change ledger before the handle is returned. The handle conveys
-no authority outside the named operation. An actor label without the handle is insufficient, and a
-handle presented for another resource is refused.
+The grant event is appended to the change ledger before the handle is returned. An execution handle
+conveys no semantic authority. A resolution handle conveys no execution access. An actor label
+without the required handle is insufficient, and a handle presented for another resource is
+refused.
 
 Grants are causally scoped rather than trusted because they are recent. Before use, Invariant
 revalidates the target, branch or candidate tip, governance digests, plan state, prior uses, and
@@ -487,8 +553,9 @@ silently broadened; the caller requests a new decision.
 
 ### 5.4 Consequence mediation
 
-Privileged operations—governance acceptance, candidate convergence, integration landing, remote
-publication, invalidation, and discard—MUST consume a matching grant inside the kernel. Worktree
+Privileged operations—intent resolution or governance acceptance, candidate convergence,
+integration landing, remote publication, invalidation, and discard—MUST consume a matching grant inside
+the kernel unless the authority operation is direct allowed intent supply. Worktree
 write grants are audited against the resulting diff. A worker that changes paths beyond its claims
 does not gain authority over them: the work is retained, the unit is rejected with
 `parallel_claim_violation`, and affected grants are revoked.
@@ -503,7 +570,7 @@ A **change** is one requested outcome and one eventual atomic integration result
 schedulable part of that change. A small or tightly coupled change remains one unit. Invariant MUST
 NOT recommend parallelism merely because multiple workers are available.
 
-Before write workers are dispatched, `change.recommend` evaluates the exact base, goal, selected
+Before write workers are dispatched, `change.recommend` evaluates the exact base, supplied intent, selected
 governance, domains, contracts, paths, interfaces, configured capacity, and any retained discoveries.
 It returns a **work recommendation** with:
 
@@ -511,8 +578,8 @@ It returns a **work recommendation** with:
 version: 2
 id: <recommendation-id>
 change: <change-id>
-base: <commit-or-unborn>
-goal_digest: <sha256>
+base: <commit>
+intent_digest: <sha256>
 disposition: parallel        # or single
 units:
   - id: api
@@ -587,7 +654,7 @@ After all units converge, the whole candidate follows one review, verification, 
 
 ```text
 open change
-  -> durable ledger + goal/base/governance snapshot
+  -> durable ledger + supplied-intent/base/governance snapshot
   -> recommend one unit or a bounded work graph
   -> issue grants for the admissible frontier
   -> harness dispatches and runs workers in isolated attempts
@@ -605,7 +672,7 @@ open change
 
 | Stage | Meaning |
 |---|---|
-| `opened` | goal, base, and initial governance are durable |
+| `opened` | supplied intent, supplier, base, and initial governance are durable |
 | `recommending` | work shape requires semantic or authority input |
 | `ready` | a recommendation exists and at least one unit may receive a grant |
 | `executing` | one or more unit attempts are live or awaiting submission |
@@ -617,17 +684,19 @@ open change
 | `completed` | local landing is attested; publication status is recorded separately |
 | `invalidated` | further work is stopped; history and retained work remain inspectable |
 
-The stage is a projection of the ledger, not mutable truth in a receipt.
+The stage is a projection of the ledger, not mutable truth in a runtime file.
 
 ### 7.3 Actions
 
 Semantic judgment and missing authority use one typed **action** transport. Each action binds an id,
-kind, schema, goal digest, ledger head, selected governance, and—when a candidate exists—its exact
-tree and evidence ids.
+kind, schema, supplied-intent digest and supplier, ledger head, selected governance, and—when a
+candidate exists—its exact tree and evidence ids.
 
-Actions may request a work recommendation, semantic review, independent review, governance
-acceptance, or user authority. A response for a different goal, ledger head, recommendation, or
-candidate is stale. Editing a ledger, runtime file, or worktree is not a response.
+Actions may request a work recommendation, scoped intent resolution, semantic review, independent
+review, governance acceptance, or new user intent. A response for a different intent, ledger head, recommendation, or
+candidate is stale. A delegated response consumes the action's `intent.resolve` grant. Direct user
+intent supply is recorded as a new attributable intent statement and supersedes the pending bounds
+where policy permits. Editing a ledger, runtime file, or worktree is not a response.
 
 An adapter owns only its private reasoning. It cannot issue grants, mark verification passed, change
 stages, converge work, move refs, or manufacture authority. Rejection preserves the candidate and
@@ -699,13 +768,11 @@ out of band. On consumption Invariant:
 Any failed check, conflict, stale decision, claim violation, missing authority, changed candidate, or
 concurrent non-inert target movement leaves the integration ref unchanged.
 
-If the target advances, Invariant classifies the movement. It is **inert** only when the intervening
-first-parent diff reaches none of the candidate's actual claims, selected records, policy,
-contracts, canonical prose, or defining material, and convergence remains conflict-free. An inert
-movement rebuilds and re-verifies the candidate and records the reviewed tree. Any other movement
-invalidates landing authority and requires recomputation or review.
+If the target advances, landing authority becomes stale. Invariant retains the candidate and
+requires recomputation and fresh evidence against the new parent; it never silently rebases a
+reviewed tree.
 
-### 8.5 Publication
+### 8.5 Publication {#publication}
 
 Remote publication is a distinct capability after local landing. It is denied by default. When
 enabled and granted, Invariant may push only the exact landed commit to the integration branch's
@@ -718,18 +785,16 @@ The landing commit is the portable result. It carries:
 
 | Trailer | Value |
 |---|---|
+| `Invariant-Protocol` | literal protocol version `2` |
 | `Invariant-Change` | change id |
-| `Invariant-Goal` | goal digest |
+| `Invariant-Intent` | intent digest and supplier |
 | `Invariant-Plan` | recommendation id and digest |
 | `Invariant-Unit` | repeated unit id, result tree, and attributed actor |
 | `Invariant-Decision` | each privileged decision digest consumed by landing |
 | `Invariant-Governance` | each selected record id and digest |
 | `Invariant-Evidence` | exact candidate evidence-set digest |
 | `Invariant-Review` | review digest, mode, and authority when required |
-| `Invariant-Landing-Parent` | expected integration parent or `unborn` |
-| `Invariant-Review-Tree` | reviewed tree when an inert movement rebuilt the landing tree |
-| `Invariant-Covers` | any previously unattested integration range |
-| `Invariant-Retired` | every accepted record retired by the landing |
+| `Invariant-Landing-Parent` | expected integration parent commit |
 
 Trailer serialization is deterministic. Validation recomputes the first-parent candidate and
 rejects missing, malformed, copied, or stale bindings. A claimed actor is durable provenance of
@@ -739,12 +804,9 @@ authentication.
 ### 8.7 Out-of-band history
 
 Humans and tools may move the integration branch outside Invariant. The protocol does not pretend
-otherwise. The next governed landing MUST cover every first-parent commit since the last valid
-attestation. If that range touched governance, policy, contracts, or their canonical prose, the new
-candidate inherits the corresponding review and authority obligations.
-
-Copied trailers never make a cherry-pick an Invariant landing. A backport that requires attestation
-is a new change against the backport target.
+otherwise. Any movement from a change's captured base makes its candidate and landing authority
+stale. Copied trailers never make a cherry-pick an Invariant landing; a backport requiring
+attestation is a new change against the backport target.
 
 ---
 
@@ -765,7 +827,8 @@ Every operation returns one typed envelope:
 }
 ```
 
-`status` is `ok` or `error`. `outcome` is:
+`status` is `ok`, `blocked`, or `error`. `blocked` is reserved for a valid mechanical or
+verification stop; it is not a transport failure. `outcome` is:
 
 | Outcome | Meaning |
 |---|---|
@@ -855,7 +918,7 @@ A conforming managed deployment guarantees:
    governance digests.
 6. **Isolation.** Each concurrent attempt has its own work ref and linked worktree.
 7. **Atomicity.** The integration ref moves by compare-and-swap or remains unchanged.
-8. **Attribution.** The landed result traces to its goal, recommendation, units, actors, decisions,
+8. **Attribution.** The landed result traces to its supplied intent, recommendation, units, actors, decisions,
    governance, evidence, review, and parent.
 9. **Retention.** Failed, rejected, revoked, invalidated, or conflicting work remains inspectable
    until an explicitly authorized discard.

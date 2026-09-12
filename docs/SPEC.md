@@ -5,14 +5,22 @@ The protocol defines the implementation-independent contract; this file defines 
 Git representation, compiler, recommendation engine, capability gateway, MCP tools, CLI, and local
 execution mechanics. Where they disagree, the protocol governs and this document is wrong.
 
-This is the target design. The existing version-one code is intentionally allowed to lag while the
-implementation plan at [`plan.md`](../plan.md) is executed. Version two replaces obsolete schemas,
-runtime receipts, commands, and tools directly. It does not add compatibility readers or migrations.
+The implementation is protocol version two. It replaces obsolete schemas, runtime receipts,
+commands, and tools directly and has no compatibility readers or migrations.
 
-Invariant is the governance layer for complex agentic work:
+Invariant implements a protocol that builds the governance layer for complex agentic work:
 
-> A harness says what it wants and runs the workers. Invariant decides the admissible work shape,
-> grants bounded consequences, verifies the exact result, and records why it was allowed.
+```text
+governance layer = semantic kernel + Git-grounded lifecycle
+```
+
+The semantic kernel binds supplied intent, accepted meaning, resolution authority, and closed
+consequences. The lifecycle grounds every consequential decision in durable Git objects, isolated
+work, exact evidence, and atomic integration. Neither half is presented as sufficient by itself.
+
+> An intent supplier says what state is desired. A harness runs workers. Invariant decides the
+> admissible work shape, grants bounded resolution or execution capabilities, verifies the exact
+> result, and records why it was allowed.
 
 “Governance” here is operational. Accepted meaning must affect context, review, verification,
 parallel ordering, capability issuance, or landing. A record that has no possible protocol effect is
@@ -26,7 +34,7 @@ documentation or evidence, not governance.
 
 The reference implementation answers these questions for every requested change:
 
-1. Which accepted repository meaning applies to this goal and its actual result?
+1. Which accepted repository meaning applies to this supplied intent and its actual result?
 2. Which consequences does that meaning require or prohibit?
 3. Should the change remain one unit, or what is the maximum admissible parallel frontier?
 4. Which narrowly scoped capabilities may be issued to which worker attempt?
@@ -65,14 +73,28 @@ server does not shell out to the CLI, and the CLI does not reimplement MCP behav
 
 ---
 
-## 2. Trust and containment
+## 2. Execution, authority, and containment
 
-The application evaluates two different properties for every operation:
+The implementation keeps execution and authority as orthogonal types:
 
-1. **Authorization:** accepted policy and governance permit this consequence.
-2. **Containment:** the actor has no alternative path around the gateway for this consequence.
+- **execution** is access to an operational consequence and is represented by an execution
+  capability; and
+- **authority** is the right to supply intent or resolve one semantic question. Intent supply is an
+  attributable input. Resolution is represented by an action-bound resolution capability.
 
-Authorization is implemented in version two. Containment is reported per capability and may be
+Models, tools, and harnesses do not gain authority from their ability to execute. An
+`intent.resolve` token may be included in a model adapter request only when accepted policy permits
+delegation for that exact action. The adapter never receives a standing authority mode.
+
+The application evaluates three different properties for consequential operations:
+
+1. **Intent:** the request is bounded by an attributable desired-state statement.
+2. **Authorization:** accepted policy and governance permit this resolution or execution
+   consequence.
+3. **Containment:** for execution capabilities, the actor has no alternative path around the
+   gateway for this consequence.
+
+Authorization is implemented in version two. Containment is reported per execution capability and may be
 `advisory` until a concrete containment provider proves otherwise. The UI and structured output must
 never collapse those properties into one “safe” flag.
 
@@ -133,7 +155,7 @@ No version-one record is accepted by the version-two loader.
 
 ### 3.2 Selection
 
-Selection takes an exact tree plus goal-derived and observed reach:
+Selection takes an exact tree plus intent-derived and observed reach:
 
 ```text
 paths + interfaces + domains + contracts + capabilities + governed material
@@ -165,7 +187,7 @@ compile(policy, selection, capability?, recommendation?, candidate?, containment
 sources: [policy:publication, record:constraint:no-publish@<digest>]
 selected_context: [semantic:source-ownership]
 denied_capabilities: [remote.publish]
-required_authority: {}
+required_resolution: {}
 required_reviews: []
 required_verifiers: [test:tests/test_remote_push.py]
 serialize_on: []
@@ -201,7 +223,8 @@ accepted interpretation, and whether a new record should be accepted.
 These questions use typed actions. The application composes exact selected context, the semantic
 planner or reviewer returns schema-bound assertions, and deterministic code validates identifiers,
 claims, evidence, authority, and causal bindings. A semantic response can propose a recommendation
-or satisfy a review obligation. It cannot grant a capability or mark a verifier passed.
+or satisfy a review obligation only when accompanied by a matching `intent.resolve` capability. It
+cannot supply original intent, grant a capability, or mark a verifier passed.
 
 The configured local provider is an adapter. Provider authentication, quota, and session ids stay
 outside the repository. If no semantic provider is available, planning falls back to one unit and a
@@ -338,7 +361,7 @@ local landing after rejection.
 The version-two lifecycle replaces the version-one one-task/one-worker assumption. A `Change` owns:
 
 ```text
-goal
+supplied intent and supplier
 integration base
 governance selection
 one work recommendation
@@ -386,16 +409,18 @@ blocking: true
 bindings:
   change: <id>
   ledger: <commit>
-  goal: <digest>
+  intent: <digest>
+  supplier: <authority-locator>
   recommendation: <digest>
   candidate: <tree>
   governance: <selection-digest>
 context: {}
 ```
 
-The standard kinds are `recommend-work`, `review-semantics`, `review-independent`,
-`accept-governance`, and `supply-authority`. A response repeats every binding. A changed bound value
-makes it stale.
+The standard kinds are `recommend-work`, `resolve-intent`, `review-semantics`,
+`review-independent`, `accept-governance`, and `supply-intent`. A response repeats every binding. A changed bound value
+makes it stale. A delegated response consumes an action-bound `intent.resolve` token; a direct user
+response records new supplied intent and does not pretend the user is a bearer-token executor.
 
 Candidate review records `accepted`, `rejected`, or `uncertain`; summary; semantic disposition;
 authority; mode; defects; and retained discoveries. Only `accepted` can satisfy an obligation.
@@ -428,7 +453,7 @@ variables, and repository-root deletion are prohibited.
 
 ### 6.1 Inputs and ownership
 
-`RecommendationService` owns the work recommendation. Its inputs are the exact base, goal, selected
+`RecommendationService` owns the work recommendation. Its inputs are the exact base, supplied intent, selected
 governance context, domains, contracts, requested scope, retained relevant discoveries, host
 capacity, and tracked maximum parallel width.
 
@@ -475,7 +500,7 @@ grants. Actual diffs are checked before any unit can converge.
 
 ### 6.4 Recommendation replacement
 
-A changed goal, base, selected record digest, contract surface, claim violation, or newly discovered
+A changed intent, base, selected record digest, contract surface, claim violation, or newly discovered
 overlap invalidates the existing recommendation. Replacement retains prior recommendations and
 records why the newer one governs. Completed unit work is reused only when its actual reach remains
 within a unit in the replacement and its causal base remains valid.
@@ -484,7 +509,18 @@ within a unit in the replacement and its causal base remains valid.
 
 ## 7. Capability gateway
 
-### 7.1 Request evaluation
+### 7.1 Capability classes and request evaluation
+
+The gateway has two closed capability classes:
+
+- `resolution`: `intent.resolve`; and
+- `execution`: `worktree.create`, `worktree.write`, `verification.run`,
+  `candidate.converge`, `integration.land`, `remote.publish`, `change.invalidate`, and
+  `work.discard`.
+
+Capability class is derived from the closed name, never supplied by a caller. Resolution grants bind
+one typed action and carry no containment claim. Execution grants bind one operational resource and
+report managed or advisory enforcement.
 
 `CapabilityService.request` receives a closed `CapabilityRequest`, reduces the latest change ledger,
 loads current governance, compiles obligations, checks containment, and calls the capability-specific
@@ -505,16 +541,15 @@ clients never need to parse the summary.
 
 | Capability | Additional requirements |
 |---|---|
-| `governance.accept` | candidate tree, policy-authorized actor, user authority for policy changes |
+| `intent.resolve` | exact pending action, supplied-intent digest, allowed actor; never delegated for policy changes |
 | `worktree.create` | current recommendation and dependency-ready unit |
 | `worktree.write` | existing attempt, admissible frontier, no conflicting live write grant |
 | `verification.run` | selected verifier and exact candidate tree |
-| `candidate.review` | exact candidate, evidence set, matching review obligation |
 | `candidate.converge` | clean submitted attempt and actual claims within recommendation |
 | `integration.land` | all obligations satisfied; exact candidate; single use |
 | `remote.publish` | completed local landing, tracked opt-in, existing upstream; single use |
 | `change.invalidate` | attributable actor and reason |
-| `work.discard` | explicit authority and exact retained targets; single use |
+| `work.discard` | explicit authority and the canonical JSON array of exact retained refs; single use |
 
 Ordinary reads do not append to the change ledger. Opening a change, recording Invariant's own
 recommendation, recording a work submission, and requesting or revoking a grant are causally bound
@@ -527,8 +562,8 @@ The ledger stores the token digest, not the token. Use hashes the supplied token
 live grant, re-evaluates causal invalidators, records `grant.consumed` before or in the same protected
 transaction as the consequence, and refuses replay when `single_use`.
 
-A goal or recommendation replacement revokes affected work grants. A candidate change revokes
-candidate review, verification, landing, and publication grants. Governance or target movement
+An intent or recommendation replacement revokes affected work grants. A candidate change revokes
+resolution, verification, landing, and publication grants. Governance or target movement
 marks affected grants stale; an explicit revocation event is appended on the next mutating resume.
 
 ### 7.4 Honest enforcement
@@ -580,7 +615,7 @@ The version-two MCP server exposes exactly these tools:
 | `invariant_change_handoff` | no | return a canonical token-free handoff capsule |
 | `invariant_change_resume` | yes | causally refresh and continue a handed-off change |
 | `invariant_action_inspect` | no | expand one typed action |
-| `invariant_action_respond` | yes | submit a causally bound response, consuming `candidate.review` or `governance.accept` when required |
+| `invariant_action_respond` | yes | submit a causally bound response, consuming `intent.resolve` when delegated rather than directly supplied |
 | `invariant_capability_request` | yes | record a decision and possibly return one bearer token |
 | `invariant_capability_inspect` | no | inspect decision or redacted grant metadata |
 | `invariant_capability_revoke` | yes | revoke one live grant |
@@ -625,14 +660,19 @@ The stable human surface is:
 invariant init
 invariant status
 invariant governance explain [--path ...] [--interface ...] [--domain ...]
-invariant change open --goal ...
+invariant change open <id> --intent ... --supplier user:<id> [--path ...]
+invariant change recommend <id>
 invariant change inspect <id>
-invariant change handoff <id> [--output ...]
+invariant change handoff <id>
 invariant change resume <capsule>
 invariant change invalidate <id>
-invariant recover <id>
+invariant action inspect|respond ...
+invariant capability request|inspect|revoke ...
+invariant work create|submit|discard ...
+invariant candidate converge|evidence ...
+invariant integration land|reconcile ...
+invariant publication publish ...
 invariant set <key> <value>
-invariant source add ...
 invariant-mcp --repository <path>
 ```
 
@@ -655,25 +695,34 @@ JSON output is the protocol envelope unchanged. Exit codes follow the protocol.
 
 ## 10. Configuration and policy
 
-Tracked configuration is deliberately small:
+Tracked configuration is deliberately small and makes authority structurally distinct from
+execution:
 
 ```yaml
 version: 2
-authority: agent
-execution: auto
+authority:
+  intent:
+    suppliers: [user]
+  resolution:
+    delegation: agent
+execution:
+  transitions: auto
 integration_branch: auto
 publication: off
 parallelism:
   maximum: auto
 ```
 
-`authority` is `human` or `agent`. Agent authority permits semantic assertions only where current
-accepted policy delegates them. It never accepts a policy change, authenticates a human, grants an
-unknown capability, bypasses a verifier, or supplies managed containment.
+`authority.intent.suppliers` is a non-empty subset of `user` and `policy`; it declares which
+attributable sources may originate change intent. Accepted records remain standing repository
+intent regardless of this list. `authority.resolution.delegation` is `agent` or `user`. `agent`
+allows the kernel to issue `intent.resolve` for eligible semantic actions to a named model actor;
+`user` requires new `user:` intent. Neither setting is an execution permission. Policy changes
+always require direct user intent.
 
-`execution` is `auto` or `assisted`. It controls routine pauses, not authorization. `auto` can
-request and consume mechanically available grants; `assisted` presents each state-changing
-consequence before request or use.
+`execution.transitions` is `auto` or `assisted`. It is a host preference for compound operator
+surfaces, not authorization and not an instruction to the kernel. The low-level CLI and MCP
+operations always expose each decision and consequence explicitly.
 
 `integration_branch` is `auto` or an existing local branch. `auto` resolves the primary worktree's
 current branch when the change opens and then stores the exact ref in the ledger.
@@ -773,7 +822,7 @@ repeated unit bindings while the retained ledger contains full explanations.
 `state.validate` walks first-parent integration history from a valid checkpoint or root and verifies:
 
 - landing parent and candidate identity;
-- change, goal, recommendation, and decision digests;
+- change, supplied-intent, recommendation, and decision digests;
 - unit result and actor bindings;
 - governance versions and required retirement markers;
 - review and evidence digests;
@@ -811,7 +860,7 @@ src/invariant/
     locators.py               exact-tree locator resolution
     selection.py              declared and actual governance reach
     compiler.py               deterministic obligation compilation
-    authority.py              attributable authority validation
+    authority.py              intent supply and resolution-capability validation
   ledger/
     events.py                 append-only event values and reducer
     store.py                  Git commit-tree and update-ref persistence
@@ -860,8 +909,8 @@ mechanics never import adapters, MCP, CLI, presentation, skills, or provider SDK
 decides semantic authority. Planning never creates workers. The gateway never runs arbitrary tools.
 
 The distribution remains `invariant-cli` with `invariant` and `invariant-mcp` console entries.
-`invariant-agent` may remain an internal adapter executable while provider isolation needs a process
-boundary; it is not a second authority surface.
+Semantic adapters are optional application dependencies, not executables or authority surfaces.
+They receive typed selected context and, when policy permits, an exact `intent.resolve` capability.
 
 ---
 
@@ -943,7 +992,7 @@ The implementation is complete when:
 - one exact aggregate candidate receives the complete evidence and semantic review required by
   actual reach;
 - local landing is a single compare-and-swap update and happens at most once;
-- landing history durably attributes goal, recommendation, unit results and actors, decisions,
+- landing history durably attributes supplied intent, recommendation, unit results and actors, decisions,
   governance, evidence, review, and parent;
 - remote publication remains off by default and can publish only the exact landed commit to the
   existing upstream;

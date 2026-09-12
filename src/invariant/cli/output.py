@@ -1,106 +1,39 @@
 from __future__ import annotations
 
 import json
-import re
 import sys
-from dataclasses import dataclass
 from typing import Any
 
+from invariant.application import OperationResult
 from invariant.errors import InvariantError
-from invariant.protocol import CommandOutcome
+from invariant.protocol import Outcome
 
 
-@dataclass(frozen=True)
-class CommandResult:
-    lines: list[str]
-    data: dict[str, Any] | list[Any]
-    outcome: CommandOutcome = CommandOutcome.COMPLETED
-
-
-def internal_error(exc: BaseException) -> InvariantError:
-    """Wrap an unexpected exception so callers still receive the error envelope and exit 2."""
-
-    detail = str(exc).strip()
-    return InvariantError(
-        f"Invariant: internal failure — {type(exc).__name__}{': ' + detail if detail else ''}",
-        code="internal_error",
-    )
-
-
-def _records(lines: list[str]) -> list[dict[str, str]]:
-    result: list[dict[str, str]] = []
-    for line in lines:
-        match = re.match(r"^([A-Z][A-Z0-9-]*): (.*)$", line)
-        if match:
-            result.append({"name": match.group(1), "value": match.group(2)})
-    return result
-
-
-def emit_success(
-    command: str,
-    result: list[str] | CommandResult,
-    format_name: str,
-    *,
-    verbose: bool = False,
-) -> int:
-    lines = result.lines if isinstance(result, CommandResult) else result
+def emit(command: str, result: OperationResult, format_name: str) -> int:
+    envelope = result.envelope(command)
     if format_name == "json":
-        payload: dict[str, Any] | list[Any]
-        payload = result.data if isinstance(result, CommandResult) else {"records": _records(lines)}
-        if verbose and isinstance(payload, dict):
-            payload = {**payload, "output": "\n".join(lines) + ("\n" if lines else "")}
-        print(
-            json.dumps(
-                {
-                    "protocol": 1,
-                    "command": command,
-                    "status": "ok",
-                    "outcome": (
-                        result.outcome.value
-                        if isinstance(result, CommandResult)
-                        else CommandOutcome.COMPLETED.value
-                    ),
-                    "result": payload,
-                    "diagnostics": [],
-                },
-                separators=(",", ":"),
-            )
-        )
-    elif lines:
-        print("\n".join(lines))
+        print(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False))
+    else:
+        print(f"{result.outcome.value.upper().replace('_', ' ')}: {command}")
+        if result.result:
+            print(json.dumps(result.result, indent=2, ensure_ascii=False))
     return 0
 
 
-def emit_error(
-    command: str, error: InvariantError, format_name: str, *, verbose: bool = False
-) -> int:
-    lines = list(error.lines)
+def emit_error(command: str, error: InvariantError, format_name: str) -> int:
+    outcome = Outcome.BLOCKED if error.exit_code == 1 else Outcome.FAILED
+    envelope: dict[str, Any] = {
+        "protocol": 2,
+        "command": command,
+        "status": "blocked" if error.exit_code == 1 else "error",
+        "outcome": outcome.value,
+        "result": error.data or {},
+        "diagnostics": [{"code": error.code, "message": error.message}],
+    }
     if format_name == "json":
-        status = "blocked" if error.exit_code == 1 else "error"
-        result: dict[str, Any] = error.data or {"records": _records(lines)}
-        if error.data is not None and lines:
-            result = {**result, "records": _records(lines)}
-        if verbose:
-            result["output"] = "\n".join(lines) + ("\n" if lines else "")
-        print(
-            json.dumps(
-                {
-                    "protocol": 1,
-                    "command": command,
-                    "status": status,
-                    "outcome": (
-                        CommandOutcome.BLOCKED.value
-                        if status == "blocked"
-                        else CommandOutcome.FAILED.value
-                    ),
-                    "result": result,
-                    "diagnostics": [{"code": error.code, "message": error.message}],
-                },
-                separators=(",", ":"),
-            )
-        )
+        print(json.dumps(envelope, separators=(",", ":"), ensure_ascii=False))
     else:
-        if lines:
-            print("\n".join(lines))
         print(error.message, file=sys.stderr)
+        for line in error.lines:
+            print(line)
     return error.exit_code

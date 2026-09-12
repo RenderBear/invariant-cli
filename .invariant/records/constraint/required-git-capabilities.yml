@@ -1,15 +1,23 @@
-version: 1
+version: 2
 id: required-git-capabilities
 assertion: Required exact-candidate and linked-worktree Git capabilities must be proven available before
   lifecycle mutation.
 authority: design:repo:docs/SPEC.md#mechanics
 applies_to:
-- mechanics
-- lifecycle
+- domain:mechanics
+- domain:lifecycle
+- capability:worktree.create
+- capability:candidate.converge
+- capability:integration.land
 surfaces:
 - repo:src/invariant/mechanics/git.py
 material:
-- repo:docs/SPEC.md
+- architecture:docs/SPEC.md#mechanics
 - repo:tests/test_git_capabilities.py
 verifies:
 - test:tests/test_git_capabilities.py
+directives:
+- id: serialize-worktree-metadata
+  kind: serialize
+  on:
+  - interface:git-common-directory

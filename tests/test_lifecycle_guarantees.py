@@ -1,108 +1,211 @@
-"""Git landing guarantees under concurrency and long histories."""
+"""Git-grounded lifecycle guarantees under process loss and concurrency."""
 
 from __future__ import annotations
 
-import json
-import subprocess
-import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+import shutil
 
-from lifecycle_support import CORE, CORE_COMMAND
-from lifecycle_support import begin as _begin
-from lifecycle_support import git as _git
-from lifecycle_support import implement as _implement
-from lifecycle_support import invariant as _invariant
-from lifecycle_support import repository as _repository
+import pytest
 
+from invariant.application import InvariantApplication
+from invariant.errors import Blocked
+from invariant.mechanics import git
 
-def _lifecycle_seconds(repo: Path, task: str) -> float:
-    started = time.perf_counter()
-    worktree = _begin(repo, task)
-    _implement(worktree, f"src/{task}.txt", f"{task}\n")
-    code, payload = _invariant(repo, "task", "finish", task)
-    assert code == 0, payload
-    return time.perf_counter() - started
+from lifecycle_support import begin, finish, grant, implement, open_change, repository
 
 
-def test_finish_cost_does_not_scale_with_repository_history(tmp_path: Path) -> None:
-    short = _repository(tmp_path / "short", commits=20)
-    long = _repository(tmp_path / "long", commits=600)
-    short_seconds = min(_lifecycle_seconds(short, f"warm{i}") for i in range(2))
-    long_seconds = min(_lifecycle_seconds(long, f"warm{i}") for i in range(2))
-    assert long_seconds < short_seconds * 3, (
-        f"a 600-commit history cost {long_seconds:.1f}s per task versus {short_seconds:.1f}s"
+def test_change_ledger_survives_runtime_loss_and_application_restart(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    open_change(app, "durable")
+    attempt, worktree = begin(app, "durable")
+    implement(worktree, "src/durable.txt", "durable\n")
+    app.work_submit(
+        "durable",
+        attempt_id=attempt,
+        actor="agent:test/worker",
+        operation_id="submit-durable",
+    )
+    before = app.change_handoff("durable").result["handoff"]
+    runtime = app.repository.primary_worktree / ".invariant/runtime"
+    git.run(["worktree", "remove", "--force", str(worktree)], cwd=app.repository.root)
+    shutil.rmtree(runtime, ignore_errors=True)
+    git.run(["worktree", "prune"], cwd=app.repository.root)
+    assert not worktree.exists()
+    restarted = InvariantApplication.bind(app.repository.root)
+    after = restarted.change_inspect("durable").result["change"]
+    assert after["ledger"] == before["ledger"]
+    assert after["attempts"][attempt]["tip"]
+    assert restarted.work.restore("durable", attempt).attempt["ref"].startswith(
+        "refs/invariant/work/"
     )
 
 
-def test_finish_cost_does_not_scale_with_unattested_history(tmp_path: Path) -> None:
-    short = _repository(tmp_path / "short")
-    long = _repository(tmp_path / "long")
-    _lifecycle_seconds(short, "baseline")
-    _lifecycle_seconds(long, "baseline")
-    for index in range(400):
-        _git(long, "commit", "-q", "--allow-empty", "-m", f"ordinary history {index}")
-    short_seconds = _lifecycle_seconds(short, "after-gap")
-    long_seconds = _lifecycle_seconds(long, "after-gap")
-    assert long_seconds < short_seconds * 3, (
-        f"a 400-commit unattested suffix cost {long_seconds:.1f}s per task versus "
-        f"{short_seconds:.1f}s without the suffix"
+def test_parallel_units_use_isolated_refs_and_converge_one_candidate(tmp_path: Path) -> None:
+    def planner(_: object) -> dict:
+        return {
+            "units": [
+                {
+                    "id": "left",
+                    "objective": "write left",
+                    "claims": ["repo:src/left.txt"],
+                    "provides": [],
+                    "relies_on": [],
+                    "depends_on": [],
+                    "checks": [],
+                },
+                {
+                    "id": "right",
+                    "objective": "write right",
+                    "claims": ["repo:src/right.txt"],
+                    "provides": [],
+                    "relies_on": [],
+                    "depends_on": [],
+                    "checks": [],
+                },
+            ]
+        }
+
+    app = repository(tmp_path / "repo", planner=planner)
+    app.change_open(
+        "parallel",
+        intent="write two independent files",
+        supplier="user:test",
+        paths=["src/left.txt", "src/right.txt"],
+        operation_id="open-parallel",
     )
-
-
-def test_racing_landings_rebuild_and_recover_without_manual_retry(tmp_path: Path) -> None:
-    repo = _repository(tmp_path / "repo")
-    first = _begin(repo, "first")
-    second = _begin(repo, "second")
-    _implement(first, "src/first.txt", "first\n")
-    marker = tmp_path / "landed-second"
-    (second / "src" / "second.txt").write_text("second\n")
-    check = repo / "checks" / "move.sh"
-    check.parent.mkdir()
-    check.write_text(
-        "#!/bin/sh\n"
-        f"[ -f '{marker}' ] && exit 0\n"
-        f"touch '{marker}'\n"
-        f"cd '{repo}' && {CORE_COMMAND} task finish second >/dev/null\n"
-    )
-    check.chmod(0o755)
-    _git(second, "add", "-A")
-    _git(second, "commit", "-qm", "second change")
-    _git(repo, "add", "-A")
-    _git(repo, "commit", "-qm", "add check")
-
-    code, payload = _invariant(
-        repo, "task", "finish", "first", "--check", "command:checks/move.sh"
-    )
-    assert code == 0, payload
-    assert payload["result"]["task"]["stage"] == "completed"
-    assert marker.exists()
-    assert _git(repo, "show", "main:src/second.txt") == "second"
-    assert _git(repo, "show", "main:src/first.txt") == "first"
-
-
-def test_parallel_disjoint_finishes_converge_without_lost_work(tmp_path: Path) -> None:
-    repo = _repository(tmp_path / "repo")
-    tasks = [f"parallel-{index}" for index in range(6)]
-    for task in tasks:
-        worktree = _begin(repo, task)
-        _implement(worktree, f"src/{task}.txt", f"{task}\n")
-
-    processes = [
-        subprocess.Popen(
-            [*CORE, "--format", "json", "task", "finish", task],
-            cwd=repo,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
+    app.change_recommend("parallel", operation_id="recommend-parallel")
+    left_attempt, left = begin(app, "parallel", "left")
+    right_attempt, right = begin(app, "parallel", "right")
+    assert left != right
+    implement(left, "src/left.txt", "left\n")
+    implement(right, "src/right.txt", "right\n")
+    for attempt in (left_attempt, right_attempt):
+        app.work_submit(
+            "parallel",
+            attempt_id=attempt,
+            actor=f"agent:test/{attempt}",
+            operation_id=f"submit-{attempt}",
         )
-        for task in tasks
-    ]
-    results = [process.communicate() for process in processes]
-    payloads = [json.loads(stdout) for stdout, _ in results]
-    assert all(process.returncode == 0 for process in processes), json.dumps(
-        payloads, indent=2
-    )
-    assert all(payload["result"]["task"]["stage"] == "completed" for payload in payloads)
-    assert all(_git(repo, "show", f"main:src/{task}.txt") == task for task in tasks)
-    code, payload = _invariant(repo, "state", "validate", "--landing")
-    assert code == 0, payload
+        token = grant(
+            app,
+            "parallel",
+            "candidate.converge",
+            attempt,
+            attempt=attempt,
+            operation=f"grant-converge-{attempt}",
+        )
+        first = app.candidate_converge(
+            "parallel",
+            attempt_id=attempt,
+            token=token,
+            operation_id=f"converge-{attempt}",
+        )
+        replay = app.candidate_converge(
+            "parallel",
+            attempt_id=attempt,
+            token=token,
+            operation_id=f"converge-{attempt}",
+        )
+        assert replay.result["ledger"] == first.result["ledger"]
+    state = app.change_inspect("parallel").result["change"]
+    assert set(state["candidate"]["units"]) == {"left", "right"}
+    assert git.run(
+        ["show", f"{state['candidate']['commit']}:src/left.txt"], cwd=app.repository.root
+    ).stdout == "left"
+    assert git.run(
+        ["show", f"{state['candidate']['commit']}:src/right.txt"], cwd=app.repository.root
+    ).stdout == "right"
+
+
+def test_out_of_claim_submission_is_rejected_but_retained(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    open_change(app, "bounded", paths=["src/allowed.txt"])
+    attempt, worktree = begin(app, "bounded")
+    implement(worktree, "src/outside.txt", "retained\n")
+    with pytest.raises(Blocked) as captured:
+        app.work_submit(
+            "bounded",
+            attempt_id=attempt,
+            actor="agent:test/worker",
+            operation_id="submit-outside",
+        )
+    assert captured.value.code == "parallel_claim_violation"
+    tip = git.resolve(app.repository.root, f"refs/invariant/work/bounded/change/{attempt}")
+    assert tip
+    assert git.run(["show", f"{tip}:src/outside.txt"], cwd=app.repository.root).stdout == "retained"
+
+
+def test_concurrent_landings_move_target_at_most_once(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    prepared: list[tuple[str, str]] = []
+    for change_id in ("first", "second"):
+        open_change(app, change_id)
+        attempt, worktree = begin(app, change_id)
+        implement(worktree, f"src/{change_id}.txt", f"{change_id}\n")
+        app.work_submit(
+            change_id,
+            attempt_id=attempt,
+            actor="agent:test/worker",
+            operation_id=f"submit-{change_id}",
+        )
+        token = grant(
+            app,
+            change_id,
+            "candidate.converge",
+            attempt,
+            attempt=attempt,
+            operation=f"grant-converge-{change_id}",
+        )
+        app.candidate_converge(
+            change_id,
+            attempt_id=attempt,
+            token=token,
+            operation_id=f"converge-{change_id}",
+        )
+        app.candidate_evidence(
+            change_id, tokens={}, operation_id=f"evidence-{change_id}"
+        )
+        candidate = app.change_inspect(change_id).result["change"]["candidate"]
+        prepared.append(
+            (
+                change_id,
+                grant(
+                    app,
+                    change_id,
+                    "integration.land",
+                    candidate["tree"],
+                    operation=f"grant-land-{change_id}",
+                ),
+            )
+        )
+
+    def land(item: tuple[str, str]) -> str:
+        change_id, token = item
+        try:
+            app.integration_land(
+                change_id, token=token, operation_id=f"land-{change_id}"
+            )
+            return "landed"
+        except Blocked:
+            return "blocked"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(land, prepared))
+    assert outcomes.count("landed") == 1
+    assert outcomes.count("blocked") == 1
+
+
+def test_landing_attestation_binds_intent_plan_units_and_parent(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    open_change(app, "attested")
+    attempt, worktree = begin(app, "attested")
+    implement(worktree, "src/attested.txt", "attested\n")
+    finish(app, "attested", attempt)
+    message = git.run(["show", "-s", "--format=%B", "main"], cwd=app.repository.root).stdout
+    assert "Invariant-Protocol: 2" in message
+    assert "Invariant-Intent: " in message
+    assert "Invariant-Plan: " in message
+    assert "Invariant-Unit: change " in message
+    assert "Invariant-Landing-Parent: " in message
+    assert app.state_validate().result["valid"] is True

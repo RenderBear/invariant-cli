@@ -1,125 +1,277 @@
+"""Closed protocol-two values shared by every Invariant surface.
+
+Open prose is deliberately absent from the capability vocabulary. The types in
+this module are the mechanical boundary between supplied intent, semantic
+resolution, and execution.
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
+from hashlib import sha256
+import json
 import re
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from invariant.errors import UsageError
 
 
-class TaskStage(StrEnum):
-    BRIEFED = "briefed"
-    BRIEFING = "briefing"
-    AWAITING_BRANCH = "awaiting-branch"
-    IMPLEMENTING = "implementing"
-    IMPLEMENTING_UNBORN = "implementing-unborn"
-    AWAITING_REVIEW = "awaiting-review"
-    AWAITING_LANDING = "awaiting-landing"
-    CLEANUP_REQUIRED = "cleanup-required"
-    COMPLETED = "completed"
-
-    @classmethod
-    def parse(cls, value: object, *, default: "TaskStage | None" = None) -> "TaskStage":
-        if (value is None or value == "") and default is not None:
-            return default
-        try:
-            return cls(str(value))
-        except ValueError:
-            raise UsageError(f"unknown task stage '{value}'") from None
+PROTOCOL_VERSION = 2
+FULL_DIGEST = re.compile(r"[0-9a-f]{64}")
+OBJECT_ID = re.compile(r"[0-9a-f]{40,64}")
+STABLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
 
 
-class CommandOutcome(StrEnum):
+def canonical_json(value: Any) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def digest(value: Any) -> str:
+    return sha256(canonical_json(value).encode("utf-8")).hexdigest()
+
+
+def require_digest(value: object, label: str) -> str:
+    if not isinstance(value, str) or not FULL_DIGEST.fullmatch(value):
+        raise UsageError(f"{label} must be a full SHA-256 digest")
+    return value
+
+
+def require_id(value: object, label: str) -> str:
+    if not isinstance(value, str) or not STABLE_ID.fullmatch(value):
+        raise UsageError(f"{label} must be a stable identifier")
+    return value
+
+
+class Outcome(StrEnum):
     COMPLETED = "completed"
     READY = "ready"
     NEEDS_INPUT = "needs_input"
-    AWAITING_APPROVAL = "awaiting_approval"
+    DENIED = "denied"
+    STALE = "stale"
     BLOCKED = "blocked"
     FAILED = "failed"
 
 
-class Reach(StrEnum):
-    LOCAL = "local"
-    BOUNDED = "bounded"
-    OPEN = "open"
-    GATED = "gated"
+class ChangeStage(StrEnum):
+    OPENED = "opened"
+    RECOMMENDING = "recommending"
+    READY = "ready"
+    EXECUTING = "executing"
+    CONVERGING = "converging"
+    EVIDENCING = "evidencing"
+    AWAITING_ACTION = "awaiting-action"
+    READY_TO_LAND = "ready-to-land"
+    CLEANUP_REQUIRED = "cleanup-required"
+    COMPLETED = "completed"
+    INVALIDATED = "invalidated"
+
+
+class CapabilityClass(StrEnum):
+    RESOLUTION = "resolution"
+    EXECUTION = "execution"
+
+
+class CapabilityName(StrEnum):
+    INTENT_RESOLVE = "intent.resolve"
+    WORKTREE_CREATE = "worktree.create"
+    WORKTREE_WRITE = "worktree.write"
+    VERIFICATION_RUN = "verification.run"
+    CANDIDATE_CONVERGE = "candidate.converge"
+    INTEGRATION_LAND = "integration.land"
+    REMOTE_PUBLISH = "remote.publish"
+    CHANGE_INVALIDATE = "change.invalidate"
+    WORK_DISCARD = "work.discard"
 
     @property
-    def needs_explicit_authority(self) -> bool:
-        return self in {Reach.OPEN, Reach.GATED}
+    def capability_class(self) -> CapabilityClass:
+        if self is CapabilityName.INTENT_RESOLVE:
+            return CapabilityClass.RESOLUTION
+        return CapabilityClass.EXECUTION
 
 
-class BoundaryKind(StrEnum):
-    UNRESOLVED = "unresolved"
-    NO_RECORD = "no-record"
-    RECORDED = "recorded"
-    AUDIT = "audit"
+class DecisionState(StrEnum):
+    GRANTED = "granted"
+    DENIED = "denied"
+    NEEDS_AUTHORITY = "needs-authority"
+    STALE = "stale"
+
+
+class EnforcementPosture(StrEnum):
+    MANAGED = "managed"
+    ADVISORY = "advisory"
+    NOT_APPLICABLE = "not-applicable"
+
+
+class ActionKind(StrEnum):
+    RECOMMEND_WORK = "recommend-work"
+    RESOLVE_INTENT = "resolve-intent"
+    REVIEW_SEMANTICS = "review-semantics"
+    REVIEW_INDEPENDENT = "review-independent"
+    ACCEPT_GOVERNANCE = "accept-governance"
+    SUPPLY_INTENT = "supply-intent"
+
+
+class DirectiveKind(StrEnum):
+    DENY_CAPABILITY = "deny-capability"
+    REQUIRE_RESOLUTION = "require-resolution"
+    REQUIRE_REVIEW = "require-review"
+    REQUIRE_VERIFIER = "require-verifier"
+    SERIALIZE = "serialize"
+    LIMIT_PARALLELISM = "limit-parallelism"
+    REQUIRE_CONTAINMENT = "require-containment"
+
+
+class ReviewMode(StrEnum):
+    ATTRIBUTABLE = "attributable"
+    INDEPENDENT = "independent"
+
+
+class ReviewVerdict(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"
+    UNCERTAIN = "uncertain"
+
+
+class EventKind(StrEnum):
+    CHANGE_OPENED = "change.opened"
+    RECOMMENDATION_REQUESTED = "recommendation.requested"
+    RECOMMENDATION_RECORDED = "recommendation.recorded"
+    RECOMMENDATION_REPLACED = "recommendation.replaced"
+    ACTION_OPENED = "action.opened"
+    ACTION_RESPONDED = "action.responded"
+    DECISION_RECORDED = "decision.recorded"
+    GRANT_ISSUED = "grant.issued"
+    GRANT_REVOKED = "grant.revoked"
+    GRANT_CONSUMED = "grant.consumed"
+    ATTEMPT_CREATED = "attempt.created"
+    ATTEMPT_SUBMITTED = "attempt.submitted"
+    ATTEMPT_REJECTED = "attempt.rejected"
+    UNIT_CONVERGED = "unit.converged"
+    CANDIDATE_CONSTRUCTED = "candidate.constructed"
+    CANDIDATE_EVIDENCED = "candidate.evidenced"
+    CANDIDATE_REVIEWED = "candidate.reviewed"
+    LANDING_STARTED = "landing.started"
+    LANDING_COMPLETED = "landing.completed"
+    LANDING_RECONCILED = "landing.reconciled"
+    PUBLICATION_COMPLETED = "publication.completed"
+    PUBLICATION_FAILED = "publication.failed"
+    CHANGE_INVALIDATED = "change.invalidated"
+    WORK_DISCARDED = "work.discarded"
+
+
+AUTHORITY_LOCATOR = re.compile(
+    r"(?:user|policy|record|agent|harness|kernel|design):[^\s\r\n]+"
+)
+
+
+def require_authority_locator(value: object, label: str = "authority") -> str:
+    if not isinstance(value, str) or not AUTHORITY_LOCATOR.fullmatch(value):
+        raise UsageError(f"{label} must be an attributable authority locator")
+    return value
 
 
 @dataclass(frozen=True)
-class BoundaryDisposition:
-    kind: BoundaryKind
-    audit_id: str | None = None
+class Intent:
+    """One desired-state statement and the authority that supplied it."""
 
-    @classmethod
-    def parse(
-        cls, value: object, *, allow_unresolved: bool = True
-    ) -> "BoundaryDisposition":
-        if not isinstance(value, str):
-            raise UsageError("boundary disposition must be text")
-        if value == BoundaryKind.UNRESOLVED:
-            if not allow_unresolved:
-                raise UsageError("boundary disposition cannot remain unresolved")
-            return cls(BoundaryKind.UNRESOLVED)
-        if value == BoundaryKind.NO_RECORD:
-            return cls(BoundaryKind.NO_RECORD)
-        if value == BoundaryKind.RECORDED:
-            return cls(BoundaryKind.RECORDED)
-        if value.startswith("audit:"):
-            identifier = value.removeprefix("audit:")
-            if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]*", identifier):
-                return cls(BoundaryKind.AUDIT, identifier)
-        raise UsageError(
-            "boundary disposition must be unresolved, no-record, recorded, or audit:<id>"
+    statement: str
+    supplier: str
+    digest: str = field(init=False)
+
+    def __post_init__(self) -> None:
+        statement = self.statement.strip()
+        if not statement:
+            raise UsageError("intent statement must be non-empty")
+        object.__setattr__(self, "statement", statement)
+        require_authority_locator(self.supplier, "intent supplier")
+        object.__setattr__(
+            self,
+            "digest",
+            digest({"statement": statement, "supplier": self.supplier}),
         )
 
-    @property
-    def value(self) -> str:
-        return f"audit:{self.audit_id}" if self.kind == BoundaryKind.AUDIT else self.kind.value
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "statement": self.statement,
+            "supplier": self.supplier,
+            "digest": self.digest,
+        }
 
-    @property
-    def resolved(self) -> bool:
-        return self.kind != BoundaryKind.UNRESOLVED
 
-    def __str__(self) -> str:
-        return self.value
+def _coordinates(values: Sequence[str], prefix: str) -> tuple[str, ...]:
+    normalized: set[str] = set()
+    for value in values:
+        if not isinstance(value, str) or not value.strip():
+            raise UsageError(f"{prefix} scope contains an empty coordinate")
+        item = value.strip()
+        if prefix == "repo:":
+            item = item.removeprefix("repo:").strip("/")
+            if not item:
+                item = "."
+            if ".." in item.split("/"):
+                raise UsageError("repository paths must stay below the repository root")
+        else:
+            item = item.removeprefix(prefix)
+            require_id(item, f"{prefix} coordinate")
+        normalized.add(f"{prefix}{item}")
+    return tuple(sorted(normalized))
 
 
 @dataclass(frozen=True)
-class Evidence:
-    """One attributable observation with a stable identifier and open payload."""
-
-    identifier: str
-    kind: str
-    payload: Mapping[str, Any]
+class Scope:
+    paths: tuple[str, ...] = ()
+    interfaces: tuple[str, ...] = ()
+    domains: tuple[str, ...] = ()
+    contracts: tuple[str, ...] = ()
 
     @classmethod
-    def from_mapping(cls, value: Mapping[str, Any]) -> "Evidence":
-        identifier = value.get("evidence_id")
-        kind = value.get("kind")
-        if not isinstance(identifier, str) or not identifier:
-            raise UsageError("evidence requires a stable evidence_id")
-        if not isinstance(kind, str) or not kind:
-            raise UsageError("evidence requires a kind")
+    def create(
+        cls,
+        *,
+        paths: Sequence[str] = (),
+        interfaces: Sequence[str] = (),
+        domains: Sequence[str] = (),
+        contracts: Sequence[str] = (),
+    ) -> "Scope":
         return cls(
-            identifier=identifier,
-            kind=kind,
-            payload={
-                name: item
-                for name, item in value.items()
-                if name not in {"evidence_id", "kind"}
-            },
+            _coordinates(paths, "repo:"),
+            _coordinates(interfaces, "interface:"),
+            _coordinates(domains, "domain:"),
+            _coordinates(contracts, "contract:"),
         )
 
-    def as_dict(self) -> dict[str, Any]:
-        return {"evidence_id": self.identifier, "kind": self.kind, **self.payload}
+    @property
+    def claims(self) -> tuple[str, ...]:
+        return self.paths + self.interfaces + self.domains + self.contracts
+
+    def as_dict(self) -> dict[str, list[str]]:
+        return {
+            "paths": list(self.paths),
+            "interfaces": list(self.interfaces),
+            "domains": list(self.domains),
+            "contracts": list(self.contracts),
+        }
+
+
+@dataclass(frozen=True)
+class ProtocolResult:
+    command: str
+    outcome: Outcome
+    result: Mapping[str, Any] = field(default_factory=dict)
+    diagnostics: tuple[Mapping[str, Any], ...] = ()
+
+    def envelope(self) -> dict[str, Any]:
+        status = "ok"
+        if self.outcome is Outcome.BLOCKED:
+            status = "blocked"
+        elif self.outcome is Outcome.FAILED:
+            status = "error"
+        return {
+            "protocol": PROTOCOL_VERSION,
+            "command": self.command,
+            "status": status,
+            "outcome": self.outcome.value,
+            "result": dict(self.result),
+            "diagnostics": [dict(item) for item in self.diagnostics],
+        }

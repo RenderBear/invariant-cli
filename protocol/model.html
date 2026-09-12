@@ -471,8 +471,8 @@
         <span>Audience: engineering · security · operations · leadership</span>
         <span>Revision: September 2026</span>
       </p>
-      <h1>Invariant: accepted meaning, grounded evidence, managed changes</h1>
-      <p class="scope">A human-facing account of how Invariant gives coding agents room to work while preserving repository decisions and verifying the exact Git snapshot that will land.</p>
+      <h1>Invariant: a protocol for governed agentic work</h1>
+      <p class="scope">The governance layer is a semantic kernel plus a Git-grounded lifecycle: accepted intent determines what may be resolved, and exact capabilities determine what may execute and land.</p>
 
       <nav class="toc" aria-label="Table of contents">
         <span class="label">Contents</span>
@@ -480,9 +480,9 @@
           <li><a href="#promise">The promise</a></li>
           <li><a href="#objects">Three public objects</a></li>
           <li><a href="#authority">Evidence and authority</a></li>
-          <li><a href="#lifecycle">The task lifecycle</a></li>
+          <li><a href="#lifecycle">The change lifecycle</a></li>
           <li><a href="#decision">The semantic decision</a></li>
-          <li><a href="#parallel">Parallel tasks</a></li>
+          <li><a href="#parallel">Parallel units</a></li>
           <li><a href="#guarantees">Guarantees retained</a></li>
           <li><a href="#machinery">Where the machinery goes</a></li>
           <li><a href="#documents">Document hierarchy</a></li>
@@ -492,7 +492,7 @@
 
     <section id="promise" aria-labelledby="promise-title">
       <h2 id="promise-title">1. The promise</h2>
-      <p>Invariant is a repository-native memory and gate for agent-driven change. The memory preserves decisions that future work must know. The gate prevents a proposed change from landing until the relevant decisions have been considered and the exact prospective Git tree has been checked.</p>
+      <p>Invariant is a protocol for constructing a repository governance layer. Its semantic kernel binds supplied intent, accepted meaning, and closed consequences. Its Git-grounded lifecycle makes those consequences durable through ledgers, scoped capabilities, isolated work, exact-tree evidence, and atomic landing.</p>
 
       <aside class="callout">
         <span class="label">Design rule</span>
@@ -501,7 +501,7 @@
 
       <p><strong>The operating philosophy:</strong> free-form agent reasoning for accuracy; deterministic, inspectable state where reasoning becomes consequential; near-zero user ceremony for routine work; and hard authority boundaries when an accepted promise is genuinely at risk.</p>
 
-      <p>Invariant is deliberately narrow. It is not a general knowledge graph, policy language, or workflow framework. A local host may display repository folders, session files, and lifecycle state, but that personal workspace is not repository memory or authority. Consequential work still enters the same Git-bound lifecycle.</p>
+      <p>Invariant is deliberately narrow. It is not a general knowledge graph, policy language, agent harness, or workflow framework. Hosts may present the protocol in different ways, but their process and transcript state is not repository memory or authority. Consequential work still enters the same Git-bound lifecycle.</p>
     </section>
 
     <section id="objects" aria-labelledby="objects-title">
@@ -539,7 +539,7 @@
             <dt>Power</dt>
             <dd>May produce Evidence and propose Record changes.</dd>
             <dt>Form</dt>
-            <dd>Strict internal state around one goal and Git ground.</dd>
+            <dd>Strict internal state around supplied intent and Git ground.</dd>
           </dl>
         </article>
       </div>
@@ -632,8 +632,9 @@
     </section>
 
     <section id="authority" aria-labelledby="authority-title">
-      <h2 id="authority-title">3. Evidence and authority</h2>
-      <p>Invariant expects meaning to be discovered from many places: source code, tests, history, production behavior, standards, searches, security guidance, and established best practices. Those inputs have different reliability, but they share one standing when first introduced: Evidence.</p>
+      <h2 id="authority-title">3. Execution and authority</h2>
+      <p>Execution and authority are independent. Execution is the ability to cause an operational consequence. Authority is the attributable right to supply intent or resolve one bounded semantic question. A powerful harness does not gain authority from its tools, and an intent supplier does not gain repository access from its decision.</p>
+      <p>Authority itself has two forms. <strong>Intent supply</strong> states the desired outcome or accepted promise. A <strong>resolution capability</strong> allows one actor to answer one exact action when accepted intent is insufficient. The capability may be passed to a model when policy delegates it, but it grants no write, shell, ref, network, or publication access.</p>
 
       <div class="planes" aria-label="External meaning adoption planes">
         <div class="plane">
@@ -651,7 +652,7 @@
         <div class="plane">
           <div class="plane-name">Decision</div>
           <div class="plane-body">
-            <p>An agent or human acts only within configured authority and the current request. Contradiction or insufficient authority becomes one explicit Change requirement.</p>
+            <p>Invariant binds the supplied intent. Any unresolved question becomes an exact action; only a matching resolution capability or fresh user intent can answer it.</p>
           </div>
         </div>
         <div class="plane">
@@ -663,10 +664,9 @@
       </div>
 
       <aside class="callout">
-        <span class="label">Delegated establishment</span>
-        <p>When repository policy grants agent authority, an audit worker's <code>needs-authority</code> finding goes to a fresh secondary worker before Invariant concludes that no Record is ready. The reviewer can resolve only the referred findings and cannot impersonate a human for policy or genuinely user-owned choices.</p>
-        <p>When the user holds authority, establishment stays in the conversation that requested it. Invariant may prepare the exact proposal without granting it authority, shows the findings and projected Record changes there, and waits for an explicit <code>:record</code>. Discussion can continue for as long as needed; only that acceptance binds a <code>user:</code> review and permits landing.</p>
-        <p>A later establishment conversation never resumes saved work silently. It shows when the attempt was last saved, explains whether its captured Git ground and mechanics are still current, and asks whether to continue it or start fresh.</p>
+        <span class="label">Delegated resolution</span>
+        <p>A model receives no standing “agent authority.” When policy permits delegation, the kernel may issue <code>intent.resolve</code> for one action, actor, intent digest, response schema, and causal state. The validated response consumes that capability. Policy changes and wider intent always return to direct <code>user:</code> supply.</p>
+        <p>Execution capabilities are a separate class. A resolution token cannot create a worktree or land a commit; an execution token cannot answer a semantic action.</p>
       </aside>
 
       <h3>Minimal envelopes, open meaning</h3>
@@ -675,16 +675,18 @@
       <div class="cards">
         <article class="card">
           <h4>Record envelope</h4>
-          <pre><code>record:
-  id: processor-source-ownership
-  body: docs/architecture.md#source-ownership
-  accepted_by: user:task:import-processor#turn-3
+          <pre><code>version: 2
+id: processor-source-ownership
+document: architecture:docs/architecture.md#source-ownership
+status: active
+authority: user:alice
   applies_to: [repo:services/processor]
-  supported_by: [evidence:audit-20260907]
   revisit_on: [repo:.gitmodules]
   verifies: [test:checks/source-ownership.sh]
-  supersedes: [processor-external-ownership]
-  facets: {confidence: accepted}</code></pre>
+directives:
+  - id: review-ownership
+    kind: require-review
+    mode: independent</code></pre>
         </article>
         <article class="card">
           <h4>Evidence envelope</h4>
@@ -702,15 +704,16 @@
         </article>
         <article class="card">
           <h4>Change envelope</h4>
-          <pre><code>task:
+          <pre><code>change:
   id: restore-processor
-  goal: Restore work after restart.
-  base: commit:8d2f...
-  state: awaiting-decision
-  records: [record:source-ownership]
-  evidence: [evidence:candidate-40ae]
-  requirements:
-    - Decide whether ownership meaning changes.</code></pre>
+  intent:
+    statement: Restore work after restart.
+    supplier: user:alice
+    digest: 91c2...
+  base: 8d2f...
+  stage: awaiting-action
+  candidate: {tree: 40ae...}
+  actions: [review-40ae]</code></pre>
         </article>
       </div>
     </section>
@@ -725,7 +728,7 @@
             <article class="node">
               <span class="node-kicker">1</span>
               <h3>Open</h3>
-              <p>Capture goal and integration ground.</p>
+              <p>Capture supplied intent and integration ground.</p>
             </article>
             <article class="node">
               <span class="node-kicker">2</span>
@@ -735,7 +738,7 @@
             <article class="node">
               <span class="node-kicker">3</span>
               <h3>Isolate</h3>
-              <p>Create a linked worktree and generated branch.</p>
+              <p>Create a durable work ref and linked worktree.</p>
             </article>
             <article class="node">
               <span class="node-kicker">4</span>
@@ -957,12 +960,12 @@
               <td>Candidate-bound semantic and executable observations.</td>
             </tr>
             <tr>
-              <td>Candidate, assessment, receipt, action</td>
+              <td>Candidate, ledger, grant, action</td>
               <td>Change internals</td>
               <td>Typed persistence, suspension, resumption, and exact-tree bindings.</td>
             </tr>
             <tr>
-              <td>Plan and reservation</td>
+              <td>Recommendation and frontier</td>
               <td>Change coordination</td>
               <td>Derived or disposable mechanics for dependency order, ownership, and liveness.</td>
             </tr>
@@ -972,9 +975,9 @@
               <td>One state machine should derive these views rather than storing competing truths.</td>
             </tr>
             <tr>
-              <td>Project registration and session files</td>
-              <td>Personal workspace</td>
-              <td>Host-local navigation and retained provider context; browser display is read-only and never repository authority or landing evidence.</td>
+              <td>Harness process and transcript</td>
+              <td>Disposable host state</td>
+              <td>Useful for execution and presentation; never repository authority or landing evidence.</td>
             </tr>
           </tbody>
         </table>

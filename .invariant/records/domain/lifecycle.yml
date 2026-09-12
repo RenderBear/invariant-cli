@@ -1,8 +1,13 @@
-version: 1
+version: 2
 id: lifecycle
 responsibility: Owns resumable task progression through isolated work, prospective-tree construction,
   verification, atomic landing, and archival completion.
 authority: design:repo:docs/SPEC.md#lifecycle
 parent: null
-architecture: []
+scope:
+- repo:src/invariant/lifecycle
+interfaces:
+- interface:change-lifecycle
+architecture:
+- architecture:docs/SPEC.md#lifecycle
 contracts: []

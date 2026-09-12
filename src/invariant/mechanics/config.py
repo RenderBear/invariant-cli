@@ -1,7 +1,13 @@
+"""Protocol-two tracked policy.
+
+Authority is deliberately nested and separate from execution. Version-one
+documents are rejected; this repository does not carry compatibility readers.
+"""
+
 from __future__ import annotations
 
-import os
 from dataclasses import dataclass
+import os
 from pathlib import Path
 from typing import Any
 
@@ -14,12 +20,59 @@ from invariant.mechanics.documents import dump_config_yaml, load_config_yaml, pa
 
 CONFIG_PATH = Path(".invariant/config.yml")
 SETTABLE_KEYS = {
-    "authority",
-    "execution",
+    "authority.intent.suppliers",
+    "authority.resolution.delegation",
+    "execution.transitions",
     "integration_branch",
-    "push_remote",
+    "publication",
+    "parallelism.maximum",
 }
-CODING_AGENT_CHOICES = {"claude", "codex"}
+
+
+@dataclass(frozen=True)
+class IntentAuthority:
+    suppliers: tuple[str, ...] = ("user",)
+
+    def permits(self, locator: str) -> bool:
+        return locator.partition(":")[0] in self.suppliers
+
+
+@dataclass(frozen=True)
+class ResolutionAuthority:
+    delegation: str = "agent"
+
+
+@dataclass(frozen=True)
+class AuthorityPolicy:
+    intent: IntentAuthority = IntentAuthority()
+    resolution: ResolutionAuthority = ResolutionAuthority()
+
+
+@dataclass(frozen=True)
+class ExecutionPolicy:
+    transitions: str = "auto"
+
+
+@dataclass(frozen=True)
+class ParallelismPolicy:
+    maximum: str | int = "auto"
+
+    def limit(self, host_capacity: int | None = None) -> int:
+        configured = 32 if self.maximum == "auto" else int(self.maximum)
+        return min(configured, host_capacity or configured)
+
+
+@dataclass(frozen=True)
+class Config:
+    authority: AuthorityPolicy
+    execution: ExecutionPolicy
+    integration_branch: str
+    integration_branch_setting: str
+    publication: str
+    parallelism: ParallelismPolicy
+    source: str
+    branch_source: str
+    unborn: bool
 
 
 def initialized(repo: Path) -> bool:
@@ -27,63 +80,12 @@ def initialized(repo: Path) -> bool:
 
 
 def require_initialized(repo: Path) -> None:
-    if initialized(repo):
-        return
-    raise Blocked(
-        "Invariant: initialize this repository before running managed commands",
-        code="not_initialized",
-        lines=["STATUS: not initialized", "NEXT: invariant init"],
-    )
-
-
-@dataclass(frozen=True)
-class AdapterOptions:
-    values: tuple[tuple[str, bool], ...] = ()
-
-    @property
-    def enabled(self) -> tuple[str, ...]:
-        return tuple(name for name, active in self.values if active)
-
-    def is_enabled(self, name: str) -> bool:
-        return any(candidate == name and active for candidate, active in self.values)
-
-    def as_dict(self) -> dict[str, str]:
-        return {name: "on" if active else "off" for name, active in self.values}
-
-
-@dataclass(frozen=True)
-class VerifierRunner:
-    name: str
-    command: tuple[str, ...]
-    cwd: str = "."
-    cache: str = "never"
-    timeout: int = 0
-
-
-DEFAULT_VERIFIER_TIMEOUT = 300
-
-
-@dataclass(frozen=True)
-class VerificationOptions:
-    runners: tuple[VerifierRunner, ...] = ()
-    timeout: int = DEFAULT_VERIFIER_TIMEOUT
-
-    def named(self, name: str) -> VerifierRunner | None:
-        return next((runner for runner in self.runners if runner.name == name), None)
-
-
-@dataclass(frozen=True)
-class Config:
-    authority: str
-    execution: str
-    integration_branch: str
-    integration_branch_setting: str
-    push_remote: str
-    source: str
-    branch_source: str
-    unborn: bool
-    adapters: AdapterOptions
-    verification: VerificationOptions
+    if not initialized(repo):
+        raise Blocked(
+            "Invariant: initialize this repository before running governed commands",
+            code="not_initialized",
+            lines=["STATUS: not initialized", "NEXT: invariant init"],
+        )
 
 
 def _current(repo: Path) -> tuple[str, str]:
@@ -99,6 +101,17 @@ def _current(repo: Path) -> tuple[str, str]:
     return branch, "current"
 
 
+def _mapping(value: object, label: str, allowed: set[str]) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise InvariantError(f"Invariant: {label} must be a mapping", code="invalid_policy")
+    unknown = sorted(set(value) - allowed)
+    if unknown:
+        raise InvariantError(
+            f"Invariant: {label} has unknown field '{unknown[0]}'", code="invalid_policy"
+        )
+    return value
+
+
 def _from_raw(
     repo: Path,
     raw: Any,
@@ -107,125 +120,127 @@ def _from_raw(
     fallback_branch: str,
     fallback_source: str,
 ) -> Config:
-    if not isinstance(raw, dict) or raw.get("version") != 1:
-        raise InvariantError("Invariant: .invariant/config.yml must declare version: 1")
+    if not isinstance(raw, dict) or raw.get("version") != 2:
+        raise InvariantError(
+            "Invariant: .invariant/config.yml must declare version: 2",
+            code="invalid_policy",
+        )
     allowed = {
         "version",
         "authority",
         "execution",
         "integration_branch",
-        "push_remote",
-        "verification",
+        "publication",
+        "parallelism",
     }
     unknown = sorted(set(raw) - allowed)
     if unknown:
-        raise InvariantError(f"Invariant: .invariant/config.yml has unknown field '{unknown[0]}'")
-    authority = raw.get("authority", "agent")
-    if authority not in {"agent", "human"}:
         raise InvariantError(
-            f"Invariant: .invariant/config.yml has invalid authority '{authority}' (use agent or human)"
+            f"Invariant: .invariant/config.yml has unknown field '{unknown[0]}'",
+            code="invalid_policy",
         )
-    execution = raw.get("execution", "auto")
-    if execution not in {"auto", "assisted"}:
+
+    authority_raw = _mapping(raw.get("authority", {}), "authority", {"intent", "resolution"})
+    intent_raw = _mapping(
+        authority_raw.get("intent", {}), "authority.intent", {"suppliers"}
+    )
+    suppliers = intent_raw.get("suppliers", ["user"])
+    if (
+        not isinstance(suppliers, list)
+        or not suppliers
+        or any(item not in {"user", "policy"} for item in suppliers)
+    ):
         raise InvariantError(
-            f"Invariant: .invariant/config.yml has invalid execution '{execution}' (use auto or assisted)"
+            "Invariant: authority.intent.suppliers must be a non-empty list containing user and/or policy",
+            code="invalid_policy",
         )
-    push_remote = raw.get("push_remote", "off")
-    if push_remote not in {"on", "off"}:
+    intent = IntentAuthority(tuple(dict.fromkeys(suppliers)))
+
+    resolution_raw = _mapping(
+        authority_raw.get("resolution", {}),
+        "authority.resolution",
+        {"delegation"},
+    )
+    delegation = resolution_raw.get("delegation", "agent")
+    if delegation not in {"agent", "user"}:
         raise InvariantError(
-            f"Invariant: .invariant/config.yml has invalid push_remote '{push_remote}' (use on or off)"
+            "Invariant: authority.resolution.delegation must be agent or user",
+            code="invalid_policy",
         )
-    adapters = AdapterOptions()
-    verification_raw = raw.get("verification", {})
-    if not isinstance(verification_raw, dict):
-        raise InvariantError("Invariant: .invariant/config.yml verification must be a mapping")
-    verification_unknown = sorted(set(verification_raw) - {"runners", "timeout"})
-    if verification_unknown:
+    authority = AuthorityPolicy(intent, ResolutionAuthority(delegation))
+
+    execution_raw = _mapping(raw.get("execution", {}), "execution", {"transitions"})
+    transitions = execution_raw.get("transitions", "auto")
+    if transitions not in {"auto", "assisted"}:
         raise InvariantError(
-            f"Invariant: .invariant/config.yml has unknown verification field '{verification_unknown[0]}'"
+            "Invariant: execution.transitions must be auto or assisted",
+            code="invalid_policy",
         )
-    default_timeout = verification_raw.get("timeout", DEFAULT_VERIFIER_TIMEOUT)
-    if not isinstance(default_timeout, int) or isinstance(default_timeout, bool) or default_timeout <= 0:
+    execution = ExecutionPolicy(transitions)
+
+    publication = raw.get("publication", "off")
+    if publication not in {"on", "off"}:
         raise InvariantError(
-            "Invariant: verification timeout must be a positive integer number of seconds"
+            "Invariant: publication must be on or off", code="invalid_policy"
         )
-    runners_raw = verification_raw.get("runners", {})
-    if not isinstance(runners_raw, dict):
-        raise InvariantError("Invariant: verification.runners must be a mapping")
-    runners: list[VerifierRunner] = []
-    for name, runner_raw in sorted(runners_raw.items()):
-        if not isinstance(name, str) or not git.valid_id(name):
-            raise InvariantError(f"Invariant: invalid verifier runner name '{name}'")
-        if not isinstance(runner_raw, dict):
-            raise InvariantError(f"Invariant: verification runner '{name}' must be a mapping")
-        runner_unknown = sorted(set(runner_raw) - {"command", "cwd", "cache", "timeout"})
-        if runner_unknown:
-            raise InvariantError(
-                f"Invariant: verification runner '{name}' has unknown field '{runner_unknown[0]}'"
-            )
-        command = runner_raw.get("command")
-        if (
-            not isinstance(command, list)
-            or not command
-            or any(not isinstance(item, str) or not item for item in command)
-        ):
-            raise InvariantError(
-                f"Invariant: verification runner '{name}' command must be a non-empty string list"
-            )
-        cwd = runner_raw.get("cwd", ".")
-        if (
-            not isinstance(cwd, str)
-            or not cwd
-            or Path(cwd).is_absolute()
-            or ".." in Path(cwd).parts
-        ):
-            raise InvariantError(
-                f"Invariant: verification runner '{name}' cwd must stay inside the repository"
-            )
-        cache = runner_raw.get("cache", "never")
-        if cache not in {"never", "exact-tree"}:
-            raise InvariantError(
-                f"Invariant: verification runner '{name}' cache must be never or exact-tree"
-            )
-        timeout = runner_raw.get("timeout", 0)
-        if not isinstance(timeout, int) or isinstance(timeout, bool) or timeout < 0:
-            raise InvariantError(
-                f"Invariant: verification runner '{name}' timeout must be a non-negative integer"
-            )
-        runners.append(VerifierRunner(name, tuple(command), cwd, cache, timeout))
-    verification = VerificationOptions(tuple(runners), default_timeout)
+
+    parallelism_raw = _mapping(raw.get("parallelism", {}), "parallelism", {"maximum"})
+    maximum = parallelism_raw.get("maximum", "auto")
+    if maximum != "auto" and (
+        not isinstance(maximum, int)
+        or isinstance(maximum, bool)
+        or not 1 <= maximum <= 32
+    ):
+        raise InvariantError(
+            "Invariant: parallelism.maximum must be auto or an integer from 1 to 32",
+            code="invalid_policy",
+        )
+    parallelism = ParallelismPolicy(maximum)
+
     configured = raw.get("integration_branch", "auto")
     if not isinstance(configured, str) or not configured:
-        raise InvariantError("Invariant: integration_branch must be auto or a non-empty branch name")
+        raise InvariantError(
+            "Invariant: integration_branch must be auto or a non-empty branch name",
+            code="invalid_policy",
+        )
     if configured == "auto":
-        branch = fallback_branch
-        branch_source = fallback_source
+        branch, branch_source = fallback_branch, fallback_source
     else:
         if git.run(["check-ref-format", "--branch", configured], cwd=repo, check=False).returncode:
-            raise InvariantError(f"Invariant: invalid integration branch '{configured}'")
-        branch = configured
-        branch_source = "config"
-    return _finish(
-        repo,
+            raise InvariantError(
+                f"Invariant: invalid integration branch '{configured}'", code="invalid_policy"
+            )
+        branch, branch_source = configured, "config"
+
+    unborn = not git.branch_exists(repo, branch)
+    if unborn:
+        symbolic = git.current_branch(repo)
+        allowed_unborn = (symbolic == branch and git.resolve(repo, "HEAD") is None) or (
+            os.environ.get("INVARIANT_ALLOW_UNBORN") == "1"
+            and os.environ.get("INVARIANT_INTEGRATION_TARGET") == branch
+        )
+        if not allowed_unborn:
+            raise InvariantError(
+                f"Invariant: configured integration branch '{branch}' does not exist locally",
+                code="invalid_policy",
+            )
+    return Config(
         authority,
         execution,
         branch,
         configured,
-        push_remote,
+        publication,
+        parallelism,
         source,
         branch_source,
-        adapters,
-        verification,
+        unborn,
     )
 
 
 def resolve(repo: Path) -> Config:
-    config_path = repo / CONFIG_PATH
-    if not config_path.exists():
-        require_initialized(repo)
-    if not config_path.is_file():
-        raise InvariantError("Invariant: .invariant/config.yml is not a regular file")
-    raw = load_config_yaml(config_path)
+    require_initialized(repo)
+    path = repo / CONFIG_PATH
+    raw = load_config_yaml(path)
     branch, branch_source = _current(repo)
     return _from_raw(
         repo,
@@ -238,24 +253,20 @@ def resolve(repo: Path) -> Config:
 
 def resolve_at(repo: Path, ref: str, integration_branch: str) -> Config:
     if not git.resolve(repo, ref):
-        raise InvariantError(f"Invariant: configuration ground '{ref}' does not resolve")
+        raise InvariantError(
+            f"Invariant: configuration ground '{ref}' does not resolve", code="missing_object"
+        )
     result = git.run(["show", f"{ref}:{CONFIG_PATH.as_posix()}"], cwd=repo, check=False)
     if result.returncode:
         raise Blocked(
-            f"Invariant: initialization is not committed on integration branch "
-            f"'{integration_branch}'",
-            code="initialization_not_committed",
-            lines=[
-                "STATUS: initialization not committed",
-                "NEXT: commit the initialization, then rerun the command",
-            ],
+            f"Invariant: initialization is not committed on '{integration_branch}'",
+            code="not_initialized",
         )
     try:
         raw = parse_config_yaml(result.stdout)
     except yaml.YAMLError as exc:
         raise InvariantError(
-            f"Invariant: invalid YAML in {CONFIG_PATH.as_posix()} at {ref}: {exc}",
-            code="invalid_yaml",
+            f"Invariant: invalid configuration at {ref}: {exc}", code="invalid_policy"
         ) from exc
     return _from_raw(
         repo,
@@ -266,67 +277,91 @@ def resolve_at(repo: Path, ref: str, integration_branch: str) -> Config:
     )
 
 
-def initialize(
-    repo: Path,
+def default_document(
     *,
-    authority: str | None = None,
-    execution: str | None = None,
-    integration_branch: str | None = None,
-    push_remote: str | None = None,
-    overwrite: bool = False,
-) -> list[str]:
+    intent_suppliers: tuple[str, ...] = ("user",),
+    resolution_delegation: str = "agent",
+    execution_transitions: str = "auto",
+    integration_branch: str = "auto",
+    publication: str = "off",
+    parallelism_maximum: str | int = "auto",
+) -> dict[str, Any]:
+    return {
+        "version": 2,
+        "authority": {
+            "intent": {"suppliers": list(intent_suppliers)},
+            "resolution": {"delegation": resolution_delegation},
+        },
+        "execution": {"transitions": execution_transitions},
+        "integration_branch": integration_branch,
+        "publication": publication,
+        "parallelism": {"maximum": parallelism_maximum},
+    }
+
+
+def initialize(repo: Path, *, overwrite: bool = False, **values: Any) -> list[str]:
     path = repo / CONFIG_PATH
     if path.exists() and not overwrite:
-        raise InvariantError(f"Invariant: {CONFIG_PATH.as_posix()} already exists", code="config_exists")
-    branch_setting = integration_branch or "auto"
-    if branch_setting == "auto":
-        fallback_branch, fallback_source = _current(repo)
+        raise InvariantError(
+            f"Invariant: {CONFIG_PATH.as_posix()} already exists", code="config_exists"
+        )
+    document = default_document(**values)
+    fallback = document["integration_branch"]
+    if fallback == "auto":
+        fallback, branch_source = _current(repo)
     else:
-        fallback_branch, fallback_source = branch_setting, "config"
-    document: dict[str, Any] = {
-        "version": 1,
-        "authority": authority if authority is not None else "agent",
-        "execution": execution if execution is not None else "auto",
-        "integration_branch": branch_setting,
-        "push_remote": push_remote if push_remote is not None else "off",
-    }
+        branch_source = "config"
     _from_raw(
         repo,
         document,
         source=CONFIG_PATH.as_posix(),
-        fallback_branch=fallback_branch,
-        fallback_source=fallback_source,
+        fallback_branch=fallback,
+        fallback_source=branch_source,
     )
     dump_config_yaml(path, document)
+    exclude = git.common_dir(repo) / "info/exclude"
+    exclude.parent.mkdir(parents=True, exist_ok=True)
+    ignored = "/.invariant/runtime/"
+    current_excludes = exclude.read_text(encoding="utf-8") if exclude.exists() else ""
+    if ignored not in current_excludes.splitlines():
+        separator = "" if not current_excludes or current_excludes.endswith("\n") else "\n"
+        exclude.write_text(current_excludes + separator + ignored + "\n", encoding="utf-8")
     action = "replaced" if overwrite else "created"
     return [f"CONFIG: {action} {CONFIG_PATH.as_posix()}", *lines(resolve(repo))]
 
 
 def set_value(repo: Path, key: str, value: str) -> list[str]:
     if key not in SETTABLE_KEYS:
-        raise InvariantError(f"Invariant: configuration key '{key}' is not settable", code="invalid_config_key")
+        raise InvariantError(
+            f"Invariant: configuration key '{key}' is not settable",
+            code="invalid_config_key",
+        )
     path = repo / CONFIG_PATH
-    require_initialized(repo)
     current = resolve(repo)
     raw = load_config_yaml(path)
     if not isinstance(raw, dict):
-        raise InvariantError("Invariant: .invariant/config.yml must contain a mapping")
+        raise InvariantError("Invariant: configuration must be a mapping", code="invalid_policy")
     document = dict(raw)
-
-    if key in {"authority", "execution"}:
-        choices = {"authority": {"agent", "human"}, "execution": {"auto", "assisted"}}
-        if value not in choices[key]:
-            expected = " or ".join(sorted(choices[key]))
-            raise InvariantError(f"Invariant: {key} must be {expected}", code="invalid_config_value")
-        document[key] = value
+    if key == "authority.intent.suppliers":
+        document["authority"] = {
+            **document["authority"],
+            "intent": {"suppliers": [item.strip() for item in value.split(",") if item.strip()]},
+        }
+    elif key == "authority.resolution.delegation":
+        document["authority"] = {
+            **document["authority"],
+            "resolution": {"delegation": value},
+        }
+    elif key == "execution.transitions":
+        document["execution"] = {"transitions": value}
     elif key == "integration_branch":
-        if value != "auto" and git.run(["check-ref-format", "--branch", value], cwd=repo, check=False).returncode:
-            raise InvariantError(f"Invariant: invalid integration branch '{value}'", code="invalid_config_value")
         document[key] = value
-    elif key == "push_remote":
-        if value not in {"on", "off"}:
-            raise InvariantError("Invariant: push_remote must be on or off", code="invalid_config_value")
+    elif key == "publication":
         document[key] = value
+    else:
+        document["parallelism"] = {
+            "maximum": int(value) if value.isdigit() else value
+        }
     _from_raw(
         repo,
         document,
@@ -338,58 +373,16 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
     return [f"CONFIG: set {key}={value}", *lines(resolve(repo))]
 
 
-def _finish(
-    repo: Path,
-    authority: str,
-    execution: str,
-    branch: str,
-    branch_setting: str,
-    push_remote: str,
-    source: str,
-    branch_source: str,
-    adapters: AdapterOptions,
-    verification: VerificationOptions,
-) -> Config:
-    unborn = not git.branch_exists(repo, branch)
-    if unborn:
-        symbolic = git.current_branch(repo)
-        allowed_unborn = (
-            symbolic == branch and git.resolve(repo, "HEAD") is None
-        ) or (
-            os.environ.get("INVARIANT_ALLOW_UNBORN") == "1"
-            and os.environ.get("INVARIANT_INTEGRATION_TARGET") == branch
-        )
-        if not allowed_unborn:
-            raise InvariantError(f"Invariant: configured integration branch '{branch}' does not exist locally")
-    return Config(
-        authority,
-        execution,
-        branch,
-        branch_setting,
-        push_remote,
-        source,
-        branch_source,
-        unborn,
-        adapters,
-        verification,
-    )
-
-
-def lines(config: Config) -> list[str]:
-    output = [
-        "version: 1",
-        f"authority: {config.authority}",
-        f"execution: {config.execution}",
-        f"integration_branch: {config.integration_branch_setting}",
-        f"push_remote: {config.push_remote}",
-        f"source: {config.source}",
-        f"integration_branch_resolved: {config.integration_branch}",
-        f"branch_source: {config.branch_source}",
+def lines(value: Config) -> list[str]:
+    return [
+        "version: 2",
+        f"authority.intent.suppliers: {','.join(value.authority.intent.suppliers)}",
+        f"authority.resolution.delegation: {value.authority.resolution.delegation}",
+        f"execution.transitions: {value.execution.transitions}",
+        f"integration_branch: {value.integration_branch_setting}",
+        f"publication: {value.publication}",
+        f"parallelism.maximum: {value.parallelism.maximum}",
+        f"source: {value.source}",
+        f"integration_branch_resolved: {value.integration_branch}",
+        f"branch_source: {value.branch_source}",
     ]
-    if config.unborn:
-        output.append("integration_branch_unborn: true")
-    for runner in config.verification.runners:
-        output.append(
-            f"verification_runner: {runner.name} cwd={runner.cwd} cache={runner.cache}"
-        )
-    return output
