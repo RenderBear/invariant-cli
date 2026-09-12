@@ -4,12 +4,14 @@ from typing import Any, Mapping
 
 from invariant.errors import Blocked, InvariantError
 from invariant.gateway import CapabilityService
+from invariant.gateway.resolution import REVIEW_KINDS
 from invariant.governance import GovernanceStore, compile_obligations, select
 from invariant.ledger import Ledger, LedgerStore
 from invariant.ledger import handoff
 from invariant.mechanics import git
 from invariant.planning import RecommendationService
 from invariant.protocol import (
+    ActionKind,
     CapabilityName,
     EventKind,
     Intent,
@@ -147,6 +149,7 @@ class ChangeService:
         state = self._redacted(dict(ledger.state))
         state["ledger"] = ledger.head
         state["frontier"] = list(self.capabilities._frontier(ledger.state))
+        state["pending"] = self._pending(ledger.state)
         state["assurance"] = {
             "authorization": "evaluated",
             "execution_enforcement": "advisory",
@@ -156,6 +159,74 @@ class ChangeService:
 
     def handoff(self, change_id: str) -> dict[str, Any]:
         return handoff.create(self.store, change_id)
+
+    def pending(self, change_id: str) -> list[dict[str, Any]]:
+        """The ordered resolution list: reviews, then acceptance, then intent, then the rest."""
+
+        return self._pending(self.store.load(change_id).state)
+
+    _PENDING_ORDER = {
+        ActionKind.REVIEW_SEMANTICS.value: 0,
+        ActionKind.REVIEW_INDEPENDENT.value: 1,
+        ActionKind.ACCEPT_GOVERNANCE.value: 2,
+        ActionKind.SUPPLY_INTENT.value: 3,
+        ActionKind.RESOLVE_INTENT.value: 4,
+        ActionKind.RECOMMEND_WORK.value: 5,
+    }
+    _PENDING_TITLES = {
+        ActionKind.REVIEW_SEMANTICS.value: "Attributable review of the exact candidate",
+        ActionKind.REVIEW_INDEPENDENT.value: "Independent review of the exact candidate",
+        ActionKind.ACCEPT_GOVERNANCE.value: "Acceptance of the governance change",
+        ActionKind.SUPPLY_INTENT.value: "Direct user intent for this candidate",
+        ActionKind.RESOLVE_INTENT.value: "Resolution of one bound intent question",
+        ActionKind.RECOMMEND_WORK.value: "Work recommendation",
+    }
+
+    def _pending(self, state: Mapping[str, Any]) -> list[dict[str, Any]]:
+        delegation = self.repository.policy_at(
+            state["base"], state["target"]["branch"]
+        ).authority.resolution.delegation
+        candidate = state.get("candidate") or {}
+        governance_paths = [
+            str(path) for path in candidate.get("paths", [])
+            if str(path).removeprefix("repo:").startswith(".invariant/")
+        ]
+        items: list[dict[str, Any]] = []
+        for action in state.get("actions", {}).values():
+            if action.get("status") != "pending":
+                continue
+            kind = str(action.get("kind"))
+            if kind in REVIEW_KINDS:
+                resolver, response = delegation, "verdict"
+            elif kind == ActionKind.SUPPLY_INTENT.value:
+                resolver, response = "user", "resolution"
+            else:
+                resolver = str(action.get("resolver") or delegation)
+                response = "resolution"
+            brief = [f"Intent: {state['intent']['statement'].splitlines()[0][:120]}"]
+            if candidate:
+                brief.append(
+                    f"Candidate: {str(candidate.get('tree'))[:12]} touching "
+                    f"{len(candidate.get('paths', []))} paths"
+                )
+            if governance_paths and kind == ActionKind.ACCEPT_GOVERNANCE.value:
+                brief.append(f"Governance: {', '.join(governance_paths[:4])}")
+            items.append(
+                {
+                    "id": action["id"],
+                    "kind": kind,
+                    "resolver": resolver,
+                    "response": response,
+                    "title": self._PENDING_TITLES.get(kind, kind),
+                    "brief": brief,
+                    "for_capability": action.get("for_capability"),
+                    "bindings": action.get("bindings", {}),
+                }
+            )
+        items.sort(key=lambda item: (self._PENDING_ORDER.get(item["kind"], 9), item["id"]))
+        for index, item in enumerate(items, 1):
+            item["index"] = index
+        return items
 
     def resume(
         self,

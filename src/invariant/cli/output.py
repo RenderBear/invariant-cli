@@ -26,10 +26,7 @@ def _emit_initialize(result: OperationResult) -> None:
     print("│")
     print(f"├─ intent       {_line_value(policy, 'authority.intent.suppliers')}")
     print(f"├─ resolution   {_line_value(policy, 'authority.resolution.delegation')}")
-    print(
-        "├─ execution    parallel work · "
-        f"{_line_value(policy, 'execution.transitions')} transitions"
-    )
+    print("├─ execution    parallel agents")
     print("├─ lifecycle    Git-grounded")
     print(f"└─ policy       .invariant/config.yml @ {commit[:12]}")
 

@@ -8,8 +8,12 @@ import shutil
 
 import pytest
 
+import json
+
 from invariant.application import InvariantApplication
-from invariant.errors import Blocked
+from invariant.errors import Blocked, InvariantError
+from invariant.governance import GovernanceStore
+from invariant.harness.identity import HOST_TTY
 from invariant.mechanics import git
 from invariant.protocol import canonical_json
 
@@ -241,3 +245,122 @@ def test_post_landing_cleanup_does_not_change_attested_decisions(tmp_path: Path)
         operation_id="cleanup-cleaned",
     )
     assert app.state_validate().result["valid"] is True
+
+
+def _governed_seed(app: InvariantApplication) -> None:
+    root = app.repository.root
+    (root / "docs").mkdir()
+    (root / "docs/architecture.md").write_text("# A\n\n## Core {#core}\n\ntext\n", encoding="utf-8")
+    (root / "checks").mkdir()
+    (root / "checks/ok.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    (root / "checks/ok.sh").chmod(0o755)
+    (root / "schemas").mkdir()
+    (root / "schemas/c.json").write_text("{}\n", encoding="utf-8")
+    git.run(["add", "-A"], cwd=root)
+    git.run(["commit", "-qm", "governed material"], cwd=root)
+
+
+def _record_candidate(app: InvariantApplication, change_id: str, files: dict[str, str]) -> str:
+    open_change(app, change_id, paths=[".invariant/records"])
+    attempt, worktree = begin(app, change_id)
+    for relative, content in files.items():
+        implement(worktree, relative, content)
+    app.work_submit(change_id, attempt_id=attempt, actor="agent:test/worker", operation_id=f"submit-{change_id}")
+    token = grant(app, change_id, "candidate.converge", attempt, attempt=attempt, operation=f"grant-converge-{change_id}")
+    app.candidate_converge(change_id, attempt_id=attempt, token=token, operation_id=f"converge-{change_id}")
+    state = app.change_inspect(change_id).result["change"]
+    verifiers = {
+        locator: grant(app, change_id, "verification.run", locator, operation=f"grant-verify-{change_id}-{index}")
+        for index, locator in enumerate(
+            sorted({*app.governance_context(paths=[".invariant/records", *state["candidate"]["paths"]]).result["obligations"]["required_verifiers"]})
+        )
+    }
+    app.candidate_evidence(change_id, tokens=verifiers, operation_id=f"evidence-{change_id}")
+    return app.change_inspect(change_id).result["change"]["candidate"]["tree"]
+
+
+def _land_request(app: InvariantApplication, change_id: str, tree: str, suffix: str):
+    return app.capability_request(
+        change_id,
+        capability="integration.land",
+        actor="harness:test",
+        resource=tree,
+        operation_id=f"grant-land-{change_id}-{suffix}",
+    )
+
+
+def test_governance_landing_requires_acceptance_distinct_from_review(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    root = app.repository.root
+    _governed_seed(app)
+    baseline = {
+        ".invariant/records/domain/core.yml": json.dumps({"version": 1, "id": "core", "responsibility": "core", "scope": ["repo:src"], "architecture": ["architecture:docs/architecture.md#core"], "contracts": ["c.v1"]}),
+        ".invariant/records/contract/c.v1.yml": json.dumps({"version": 1, "id": "c.v1", "assertion": "c", "between": ["core"], "surfaces": ["repo:schemas/c.json"], "architecture": ["architecture:docs/architecture.md#core"], "verifies": ["command:checks/ok.sh"]}),
+    }
+    tree = _record_candidate(app, "baseline", baseline)
+    first = _land_request(app, "baseline", tree, "first")
+    assert first.outcome.value == "needs_input"
+    assert first.result["action"]["kind"] == "accept-governance"
+    resolver = InvariantApplication.bind(root, principal="agent:test/resolver")
+    token = resolver.capability_request("baseline", capability="intent.resolve", actor="agent:test/resolver", resource=first.result["action"]["id"], operation_id="grant-resolve-baseline").result["token"]
+    resolver.action_respond("baseline", first.result["action"]["id"], response={"bindings": first.result["action"]["bindings"], "resolution": "accepted", "summary": "ok"}, actor="agent:test/resolver", token=token, operation_id="accept-baseline")
+    landed = _land_request(app, "baseline", tree, "second")
+    app.integration_land("baseline", token=landed.result["token"], operation_id="land-baseline")
+    assert app.state_validate().result["valid"] is True
+    head = git.resolve(root, "main")
+    assert head is not None
+    authorities = {record.identifier: record.authority for record in GovernanceStore(root).load(head).records}
+    assert authorities == {"core": "agent:test/resolver", "c.v1": "agent:test/resolver"}
+
+    # A second record change now compiles an independent review. The review alone must not land.
+    tree = _record_candidate(app, "second", {".invariant/records/semantic/s.yml": json.dumps({"version": 1, "id": "s", "document": "architecture:docs/architecture.md#core", "status": "active", "applies_to": ["repo:src"]})})
+    state = app.change_inspect("second").result["change"]
+    assert [item["kind"] for item in state["pending"]] == ["review-independent"]
+    reviewer = InvariantApplication.bind(root, principal="agent:test/reviewer")
+    review = state["pending"][0]
+    token = reviewer.capability_request("second", capability="intent.resolve", actor="agent:test/reviewer", resource=review["id"], operation_id="grant-review-second").result["token"]
+    reviewer.action_respond("second", review["id"], response={"bindings": review["bindings"], "verdict": "accepted", "summary": "fine", "defects": []}, actor="agent:test/reviewer", token=token, operation_id="review-second")
+    reviewed = _land_request(app, "second", tree, "reviewed")
+    assert reviewed.outcome.value == "needs_input"
+    assert reviewed.result.get("token") is None
+    assert reviewed.result["action"]["kind"] == "accept-governance"
+    pending = app.change_pending("second").result["pending"]
+    assert [item["kind"] for item in pending] == ["accept-governance"]
+    # The reviewer, already attributed on this candidate, may still accept: it authored nothing.
+    token = reviewer.capability_request("second", capability="intent.resolve", actor="agent:test/reviewer", resource=pending[0]["id"], operation_id="grant-accept-second").result["token"]
+    reviewer.action_respond("second", pending[0]["id"], response={"bindings": pending[0]["bindings"], "resolution": "accepted", "summary": "ok"}, actor="agent:test/reviewer", token=token, operation_id="accept-second")
+    accepted = _land_request(app, "second", tree, "accepted")
+    app.integration_land("second", token=accepted.result["token"], operation_id="land-second")
+    assert app.state_validate().result["valid"] is True
+
+
+def test_user_accepted_record_requires_user_resolution_to_change(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    root = app.repository.root
+    _governed_seed(app)
+    tree = _record_candidate(app, "user-owned", {".invariant/records/domain/core.yml": json.dumps({"version": 1, "id": "core", "responsibility": "core", "scope": ["repo:src"], "architecture": ["architecture:docs/architecture.md#core"]})})
+    request = _land_request(app, "user-owned", tree, "first")
+    action = request.result["action"]
+    app.action_respond("user-owned", action["id"], response={"bindings": action["bindings"], "resolution": "accepted"}, actor="user:test", operation_id="accept-user-owned")
+    landed = _land_request(app, "user-owned", tree, "second")
+    app.integration_land("user-owned", token=landed.result["token"], operation_id="land-user-owned")
+    head = git.resolve(root, "main")
+    assert head is not None
+    assert GovernanceStore(root).load(head).records[0].authority == "user:test"
+
+    tree = _record_candidate(app, "agent-edit", {".invariant/records/domain/core.yml": json.dumps({"version": 1, "id": "core", "responsibility": "changed by an agent", "scope": ["repo:src"], "architecture": ["architecture:docs/architecture.md#core"]})})
+    request = _land_request(app, "agent-edit", tree, "first")
+    assert request.outcome.value == "needs_input"
+    assert request.result["action"]["resolver"] == "user"
+    resolver = InvariantApplication.bind(root, principal="agent:test/resolver")
+    refused = resolver.capability_request("agent-edit", capability="intent.resolve", actor="agent:test/resolver", resource=request.result["action"]["id"], operation_id="grant-resolve-agent-edit")
+    assert refused.outcome.value == "needs_input"
+    assert refused.result.get("token") is None
+
+
+def test_user_principal_requires_authenticated_transport(tmp_path: Path) -> None:
+    app = repository(tmp_path / "repo")
+    with pytest.raises(InvariantError) as captured:
+        InvariantApplication.bind(app.repository.root, principal="user:test", authentication="none")
+    assert captured.value.code == "unauthenticated_principal"
+    InvariantApplication.bind(app.repository.root, principal="user:test", authentication=HOST_TTY)

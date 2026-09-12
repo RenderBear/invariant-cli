@@ -9,8 +9,10 @@ from typing import Any
 
 from invariant.application import InvariantApplication
 from invariant.errors import InvariantError
+from invariant.gateway.resolution import REVIEW_KINDS
 from invariant.governance import GovernanceSelection, GovernanceStore, compile_obligations
 from invariant.harness import preferences
+from invariant.harness.identity import authenticate_user, refusal_lines
 from invariant.harness.providers import AgentProvider, invoke, invoke_change
 from invariant.mechanics import config, git
 from invariant.protocol import Outcome, canonical_json
@@ -18,6 +20,18 @@ from invariant.protocol import Outcome, canonical_json
 
 USER_PRINCIPAL = "user:cli"
 HARNESS_PRINCIPAL = "harness:cli"
+
+
+def _user(repo: Path) -> InvariantApplication:
+    """Bind direct user authority; only an authenticated interactive host may hold it."""
+
+    return InvariantApplication.bind(
+        repo, principal=USER_PRINCIPAL, authentication=authenticate_user(repo)
+    )
+
+
+def _harness(repo: Path) -> InvariantApplication:
+    return InvariantApplication.bind(repo, principal=HARNESS_PRINCIPAL)
 
 
 @dataclass(frozen=True)
@@ -75,7 +89,7 @@ def _governance_preview(repo: Path, state: dict[str, Any]) -> dict[str, Any] | N
                     "id": record.identifier,
                     "summary": describe(record),
                     "path": record.path,
-                    "authority": record.authority,
+                    "authority": "pending",
                 }
             )
             add_directives(record, "added")
@@ -89,7 +103,7 @@ def _governance_preview(repo: Path, state: dict[str, Any]) -> dict[str, Any] | N
                     "id": record.identifier,
                     "summary": describe(record),
                     "path": record.path,
-                    "authority": record.authority,
+                    "authority": prior.authority,
                 }
             )
             prior_directives = {
@@ -146,7 +160,7 @@ def _governance_preview(repo: Path, state: dict[str, Any]) -> dict[str, Any] | N
         "removed": removed,
         "records": records,
         "record_sources": [record.reference for record in affected],
-        "authorities": sorted({record["authority"] for record in records}),
+        "authorities": sorted({record["authority"] for record in records if record["authority"] != "pending"}),
         "directives": directive_changes,
         "consequences": obligations,
     }
@@ -280,12 +294,11 @@ def _preview_detail_lines(preview: dict[str, Any] | None) -> tuple[str, ...]:
 
 
 def settings(repo: Path) -> SurfaceResult:
-    application = InvariantApplication.bind(repo, principal=USER_PRINCIPAL)
+    application = _harness(repo)
     policy = application.repository.policy
     values = {
         "authority.intent.suppliers": ",".join(policy.authority.intent.suppliers),
         "authority.resolution.delegation": policy.authority.resolution.delegation,
-        "execution.transitions": policy.execution.transitions,
         "integration_branch": policy.integration_branch,
         "publication": policy.publication,
         "parallelism.maximum": str(policy.parallelism.maximum),
@@ -314,7 +327,7 @@ def set_value(repo: Path, key: str, value: str) -> SurfaceResult:
             {"key": key, "value": value, "scope": "clone"},
         )
 
-    user = InvariantApplication.bind(repo, principal=USER_PRINCIPAL)
+    user = _user(repo)
     target, base, _ = user.repository.integration()
     canonical, document, changed = config.updated_document(
         repo, base, target, key, value
@@ -522,7 +535,7 @@ def execute_agent_change(
     attempt_id = f"work-{suffix}"
     operation = f"chat-{suffix}"
     claims = paths or ["."]
-    user = InvariantApplication.bind(repo, principal=USER_PRINCIPAL)
+    user = _user(repo)
     user.change_open(
         change_id,
         intent=intent,
@@ -628,82 +641,45 @@ def execute_agent_change(
         operation_id=f"{operation}-evidence",
     )
     state = worker.store.load(change_id).state
-    pending_reviews = [
-        action
-        for action in state.get("actions", {}).values()
-        if action.get("status") == "pending"
-        and action.get("kind") in {"review-semantics", "review-independent"}
-    ]
-    for index, action in enumerate(pending_reviews):
-        _resolve_review(
-            repo,
-            provider,
-            worktree,
-            change_id,
-            action,
-            f"{operation}-review-{index}",
-            timeout=timeout,
-        )
-
-    state = worker.store.load(change_id).state
     candidate = state["candidate"]
     preview = _governance_preview(repo, state)
-    landing = InvariantApplication.bind(repo, principal=HARNESS_PRINCIPAL)
-    requested = landing.capability_request(
-        change_id,
-        capability="integration.land",
-        actor=HARNESS_PRINCIPAL,
-        resource=candidate["tree"],
-        operation_id=f"{operation}-request-land",
-    )
-    action = requested.result.get("action")
+    landing = _harness(repo)
     resolution: dict[str, Any] | None = None
-    if (
-        isinstance(action, dict)
-        and action.get("kind") == "accept-governance"
-        and action.get("resolver") == "secondary-agent"
-    ):
-        resolution = _resolve_governance(
-            repo,
-            provider,
-            worktree,
-            change_id,
-            action,
-            preview,
-            f"{operation}-governance-resolution",
-            timeout=timeout,
-        )
+    # Walk the resolution list. A secondary agent resolves item by item; anything assigned to
+    # the user returns the same list for the host to present.
+    for round_index in range(8):
+        items = landing.change_pending(change_id).result["pending"]
+        if any(item["resolver"] == "user" for item in items):
+            return _pending_result(
+                change_id, candidate["tree"], items, preview, execution.message
+            )
+        for item in items:
+            resolved = _resolve_item(
+                repo,
+                provider,
+                worktree,
+                change_id,
+                item,
+                preview,
+                f"{operation}-resolve-{round_index}-{item['index']}",
+                timeout=timeout,
+            )
+            if item["kind"] == "accept-governance":
+                resolution = resolved
         requested = landing.capability_request(
             change_id,
             capability="integration.land",
             actor=HARNESS_PRINCIPAL,
             resource=candidate["tree"],
-            operation_id=f"{operation}-request-land-resolved",
+            operation_id=f"{operation}-request-land-{round_index}",
         )
-        action = requested.result.get("action")
-    if isinstance(action, dict):
-        if preview is not None:
-            decision_lines = _decision_lines(preview)
-            decision_title = "Governance baseline ready"
-        else:
-            decision_lines = (
-                "This candidate changes accepted repository policy.",
-                "The policy change requires your direct authority and is bound to one Git tree.",
-                "",
-                "Type :accept to accept and land it.",
-            )
-            decision_title = "Policy decision required"
-        return SurfaceResult(
-            decision_lines,
-            {
-                "change": change_id,
-                "candidate": candidate["tree"],
-                "action": action,
-                "governance": preview,
-                "pending": True,
-                "message": execution.message,
-                "decision_title": decision_title,
-            },
+        if not isinstance(requested.result.get("action"), dict):
+            break
+    else:
+        raise InvariantError(
+            "Invariant: the resolution list did not converge",
+            code="authority_required",
+            data={"change": change_id},
         )
     token = requested.result.get("token")
     if not isinstance(token, str):
@@ -895,23 +871,105 @@ def _resolve_governance(
     return response
 
 
-def pending_details(repo: Path, change_id: str) -> SurfaceResult:
-    """Return the inspectable detail behind one pending human decision."""
+def _pending_lines(items: list[dict[str, Any]]) -> tuple[str, ...]:
+    lines: list[str] = []
+    for item in items:
+        lines.append(f"{item['index']}. {item['title']} · resolver: {item['resolver']}")
+        lines.extend(f"   {line}" for line in item["brief"])
+    if items:
+        lines.extend(
+            [
+                "",
+                "Type :resolve N accept|reject [note] to answer one item.",
+                "Type :accept to accept every remaining item and land.",
+                "Type :details to inspect the records, rules, and Git identity.",
+            ]
+        )
+    return tuple(lines)
 
-    application = InvariantApplication.bind(repo, principal=USER_PRINCIPAL)
-    state = application.store.load(change_id).state
-    action = next(
-        (
-            value
-            for value in state.get("actions", {}).values()
-            if value.get("status") == "pending"
-            and value.get("kind") in {"accept-governance", "supply-intent"}
-        ),
-        None,
+
+def _pending_result(
+    change_id: str,
+    candidate: str,
+    items: list[dict[str, Any]],
+    preview: dict[str, Any] | None,
+    message: str = "",
+) -> SurfaceResult:
+    if preview is not None:
+        decision_lines = (*_decision_lines(preview), "", *_pending_lines(items))
+        decision_title = "Governance decision required"
+    elif any(item["kind"] == "accept-governance" for item in items) and any(
+        str(item.get("for_capability")) == "integration.land" for item in items
+    ):
+        decision_lines = (
+            "This candidate changes accepted repository policy.",
+            "The policy change requires your direct authority and is bound to one Git tree.",
+            "",
+            *_pending_lines(items),
+        )
+        decision_title = "Policy decision required"
+    else:
+        decision_lines = _pending_lines(items)
+        decision_title = "Resolution required"
+    return SurfaceResult(
+        decision_lines,
+        {
+            "change": change_id,
+            "candidate": candidate,
+            "action": {"id": items[0]["id"], "kind": items[0]["kind"]} if items else None,
+            "items": items,
+            "governance": preview,
+            "pending": True,
+            "message": message,
+            "decision_title": decision_title,
+        },
     )
-    if not isinstance(action, dict):
+
+
+def _resolve_item(
+    repo: Path,
+    provider: AgentProvider,
+    worktree: Path,
+    change_id: str,
+    item: dict[str, Any],
+    preview: dict[str, Any] | None,
+    operation: str,
+    *,
+    timeout: int,
+) -> dict[str, Any] | None:
+    action = _harness(repo).store.load(change_id).state["actions"][item["id"]]
+    if item["kind"] in REVIEW_KINDS:
+        _resolve_review(repo, provider, worktree, change_id, action, operation, timeout=timeout)
+        return None
+    return _resolve_governance(
+        repo, provider, worktree, change_id, action, preview, operation, timeout=timeout
+    )
+
+
+def pending_list(repo: Path, change_id: str) -> SurfaceResult:
+    """The ordered list of what the user must resolve for one change."""
+
+    application = _harness(repo)
+    items = application.change_pending(change_id).result["pending"]
+    state = application.store.load(change_id).state
+    preview = _governance_preview(repo, state) if state.get("candidate") else None
+    if not items:
+        return SurfaceResult(
+            (f"CHANGE: {change_id}", f"STAGE: {state['stage']}", "PENDING: nothing"),
+            {"change": change_id, "items": [], "pending": False, "governance": preview},
+        )
+    return _pending_result(change_id, str(state["candidate"]["tree"]), items, preview)
+
+
+def pending_details(repo: Path, change_id: str) -> SurfaceResult:
+    """Return the inspectable detail behind the pending decisions of one change."""
+
+    application = _harness(repo)
+    state = application.store.load(change_id).state
+    items = application.change_pending(change_id).result["pending"]
+    if not items:
         raise InvariantError(
-            f"Invariant: change '{change_id}' has no pending human decision",
+            f"Invariant: change '{change_id}' has no pending decision",
             code="invalid_invocation",
         )
     preview = _governance_preview(repo, state)
@@ -928,65 +986,107 @@ def pending_details(repo: Path, change_id: str) -> SurfaceResult:
         lines = (
             f"CANDIDATE: {candidate.get('tree', '—')}",
             f"INTENT: {state.get('intent', {}).get('statement', '—')}",
-            "AUTHORITY: direct user",
         )
     return SurfaceResult(
-        lines,
-        {
-            "change": change_id,
-            "action": action,
-            "governance": preview,
-            "pending": True,
-        },
+        (*lines, "", *_pending_lines(items)),
+        {"change": change_id, "items": items, "governance": preview, "pending": True},
     )
 
 
-def accept_pending(repo: Path, change_id: str) -> SurfaceResult:
-    """Supply direct user acceptance for one exact pending governance candidate."""
+def resolve_pending(
+    repo: Path,
+    change_id: str,
+    index: int,
+    decision: str,
+    note: str = "",
+) -> SurfaceResult:
+    """Supply the user's answer to one item of the resolution list; land when nothing remains."""
 
-    user = InvariantApplication.bind(repo, principal=USER_PRINCIPAL)
-    state = user.store.load(change_id).state
-    action = next(
-        (
-            value
-            for value in state.get("actions", {}).values()
-            if value.get("status") == "pending"
-            and value.get("kind") in {"accept-governance", "supply-intent"}
-        ),
-        None,
-    )
-    if not isinstance(action, dict):
+    if decision not in {"accepted", "rejected"}:
         raise InvariantError(
-            f"Invariant: change '{change_id}' has no pending user acceptance",
+            "Invariant: a resolution is accepted or rejected", code="invalid_invocation"
+        )
+    user = _user(repo)
+    items = user.change_pending(change_id).result["pending"]
+    item = next((value for value in items if value["index"] == index), None)
+    if item is None:
+        raise InvariantError(
+            f"Invariant: change '{change_id}' has no pending item {index}",
             code="invalid_invocation",
         )
     suffix = uuid.uuid4().hex[:12]
+    response: dict[str, Any] = {"bindings": item["bindings"]}
+    if item["response"] == "verdict":
+        response.update(
+            {"verdict": decision, "summary": note or f"{decision} by the user", "defects": []}
+        )
+    else:
+        response.update({"resolution": decision, "summary": note or f"{decision} by the user"})
     user.action_respond(
         change_id,
-        str(action["id"]),
-        response={"bindings": action["bindings"], "resolution": "accepted"},
+        str(item["id"]),
+        response=response,
         actor=USER_PRINCIPAL,
-        operation_id=f"accept-{suffix}",
+        operation_id=f"resolve-{suffix}",
     )
-    state = user.store.load(change_id).state
+    if decision == "rejected":
+        return SurfaceResult(
+            (f"CHANGE: {change_id}", f"ITEM: {index} rejected", "STATUS: candidate retained"),
+            {"change": change_id, "pending": False, "rejected": True},
+        )
+    return _land_if_ready(repo, change_id, user, suffix)
+
+
+def _land_if_ready(
+    repo: Path, change_id: str, user: InvariantApplication, suffix: str
+) -> SurfaceResult:
+    landing = _harness(repo)
+    state = landing.store.load(change_id).state
     candidate = state["candidate"]
-    landing = InvariantApplication.bind(repo, principal=HARNESS_PRINCIPAL)
-    token = _grant(
-        landing,
+    requested = landing.capability_request(
         change_id,
-        "integration.land",
-        candidate["tree"],
-        operation_id=f"accept-{suffix}-grant-land",
+        capability="integration.land",
+        actor=HARNESS_PRINCIPAL,
+        resource=candidate["tree"],
+        operation_id=f"resolve-{suffix}-grant-land",
     )
+    token = requested.result.get("token")
+    if not isinstance(token, str):
+        items = landing.change_pending(change_id).result["pending"]
+        if items:
+            return _pending_result(
+                change_id, str(candidate["tree"]), items, _governance_preview(repo, state)
+            )
+        raise InvariantError(
+            "Invariant: exact candidate is not ready to land",
+            code="capability_required",
+            data=requested.result,
+        )
     landing.integration_land(
         change_id,
         token=token,
-        operation_id=f"accept-{suffix}-land",
+        operation_id=f"resolve-{suffix}-land",
     )
     completed = landing.store.load(change_id).state
     commit = str(completed["landing"]["commit"])
-    _cleanup(user, change_id, completed, f"accept-{suffix}")
+    _cleanup(user, change_id, completed, f"resolve-{suffix}")
     return SurfaceResult(
         (f"CHANGE: {change_id}", f"COMMIT: {commit}", "STATUS: landed"),
         {"change": change_id, "commit": commit, "pending": False},
     )
+
+
+def accept_pending(repo: Path, change_id: str) -> SurfaceResult:
+    """Accept every remaining item of the resolution list with direct user authority."""
+
+    result: SurfaceResult | None = None
+    for _ in range(16):
+        items = _harness(repo).change_pending(change_id).result["pending"]
+        if not items:
+            break
+        result = resolve_pending(repo, change_id, items[0]["index"], "accepted")
+        if not result.data.get("pending"):
+            return result
+    if result is None:
+        return _land_if_ready(repo, change_id, _user(repo), uuid.uuid4().hex[:12])
+    return result

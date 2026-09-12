@@ -181,7 +181,6 @@ def build_snapshot(repo: Path) -> dict[str, Any]:
             "intent": ",".join(policy.authority.intent.suppliers),
             "authority": ",".join(policy.authority.intent.suppliers),
             "resolution": policy.authority.resolution.delegation,
-            "execution": policy.execution.transitions,
             "parallelism": policy.parallelism.maximum,
         },
         "tasks": sorted(tasks, key=lambda item: item["id"]),

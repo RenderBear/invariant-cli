@@ -13,6 +13,7 @@ from mcp.types import ToolAnnotations
 from invariant import __version__
 from invariant.application import InvariantApplication, OperationResult
 from invariant.errors import InvariantError
+from invariant.harness.identity import UNAUTHENTICATED
 from invariant.protocol import Outcome, PROTOCOL_VERSION
 
 
@@ -59,7 +60,10 @@ def create_server(
     *,
     principal: str = "harness:mcp",
 ) -> MCPServer:
-    app = InvariantApplication.bind(repository, principal=principal)
+    # MCP is never an authenticated user transport; a user: principal is refused at bind time.
+    app = InvariantApplication.bind(
+        repository, principal=principal, authentication=UNAUTHENTICATED
+    )
     server = MCPServer(
         "invariant",
         title="Invariant",

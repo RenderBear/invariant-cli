@@ -109,6 +109,16 @@ The first implementation includes `uncontained`, which always reports `advisory`
 providers plug into the gateway behind a fixed interface. A harness assertion about its own sandbox
 is recorded as `harness:` provenance but does not by itself upgrade enforcement.
 
+A `user:` principal is a transport fact, not a caller assertion. `LedgerStore` refuses a `user:`
+principal unless the binding process supplies the `host-tty` authentication method, and every
+ledger event records the method its principal was bound under. The reference host derives the
+method in `harness/identity.py`: an interactive terminal on both stdin and stdout, a working
+directory outside any `.invariant/runtime/worktrees` checkout, and no `INVARIANT_AGENT_RUN` marker
+in the environment. Every provider process is started with that marker and without a terminal,
+and the MCP server binds with no authentication so a `user:` principal is refused there. In-process
+callers are the transport and can assert the method themselves; that is the process boundary the
+protocol names advisory.
+
 Grant tokens are bearer secrets. The service generates 256 random bits, returns the token exactly
 once, and stores only its SHA-256 digest in the ledger. Tokens never appear in text rendering, logs,
 commit messages, handoff capsules, or verification artifacts. A resumed harness revokes abandoned
@@ -135,6 +145,14 @@ ObligationSet
 
 Unknown closed fields and directive kinds are rejected. Open `relations` and `facets` are retained
 as data but never consulted by authorization or planning mechanics.
+
+Records carry no `authority` field; the loader rejects one as an unknown field. `Record.authority`
+is derived by `record_authorities`, one first-parent `git log` over `.invariant/records` at the
+selected ref that reads each record's most recent commit and its `Invariant-Authority` trailers:
+a direct `user:` acceptance wins, then a delegated `agent:` acceptance, otherwise `unattested`
+(a candidate, worker, or out-of-band commit). The compiler escalates `integration.land` resolution
+to `user` when a candidate's exact paths include a record whose derived authority is `user:`, so a
+shape the user accepted cannot be revised or retired under delegation.
 
 Record filenames equal their ids. IDs are unique per kind. Every locator in a closed record or
 directive field resolves against the exact selected tree: record locators name existing records,
@@ -422,6 +440,23 @@ The standard kinds are `recommend-work`, `resolve-intent`, `review-semantics`,
 makes it stale. A delegated response consumes an action-bound `intent.resolve` token; a direct user
 response records new supplied intent and does not pretend the user is a bearer-token executor.
 
+Reviews and resolutions are different obligations. `gateway/resolution.py` holds the one acceptance
+rule: only `resolve-intent`, `accept-governance`, and `supply-intent` responses with
+`resolution: accepted` satisfy a required resolution, a direct user satisfies every resolver, a
+delegated agent satisfies `secondary-agent` only when the action was opened for that resolver and
+the agent authored no unit of the candidate, and a policy change accepts only direct user
+authority. `CapabilityService._has_resolution`, `ActionService.respond`, and history validation all
+call it. A review verdict never satisfies a resolution, so a governance candidate that compiled an
+independent review still opens `accept-governance` when landing is requested.
+
+`ChangeService.pending` projects the **resolution list** from ledger state: pending actions ordered
+reviews, governance acceptance, supplied intent, then other resolutions, each with its resolver
+(reviews take the parent policy's delegation; `supply-intent` is always `user`), the response field
+it expects, a plain-language title and brief, and the bindings a response must repeat.
+`change.inspect` includes the same list under `pending`. The host walks it with a distinct
+secondary agent under delegation and shows it to the user under `user` resolution; both produce
+the same `action.responded` events.
+
 Candidate review records `accepted`, `rejected`, or `uncertain`; summary; semantic disposition;
 authority; mode; defects; and retained discoveries. Only `accepted` can satisfy an obligation.
 `independent` is valid only when the recorded reviewer actor did not author a unit in the candidate.
@@ -541,12 +576,12 @@ clients never need to parse the summary.
 
 | Capability | Additional requirements |
 |---|---|
-| `intent.resolve` | exact pending action, supplied-intent digest, allowed actor; never delegated for policy changes |
+| `intent.resolve` | exact pending action, supplied-intent digest, allowed actor; refused to an agent under `user` delegation; never delegated for policy changes |
 | `worktree.create` | current recommendation and dependency-ready unit |
 | `worktree.write` | existing attempt, admissible frontier, no conflicting live write grant |
 | `verification.run` | selected verifier and exact candidate tree |
 | `candidate.converge` | clean submitted attempt and actual claims within recommendation |
-| `integration.land` | all obligations satisfied; exact candidate; single use |
+| `integration.land` | all obligations satisfied, including a resolution of the opened kind when the candidate touches any tracked governance path; exact candidate; single use |
 | `remote.publish` | completed local landing, tracked opt-in, existing upstream; single use |
 | `change.invalidate` | attributable actor and reason |
 | `work.discard` | explicit authority and the canonical JSON array of exact retained refs; single use |
@@ -639,7 +674,8 @@ extra fields.
 ### 8.3 Principal and attribution
 
 The stdio client is one `harness:<instance>` principal configured at startup or generated for that
-server run. Calls name worker actors beneath it, but the transport principal attests who supplied
+server run. The server binds without user authentication, so a `user:` principal is refused with
+`unauthenticated_principal`; direct user authority never arrives over MCP. Calls name worker actors beneath it, but the transport principal attests who supplied
 those names. Every event and projected actor-bearing value records both. Independent review requires
 a distinct actor and a distinct transport principal from every candidate author; changing only the
 asserted actor string is insufficient. Direct user authority is valid only when the asserted
@@ -671,7 +707,8 @@ invariant-mcp --repository <path>
 ```
 
 `init` is guided setup and commits only the deterministic bootstrap policy; `--defaults` skips the
-questions. It also registers the repository in the per-user workspace. `status` joins exact
+questions. It asks who resolves bound semantic questions, whether publication may be requested,
+and which connected agent new sessions prefer. It also registers the repository in the per-user workspace. `status` joins exact
 repository state with local sessions and reports governance record count, validation state, latest
 audit, and audit staleness.
 
@@ -682,17 +719,21 @@ semantic, domain, contract, or constraint records. Candidate loading resolves ev
 and validates the complete record graph. The candidate then follows exact-tree evidence and
 landing gates. With `authority.resolution.delegation: secondary-agent`, the host starts a fresh
 provider run under a principal distinct from the drafting attempt, supplies the exact action-bound
-candidate, and lands only after that resolver accepts it. With `user`, the candidate remains at
-`accept-governance` and the host presents a short decision brief; `:details` reveals the records,
-rules, grounding, and Git identity before `:accept`. “Baseline” is the resulting record set;
+candidate, and lands only after that resolver accepts it. With `user`, the candidate remains on
+the resolution list and the host presents a short decision brief with the list; `:details` reveals
+the records, rules, grounding, and Git identity, `:resolve N accept|reject [note]` answers one
+item, and `:accept` answers every remaining item and lands. “Baseline” is the resulting record set;
 “establish” is the operation.
 
 `start` creates or resumes one durable project session. `:new`, `:sessions`, and `:switch` navigate
 sessions; `:agent` switches the provider for one session; `:status`, `:settings`, and `:set` expose
 the same local host operations; `:establish` runs the governance-baseline operation with an optional
-focus; `:details` expands one pending human governance decision; `:accept` supplies direct user
-authority when policy assigns resolution to the user; and `:exit` releases live presence without
-deleting the transcript. Provider handles and transcripts live in the per-user workspace and never
+focus; `:pending` shows the resolution list for the session's pending change; `:resolve N
+accept|reject [note]` supplies direct user authority for one item, a review or an acceptance
+alike; `:details` expands the pending governance decision; `:accept` resolves every remaining item
+and lands; and `:exit` releases live presence without deleting the transcript. Direct user
+authority requires the host's authenticated transport, an interactive terminal outside runtime
+worktrees; a piped `invariant start` can converse but cannot supply intent or resolve items. Provider handles and transcripts live in the per-user workspace and never
 become semantic evidence.
 
 An audit introduced by the current attested governance landing is fresh for that landing. The next
@@ -701,13 +742,16 @@ first-parent commit makes it stale unless a later audit grounds the new state.
 The conversational coordinator is read-only. When it classifies a user message as a write, the host
 opens a durable change from the user's original message, obtains scoped worktree capabilities for a
 provider-specific principal, runs the provider in the isolated worktree, commits the result itself,
-verifies the exact candidate, obtains a distinct secondary review when compiled governance requires
-one, and lands only through `integration.land`. Record candidates use the parent policy's configured
+verifies the exact candidate, walks the resolution list with a distinct secondary agent for every
+item policy delegates, returns the list to the user for any item assigned to the user, and lands
+only through `integration.land`. Record candidates use the parent policy's configured
 resolver; policy candidates always require direct user acceptance.
 
 `set harness` and `set mode` update clone-local host preferences. Every tracked setting is a
 deterministic one-file governance candidate evaluated under the parent policy, directly accepted by
-the invoking `user:cli`, attested, landed, and cleaned up. The command stages only the isolated
+the invoking `user:cli`, attested, landed, and cleaned up. `set` therefore requires the
+authenticated host transport and refuses to run from a provider process or inside a runtime
+worktree. The command stages only the isolated
 attempt; it never edits or asks the user to stage primary-worktree config. A transition to a
 different integration branch is rejected until an atomic multi-ref transition is specified.
 
@@ -740,24 +784,23 @@ authority:
     suppliers: [user]
   resolution:
     delegation: secondary-agent
-execution:
-  transitions: auto
 integration_branch: auto
 publication: off
 parallelism:
   maximum: auto
 ```
 
-`authority.intent.suppliers` declares which attributable sources may originate change intent; v1
-defaults to the user. Accepted records remain standing repository meaning regardless of this list.
+`authority.intent.suppliers` declares which attributable sources may originate change intent. In
+v1 the only accepted value is `[user]`; any other supplier is rejected as invalid policy and is
+reserved for event-originated intent in a later version. Accepted records remain standing
+repository meaning regardless of this list.
 `authority.resolution.delegation` is `secondary-agent` or `user`. `secondary-agent` allows the
 kernel to issue `intent.resolve` for one eligible semantic action to a named model actor; `user`
 requires new `user:` intent. Neither setting is an execution permission. Policy changes always
 require direct user intent.
 
-`execution.transitions` is `auto` or `assisted`. It is a host preference for compound operator
-surfaces, not authorization and not an instruction to the kernel. The low-level CLI and MCP
-operations always expose each decision and consequence explicitly.
+Execution is always an agent's; no policy pauses or assists lifecycle transitions. The low-level
+CLI and MCP operations always expose each decision and consequence explicitly.
 
 `integration_branch` is `auto` or an existing local branch. `auto` resolves the primary worktree's
 current branch when the change opens and then stores the exact ref in the ledger.
@@ -863,7 +906,9 @@ worktree governance, then walks first-parent history from the commit that first 
 - unit result, actor, and transport-principal bindings;
 - governance versions and required retirement markers;
 - review and evidence digests;
-- policy authority for governed policy changes; and
+- policy authority for governed policy changes;
+- an accepted governance resolution, by the same rule the landing gate applies, for every
+  landing that touches a tracked governance path; and
 - coverage of out-of-band commits.
 
 A copied or rewritten landing commit fails because its first parent and recomputed tree differ. A
@@ -908,6 +953,7 @@ src/invariant/
     frontier.py               exact bounded admissible-frontier calculation
   gateway/
     capabilities.py           closed capability rules
+    resolution.py             the one acceptance rule shared by gate, actions, and history
     decisions.py              evaluation and explanations
     grants.py                 token issue, hash, use, revoke, staleness
     containment.py            posture-provider interface
@@ -933,6 +979,7 @@ src/invariant/
   observer.py                 read-only project snapshots and SSE polling
   host.py / dashboard.py      loopback workspace service and visual assets
   harness/                    native Codex and Claude connection and invocation adapters
+  harness/identity.py         host-side authentication of the user principal
   cli/style.py                terminal palette, wordmark, panels, turns, and motion
 ```
 
@@ -997,6 +1044,9 @@ Repository tests remain restricted to Git mechanics. The retained suite covers:
 - exact candidate construction and evidence binding;
 - atomic single landing under concurrent finish calls;
 - recovery after the integration ref moved but ledger completion did not;
+- governance landings refusing a review as acceptance, derived record authority, and the
+  user-owned record escalation as landing-gate properties;
+- refusal of an unauthenticated `user:` principal at the ledger transport;
 - dirty checkout and untracked collision preservation; and
 - exact bounded remote publication with local landing retained after rejection.
 

@@ -25,6 +25,7 @@ class Event:
     kind: EventKind
     actor: str
     principal: str
+    authentication: str
     prior: str | None
     occurred_at: str
     payload: Mapping[str, Any]
@@ -39,6 +40,7 @@ class Event:
         kind: EventKind,
         actor: str,
         principal: str,
+        authentication: str,
         prior: str | None,
         payload: Mapping[str, Any],
     ) -> "Event":
@@ -50,6 +52,7 @@ class Event:
                 "kind": kind.value,
                 "actor": actor,
                 "principal": principal,
+                "authentication": authentication,
                 "payload": payload,
             }
         )
@@ -61,6 +64,7 @@ class Event:
             "kind": kind.value,
             "actor": actor,
             "principal": principal,
+            "authentication": authentication,
             "prior": prior,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "payload": payload,
@@ -73,6 +77,7 @@ class Event:
             kind,
             actor,
             principal,
+            authentication,
             prior,
             body["occurred_at"],
             deepcopy(dict(payload)),
@@ -85,7 +90,7 @@ class Event:
             raise InvariantError("Invariant: corrupt ledger event", code="corrupt_ledger")
         allowed = {
             "version", "sequence", "operation_id", "request_digest", "kind", "actor",
-            "principal", "prior", "occurred_at", "payload", "digest",
+            "principal", "authentication", "prior", "occurred_at", "payload", "digest",
         }
         if value.get("version") != PROTOCOL_VERSION or set(value) != allowed:
             raise InvariantError("Invariant: invalid ledger event version", code="corrupt_ledger")
@@ -96,6 +101,8 @@ class Event:
             require_authority_locator(value["principal"], "transport principal")
         except (ValueError, InvariantError) as exc:
             raise InvariantError(f"Invariant: invalid ledger event: {exc}", code="corrupt_ledger") from exc
+        if not isinstance(value.get("authentication"), str) or not value["authentication"]:
+            raise InvariantError("Invariant: invalid ledger authentication", code="corrupt_ledger")
         sequence = value["sequence"]
         if not isinstance(sequence, int) or isinstance(sequence, bool) or sequence < 1:
             raise InvariantError("Invariant: invalid ledger sequence", code="corrupt_ledger")
@@ -110,6 +117,7 @@ class Event:
                 "kind": kind.value,
                 "actor": value["actor"],
                 "principal": value["principal"],
+                "authentication": value["authentication"],
                 "payload": payload,
             }
         )
@@ -117,8 +125,8 @@ class Event:
             raise InvariantError("Invariant: ledger request digest mismatch", code="corrupt_ledger")
         return cls(
             PROTOCOL_VERSION, sequence, value["operation_id"], value["request_digest"], kind,
-            value["actor"], value["principal"], value["prior"], value["occurred_at"],
-            payload, value["digest"],
+            value["actor"], value["principal"], value["authentication"], value["prior"],
+            value["occurred_at"], payload, value["digest"],
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -130,6 +138,7 @@ class Event:
             "kind": self.kind.value,
             "actor": self.actor,
             "principal": self.principal,
+            "authentication": self.authentication,
             "prior": self.prior,
             "occurred_at": self.occurred_at,
             "payload": deepcopy(dict(self.payload)),
@@ -153,7 +162,11 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         state = {
             "version": PROTOCOL_VERSION,
             "change": event.payload["change"],
-            "intent": {**event.payload["intent"], "principal": event.principal},
+            "intent": {
+                **event.payload["intent"],
+                "principal": event.principal,
+                "authentication": event.authentication,
+            },
             "repository": event.payload["repository"],
             "target": event.payload["target"],
             "base": event.payload["base"],
@@ -195,6 +208,7 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         actions[action_id]["status"] = "responded"
         actions[action_id]["response"] = deepcopy(event.payload["response"])
         actions[action_id]["response"]["principal"] = event.principal
+        actions[action_id]["response"]["authentication"] = event.authentication
         actions[action_id]["response"]["event"] = event.digest
         state["stage"] = event.payload.get("next_stage", "evidencing")
     elif event.kind is EventKind.DECISION_RECORDED:

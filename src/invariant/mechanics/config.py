@@ -22,8 +22,6 @@ TRACKED_SETTING_ALIASES = {
     "authority.intent.suppliers": "authority.intent.suppliers",
     "resolution": "authority.resolution.delegation",
     "authority.resolution.delegation": "authority.resolution.delegation",
-    "execution": "execution.transitions",
-    "execution.transitions": "execution.transitions",
     "integration_branch": "integration_branch",
     "publication": "publication",
     "parallelism": "parallelism.maximum",
@@ -49,11 +47,6 @@ class AuthorityPolicy:
 
 
 @dataclass(frozen=True)
-class ExecutionPolicy:
-    transitions: str = "auto"
-
-
-@dataclass(frozen=True)
 class ParallelismPolicy:
     maximum: str | int = "auto"
 
@@ -65,7 +58,6 @@ class ParallelismPolicy:
 @dataclass(frozen=True)
 class Config:
     authority: AuthorityPolicy
-    execution: ExecutionPolicy
     integration_branch: str
     integration_branch_setting: str
     publication: str
@@ -128,7 +120,6 @@ def _from_raw(
     allowed = {
         "version",
         "authority",
-        "execution",
         "integration_branch",
         "publication",
         "parallelism",
@@ -145,13 +136,9 @@ def _from_raw(
         authority_raw.get("intent", {}), "authority.intent", {"suppliers"}
     )
     suppliers = intent_raw.get("suppliers", ["user"])
-    if (
-        not isinstance(suppliers, list)
-        or not suppliers
-        or any(item not in {"user", "policy"} for item in suppliers)
-    ):
+    if not isinstance(suppliers, list) or [item for item in dict.fromkeys(suppliers)] != ["user"]:
         raise InvariantError(
-            "Invariant: authority.intent.suppliers must be a non-empty list containing user and/or policy",
+            "Invariant: authority.intent.suppliers must be [user]; other suppliers are reserved",
             code="invalid_policy",
         )
     intent = IntentAuthority(tuple(dict.fromkeys(suppliers)))
@@ -168,15 +155,6 @@ def _from_raw(
             code="invalid_policy",
         )
     authority = AuthorityPolicy(intent, ResolutionAuthority(delegation))
-
-    execution_raw = _mapping(raw.get("execution", {}), "execution", {"transitions"})
-    transitions = execution_raw.get("transitions", "auto")
-    if transitions not in {"auto", "assisted"}:
-        raise InvariantError(
-            "Invariant: execution.transitions must be auto or assisted",
-            code="invalid_policy",
-        )
-    execution = ExecutionPolicy(transitions)
 
     publication = raw.get("publication", "off")
     if publication not in {"on", "off"}:
@@ -226,7 +204,6 @@ def _from_raw(
             )
     return Config(
         authority,
-        execution,
         branch,
         configured,
         publication,
@@ -281,7 +258,6 @@ def default_document(
     *,
     intent_suppliers: tuple[str, ...] = ("user",),
     resolution_delegation: str = "secondary-agent",
-    execution_transitions: str = "auto",
     integration_branch: str = "auto",
     publication: str = "off",
     parallelism_maximum: str | int = "auto",
@@ -292,7 +268,6 @@ def default_document(
             "intent": {"suppliers": list(intent_suppliers)},
             "resolution": {"delegation": resolution_delegation},
         },
-        "execution": {"transitions": execution_transitions},
         "integration_branch": integration_branch,
         "publication": publication,
         "parallelism": {"maximum": parallelism_maximum},
@@ -368,8 +343,6 @@ def updated_document(
         document["authority"]["intent"]["suppliers"] = suppliers
     elif canonical == "authority.resolution.delegation":
         document["authority"]["resolution"]["delegation"] = value
-    elif canonical == "execution.transitions":
-        document["execution"]["transitions"] = value
     elif canonical == "integration_branch":
         if value not in {"auto", integration_branch}:
             raise InvariantError(
@@ -398,7 +371,6 @@ def lines(value: Config) -> list[str]:
         f"version: {PROTOCOL_VERSION}",
         f"authority.intent.suppliers: {','.join(value.authority.intent.suppliers)}",
         f"authority.resolution.delegation: {value.authority.resolution.delegation}",
-        f"execution.transitions: {value.execution.transitions}",
         f"integration_branch: {value.integration_branch_setting}",
         f"publication: {value.publication}",
         f"parallelism.maximum: {value.parallelism.maximum}",

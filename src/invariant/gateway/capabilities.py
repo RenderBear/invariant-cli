@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from invariant.errors import Blocked, InvariantError
 from invariant.gateway.containment import Enforcement, Uncontained
+from invariant.gateway.resolution import accepted_resolution, independent_agent
 from invariant.governance import GovernanceStore, compile_obligations, select
 from invariant.ledger import Ledger, LedgerStore
 from invariant.mechanics import git
@@ -20,6 +21,7 @@ from invariant.protocol import (
     Scope,
     digest,
     is_direct_user_authority,
+    is_governance_path,
     require_authority_locator,
     require_id,
 )
@@ -358,13 +360,7 @@ class CapabilityService:
                         DecisionState.NEEDS_AUTHORITY,
                         "governance acceptance requires its configured resolver",
                     )
-                authors = {
-                    item.get("actor") for item in state.get("attempts", {}).values()
-                }
-                principals = {
-                    item.get("principal") for item in state.get("attempts", {}).values()
-                }
-                if actor in authors or self.store.principal in principals:
+                if not independent_agent(actor, self.store.principal, state):
                     return (
                         DecisionState.NEEDS_AUTHORITY,
                         "governance acceptance requires a distinct secondary agent",
@@ -407,19 +403,20 @@ class CapabilityService:
 
     @staticmethod
     def _has_resolution(state: Mapping[str, Any], capability: CapabilityName, resolver: str) -> bool:
-        for action in state.get("actions", {}).values():
-            response = action.get("response", {})
-            actor = response.get("actor", "") if isinstance(response, dict) else ""
-            principal = response.get("principal", "") if isinstance(response, dict) else ""
-            accepted = response.get("resolution") == "accepted" or response.get("verdict") == "accepted"
-            if action.get("for_capability") == capability.value and action.get("status") == "responded" and accepted:
-                if is_direct_user_authority(actor, principal):
-                    return True
-                if resolver == "any-attributable" or (
-                    resolver == "secondary-agent" and actor.startswith("agent:")
-                ):
-                    return True
-        return False
+        """Only a resolution response satisfies a required resolution; reviews never do."""
+
+        candidate = state.get("candidate") or {}
+        policy_change = any(
+            str(path).removeprefix("repo:") == ".invariant/config.yml"
+            for path in candidate.get("paths", [])
+        )
+        return any(
+            action.get("for_capability") == capability.value
+            and accepted_resolution(
+                action, state, resolver=resolver, policy_change=policy_change
+            )
+            for action in state.get("actions", {}).values()
+        )
 
     def _open_resolution_action(
         self,
@@ -444,9 +441,7 @@ class CapabilityService:
         candidate = state.get("candidate") or {}
         action_id = f"resolve-{capability.value.replace('.', '-')}-{decision['digest'][:12]}"
         governance_change = any(
-            path.removeprefix("repo:") == ".invariant/config.yml"
-            or path.removeprefix("repo:").startswith(".invariant/records/")
-            for path in candidate.get("paths", [])
+            is_governance_path(str(path)) for path in candidate.get("paths", [])
         ) or "protocol:governance-acceptance" in decision["explain"]["sources"]
         kind = (
             ActionKind.ACCEPT_GOVERNANCE.value

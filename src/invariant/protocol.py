@@ -18,6 +18,24 @@ from invariant.errors import UsageError
 
 
 PROTOCOL_VERSION = 1
+GOVERNANCE_PATHS = (
+    ".invariant/config.yml",
+    ".invariant/records",
+    ".invariant/SOURCES.yml",
+    ".invariant/sources",
+    ".invariant/audits",
+    ".invariant/discoveries",
+)
+
+
+def is_governance_path(path: str) -> bool:
+    value = path.removeprefix("repo:").strip("/")
+    return any(
+        value == prefix or value.startswith(prefix + "/") or prefix.startswith(value + "/")
+        for prefix in GOVERNANCE_PATHS
+    )
+
+
 FULL_DIGEST = re.compile(r"[0-9a-f]{64}")
 OBJECT_ID = re.compile(r"[0-9a-f]{40,64}")
 STABLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")

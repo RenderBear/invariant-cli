@@ -15,7 +15,6 @@ from invariant.protocol import (
     DirectiveKind,
     PROTOCOL_VERSION,
     digest,
-    require_authority_locator,
     require_id,
 )
 
@@ -138,12 +137,63 @@ class Governance:
         )
 
 
+UNATTESTED_AUTHORITY = "unattested"
+
+
+def record_authorities(repo: Path, ref: str | None) -> dict[str, str]:
+    """Derive each record's authority from the landing that last changed it.
+
+    One first-parent walk over the record prefix yields, per path, the most recent commit and its
+    ``Invariant-Authority`` trailers. Direct user authority wins, then a delegated agent; a commit
+    without a valid authority trailer (a candidate, a worker commit, or an out-of-band edit) leaves
+    the record unattested.
+    """
+
+    if not ref:
+        return {}
+    result = git.run(
+        [
+            "log",
+            "--first-parent",
+            "--format=%x00%H%x1e%(trailers:key=Invariant-Authority,valueonly,separator=%x1f)",
+            "--name-only",
+            ref,
+            "--",
+            ".invariant/records",
+        ],
+        cwd=repo,
+        check=False,
+    )
+    authorities: dict[str, str] = {}
+    if result.returncode:
+        return authorities
+    for chunk in result.stdout.split("\x00")[1:]:
+        header, _, body = chunk.partition("\n")
+        _, _, trailer_text = header.partition("\x1e")
+        user: str | None = None
+        agent: str | None = None
+        for value in filter(None, trailer_text.split("\x1f")):
+            parts = value.split(" ")
+            if len(parts) != 4:
+                continue
+            actor, principal = parts[2], parts[3]
+            if actor.startswith("user:") and actor == principal:
+                user = user or actor
+            elif actor.startswith("agent:"):
+                agent = agent or actor
+        authority = user or agent or UNATTESTED_AUTHORITY
+        for path in filter(None, body.splitlines()):
+            authorities.setdefault(path, authority)
+    return authorities
+
+
 class GovernanceStore:
     def __init__(self, repo: Path) -> None:
         self.repo = repo
 
     def load(self, ref: str | None = None) -> Governance:
         prefix = ".invariant/records"
+        authorities = record_authorities(self.repo, ref)
         if ref:
             files = git.tree_text_files(self.repo, ref, prefix)
         else:
@@ -164,7 +214,9 @@ class GovernanceStore:
                 raw = yaml.load(text, Loader=ConfigLoader)
             except yaml.YAMLError as exc:
                 raise InvariantError(f"Invariant: invalid YAML in {path}: {exc}", code="invalid_state") from exc
-            record = self._parse(kind, path, raw, ref)
+            record = self._parse(
+                kind, path, raw, ref, authorities.get(path, UNATTESTED_AUTHORITY)
+            )
             if Path(path).stem != record.identifier:
                 raise InvariantError(
                     f"Invariant: record filename '{Path(path).stem}' does not equal id '{record.identifier}'",
@@ -179,13 +231,15 @@ class GovernanceStore:
         self._validate_links(governance, ref)
         return governance
 
-    def _parse(self, kind: str, path: str, raw: object, ref: str | None) -> Record:
+    def _parse(
+        self, kind: str, path: str, raw: object, ref: str | None, authority: str
+    ) -> Record:
         if not isinstance(raw, dict) or raw.get("version") != PROTOCOL_VERSION:
             raise InvariantError(
                 f"Invariant: {path} must declare version: {PROTOCOL_VERSION}",
                 code="invalid_state",
             )
-        common = {"version", "id", "authority"}
+        common = {"version", "id"}
         kind_fields = {
             "semantic": {
                 "document", "status", "applies_to", "revisit_on", "verifies", "directives",
@@ -199,7 +253,6 @@ class GovernanceStore:
         if unknown:
             raise InvariantError(f"Invariant: {path} has unknown field '{unknown[0]}'", code="invalid_state")
         identifier = require_id(raw.get("id"), f"{path}.id")
-        authority = require_authority_locator(raw.get("authority"), f"{path}.authority")
         required_text = {
             "semantic": ("document",),
             "domain": ("responsibility",),
@@ -277,10 +330,6 @@ class GovernanceStore:
         }
         parents: dict[str, str] = {}
         for record in governance.records:
-            if record.authority.startswith("design:"):
-                self._architecture_section(
-                    "architecture:" + record.authority.removeprefix("design:"), ref
-                )
             if record.kind == "domain":
                 parent = record.data.get("parent")
                 if parent is not None:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from invariant.errors import Blocked, InvariantError
+from invariant.harness.identity import HOST_TTY, UNAUTHENTICATED, refusal_lines
 from invariant.ledger.events import Event, reduce_event, serialized
 from invariant.mechanics import git
 from invariant.protocol import (
@@ -37,10 +38,23 @@ class Ledger:
 
 
 class LedgerStore:
-    def __init__(self, repository: Repository, *, principal: str) -> None:
+    def __init__(
+        self,
+        repository: Repository,
+        *,
+        principal: str,
+        authentication: str = UNAUTHENTICATED,
+    ) -> None:
         require_authority_locator(principal, "transport principal")
+        if principal.startswith("user:") and authentication != HOST_TTY:
+            raise InvariantError(
+                f"Invariant: user principal '{principal}' requires an authenticated host transport",
+                code="unauthenticated_principal",
+                lines=refusal_lines(),
+            )
         self.repository = repository
         self.principal = principal
+        self.authentication = authentication if principal.startswith("user:") else UNAUTHENTICATED
 
     def ref(self, change_id: str) -> str:
         require_id(change_id, "change id")
@@ -115,6 +129,7 @@ class LedgerStore:
                 "kind": kind.value,
                 "actor": actor,
                 "principal": self.principal,
+                "authentication": self.authentication,
                 "payload": payload,
             }
         )
@@ -133,6 +148,7 @@ class LedgerStore:
             kind=kind,
             actor=actor,
             principal=self.principal,
+            authentication=self.authentication,
             prior=current_head,
             payload=payload,
         )

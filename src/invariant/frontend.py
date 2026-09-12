@@ -154,7 +154,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
     branded = True
     if config.initialized(repo):
         project = workspace.add_project(repo)
-        application = InvariantApplication.bind(repo, principal=surface.USER_PRINCIPAL)
+        application = InvariantApplication.bind(repo, principal=surface.HARNESS_PRINCIPAL)
         result = {
             "project": project,
             "commit": git.resolve(repo, "HEAD"),
@@ -171,7 +171,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
         defaults = args.defaults or not sys.stdin.isatty()
         if not defaults:
             print(f"\n{style.wordmark('setup')}")
-            questionnaire.intro(4)
+            questionnaire.intro(3)
             branded = False
         resolution = "secondary-agent" if defaults else questionnaire.select(
             "Resolution",
@@ -185,17 +185,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
                 ("user", "Ask me", "Return the unresolved question for direct user authority."),
             ),
             "secondary-agent",
-            progress="1/4",
-        )
-        transitions = "auto" if defaults else questionnaire.select(
-            "Execution",
-            "How should authorized local lifecycle transitions proceed?",
-            (
-                ("auto", "Run automatically", "Advance valid, authorized local transitions."),
-                ("assisted", "Pause for confirmation", "Pause between lifecycle consequences."),
-            ),
-            "auto",
-            progress="2/4",
+            progress="1/3",
         )
         publication = "off" if defaults else questionnaire.select(
             "Publication",
@@ -205,7 +195,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
                 ("on", "Allow upstream", "Permit only the exact commit and existing upstream."),
             ),
             "off",
-            progress="3/4",
+            progress="2/3",
         )
         harness = "auto" if defaults else questionnaire.select(
             "Agent",
@@ -216,12 +206,11 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
                 ("claude", "Claude Code", "Use the local Claude Code installation."),
             ),
             "auto",
-            progress="4/4",
+            progress="3/3",
         )
         initialized = InvariantApplication.initialize(
             repo,
             resolution_delegation=resolution,
-            execution_transitions=transitions,
             publication=publication,
         )
         preferences.set_repo_harness(repo, harness)
@@ -232,7 +221,7 @@ def _initialize(args: argparse.Namespace) -> dict[str, Any]:
             f"PROJECT: {project['name']}",
             "INTENT: user",
             f"RESOLUTION: {resolution}",
-            f"EXECUTION: parallel work · {transitions} transitions",
+            "EXECUTION: parallel agents",
             "LIFECYCLE: Git-grounded",
             f"HARNESS: {harness}",
             f"POLICY: {config.CONFIG_PATH.as_posix()} @ {str(initialized.result['commit'])[:12]}",
@@ -267,7 +256,7 @@ def _status(repo: Path, *, format_name: str = "text") -> dict[str, Any]:
         "SEMANTIC-KERNEL: "
         f"{record_count} accepted records",
         "EXECUTION: parallel work · "
-        f"{repository.get('execution', '—')} transitions · max {repository.get('parallelism', '—')}",
+        f"parallel agents · max {repository.get('parallelism', '—')}",
         "LIFECYCLE: Git-grounded",
         f"STALENESS: {staleness}",
         "LAST-AUDIT: "
@@ -452,8 +441,10 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                             "COMMAND: :settings · show current settings",
                             "COMMAND: :set KEY VALUE · apply one setting",
                             "COMMAND: :establish [focus] · draft a governance baseline",
+                            "COMMAND: :pending [CHANGE] · list what you must resolve",
+                            "COMMAND: :resolve N accept|reject [note] · answer one item",
                             "COMMAND: :details [CHANGE] · inspect a pending governance proposal",
-                            "COMMAND: :accept [CHANGE] · accept when resolution is human",
+                            "COMMAND: :accept [CHANGE] · accept every remaining item and land",
                             "COMMAND: :exit · preserve the session and leave",
                         ],
                     )
@@ -555,6 +546,44 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                         )
                         private["provider_session_id"] = ""
                     continue
+                if command in {"pending", "resolve"}:
+                    change_id = str(selected.get("pending_change") or "")
+                    values = raw_value.split()
+                    if command == "pending":
+                        change_id = values[0] if values else change_id
+                        if not change_id:
+                            _session_error(UsageError("Invariant: no pending change; use :pending CHANGE"))
+                            continue
+                        try:
+                            result = surface.pending_list(repo, change_id)
+                        except InvariantError as error:
+                            _session_error(error)
+                            continue
+                        print(style.decision("Resolution list", result.lines))
+                        continue
+                    if len(values) < 2 or not values[0].isdigit() or values[1] not in {"accept", "reject"}:
+                        _session_error(UsageError("Invariant: use :resolve N accept|reject [note]"))
+                        continue
+                    if not change_id:
+                        _session_error(UsageError("Invariant: no pending change in this session"))
+                        continue
+                    try:
+                        result = surface.resolve_pending(
+                            repo,
+                            change_id,
+                            int(values[0]),
+                            "accepted" if values[1] == "accept" else "rejected",
+                            " ".join(values[2:]),
+                        )
+                    except InvariantError as error:
+                        _session_error(error)
+                        continue
+                    if result.data.get("pending"):
+                        print(style.decision(str(result.data.get("decision_title") or "Resolution required"), result.lines))
+                    else:
+                        workspace.update_session(active_id, pending_change="", pending_action="")
+                        _show("change", result.lines)
+                    continue
                 if command == "accept":
                     change_id = raw_value or str(selected.get("pending_change") or "")
                     if not change_id:
@@ -566,6 +595,9 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                         result = surface.accept_pending(repo, change_id)
                     except InvariantError as error:
                         _session_error(error)
+                        continue
+                    if result.data.get("pending"):
+                        print(style.decision(str(result.data.get("decision_title") or "Resolution required"), result.lines))
                         continue
                     workspace.update_session(
                         active_id, pending_change="", pending_action=""

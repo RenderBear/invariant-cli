@@ -209,7 +209,7 @@ function signal(title, items, label, state) {
 function renderRepository() {
   const project = currentProject(); const repo = repositorySnapshot?.repository || {};
   const audit = repositorySnapshot?.governance?.audit || {};
-  $("repository-facts").innerHTML = repo.name ? [["Branch", repo.branch || "detached"], ["Head", short(repo.head)], ["State", repo.state || "unknown"], ["Intent", repo.intent || repo.authority || "—"], ["Resolution", repo.resolution || "—"], ["Execution", `parallel · ${repo.execution || "—"}`], ["Audit", audit.id ? `${audit.id} · ${audit.status}` : "none"]].map(([name, value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join("") : "";
+  $("repository-facts").innerHTML = repo.name ? [["Branch", repo.branch || "detached"], ["Head", short(repo.head)], ["State", repo.state || "unknown"], ["Intent", repo.intent || repo.authority || "—"], ["Resolution", repo.resolution || "—"], ["Execution", "parallel agents"], ["Audit", audit.id ? `${audit.id} · ${audit.status}` : "none"]].map(([name, value]) => `<dt>${esc(name)}</dt><dd>${esc(value)}</dd>`).join("") : "";
   if (!project || !repositorySnapshot) { $("lifecycle-summary").innerHTML = ""; $("tasks").innerHTML = '<p class="activity-empty">Loading repository state…</p>'; $("signals").innerHTML = ""; return; }
   const tasks = repositorySnapshot.tasks || []; const plans = repositorySnapshot.plans || []; const leases = repositorySnapshot.leases || []; const processes = repositorySnapshot.processes || []; const evidence = repositorySnapshot.evidence || []; const records = repositorySnapshot.governance?.records || [];
   $("activity-count").textContent = `${tasks.length} active`;

@@ -71,7 +71,7 @@ $ invariant status
 │  Intent       user                                 │
 │  Resolution   secondary-agent                      │
 │  Semantic kernel  12 accepted records              │
-│  Execution    parallel work · auto transitions     │
+│  Execution    parallel agents                      │
 │  Lifecycle    Git-grounded                         │
 │  Staleness    fresh                                │
 │  Last audit   audit-20260912T091500Z               │

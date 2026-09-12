@@ -72,7 +72,9 @@ No field called `auto`, no model selection, and no ability to call a tool grants
 Authority is not a single human-versus-agent mode. It consists of:
 
 1. **intent supply** — an attributable statement of the desired state or accepted promise, supplied
-   by a user, accepted policy or record, or another source explicitly allowed by policy; and
+   by a user. Protocol version 1 pins intent supply to `user:` authority; policy-, record-, and
+   event-originated suppliers are reserved for a later version and tracked policy MUST reject them
+   now; and
 2. **resolution capability** — a narrow, revocable entitlement to settle one identified ambiguity
    when supplied intent and accepted governance do not determine the answer.
 
@@ -150,6 +152,22 @@ assertion. A different asserted actor does not create independent authority when
 principal is unchanged. Independent review requires both a distinct actor and a distinct transport
 principal from every contributing attempt. Direct user authority additionally requires the asserted
 `user:` locator to equal the authenticated transport principal.
+
+A `user:` transport principal exists only on a transport the host authenticates. The kernel MUST
+refuse to open a ledger transport for a `user:` principal that carries no authentication method,
+and every event records the method under which its principal was bound. The reference host treats
+an interactive terminal outside any runtime worktree, with no provider run in progress, as
+authenticated; it refuses `user:` principals over MCP and from every provider process. This is
+containment of the host process and is reported as advisory: an actor holding the host's
+operating-system identity can still imitate the host, and the protocol does not pretend otherwise.
+
+Every accepted record has a derived **record authority**: `user:<identity>` when direct user
+authority accepted the landing that last introduced or changed the record, and
+`agent:<provider>/<run>` when a delegated resolver accepted it. Record files carry no authority
+field; the value is read from attested integration history and is `candidate` for a record changed
+in an unlanded candidate. Changing or retiring a user-authored record requires `user` resolution
+regardless of delegation, so a shape the user described and accepted supersedes agent judgement.
+Under delegation an agent may add records and revise agent-authored ones.
 
 Repository policy is user-owned. An agent MAY propose policy but MUST NOT accept a policy change.
 The policy from the integration parent governs the candidate that changes it. Creating, changing,
@@ -312,7 +330,6 @@ record, verifier, or dependency is invalid governance and blocks capability issu
 version: 1
 id: processor-source-ownership
 document: architecture:docs/architecture.md#processor-source-ownership
-authority: user:architecture-review
 status: active
 applies_to: [repo:services/document-processor, interface:processor-source]
 revisit_on: [repo:.gitmodules, semantic:processor-external-ownership]
@@ -328,8 +345,8 @@ facets:
   confidence: accepted
 ```
 
-`id`, `document`, `authority`, `status`, `applies_to`, `revisit_on`, `verifies`, `directives`, and
-`supersedes` have protocol meaning. `relations` and `facets` remain open vocabularies and acquire no
+`id`, `document`, `status`, `applies_to`, `revisit_on`, `verifies`, `directives`, and `supersedes`
+have protocol meaning. Authority is derived from history (§1.5), never declared. `relations` and `facets` remain open vocabularies and acquire no
 mechanical effect implicitly.
 
 When a change's declared or observed reach intersects `applies_to`, the record MUST be selected. Its
@@ -351,7 +368,6 @@ the relationship by supersession; there is no in-place erasure of accepted meani
 version: 1
 id: ocr.orchestrator
 responsibility: Selects OCR engines and distributes work.
-authority: user:ocr-architecture
 parent: ocr
 scope: [repo:src/ocr/orchestrator]
 interfaces: [interface:OcrEngine]
@@ -371,7 +387,6 @@ alone forbid parallelism.
 version: 1
 id: ocr.engine-protocol.v1
 assertion: Every engine accepts OcrRequest and returns OcrResult.
-authority: user:ocr-architecture
 between: [ocr.orchestrator, ocr.engine.external]
 surfaces: [interface:OcrEngine, repo:schemas/ocr-engine.json]
 architecture: [architecture:docs/architecture.md#ocr-engine-protocol]
@@ -396,7 +411,6 @@ model remembering the assertion.
 version: 1
 id: bounded-remote-publication
 assertion: Repository work is not published by agents.
-authority: user:repository-policy
 applies_to: [capability:remote.publish]
 material: [repo:.invariant/config.yml, repo:src/invariant/mechanics/landing.py]
 surfaces: [repo:src/invariant/mechanics/landing.py]
@@ -420,7 +434,14 @@ integration parent's `authority.resolution.delegation`. When delegation is `seco
 fresh agent actor and transport principal, distinct from every candidate author, MAY accept the
 candidate by consuming an action-bound `intent.resolve` capability. When delegation is `user`, the
 candidate remains pending for direct user authority. Policy changes always require a `user:`
-authority and cannot be delegated.
+authority and cannot be delegated. A candidate that touches any tracked governance path (§2.1)
+requires that resolution; an audit or source change is not exempt because it names no record.
+
+Review and resolution are distinct obligations. A required review is satisfied only by a review
+response, and a required resolution only by a resolution response of the kind the kernel opened.
+An accepted review MUST NOT count as acceptance of a governance candidate, and an acceptance MUST
+NOT stand in for a required review. A candidate that needs both is not ready to land until it
+holds both.
 
 Before acceptance, Invariant MUST make the exact candidate, new or changed directives, their
 compiled consequences, and the authority that would govern inspectable. A human decision surface
@@ -733,7 +754,15 @@ candidate exists—its exact tree and evidence ids.
 
 Actions may request a work recommendation, scoped intent resolution, semantic review, independent
 review, governance acceptance, or new user intent. A response for a different intent, ledger head, recommendation, or
-candidate is stale. A delegated response consumes the action's `intent.resolve` grant. Direct user
+candidate is stale.
+
+At any ledger state the kernel exposes the ordered **resolution list** for a change: pending reviews
+first, then governance acceptance, then supplied intent, then other bound resolutions. Each item
+names its kind, its resolver, the bindings a response must repeat, and the plain-language brief the
+kernel can derive from the candidate. When policy delegates resolution, the harness presents that
+exact list to a distinct agent run item by item. When policy assigns resolution to the user, the
+host presents the same list to the user, who responds per item. Both paths produce the same typed
+responses and the same ledger events. A delegated response consumes the action's `intent.resolve` grant. Direct user
 intent supply is recorded as a new attributable intent statement and supersedes the pending bounds
 where policy permits. Editing a ledger, runtime file, or worktree is not a response.
 
@@ -777,8 +806,9 @@ For the exact candidate, Invariant MUST:
 4. validate unit claims and causal provider order;
 5. run every required contract, record, policy, and supplied verifier;
 6. bind evidence to candidate tree, base, verifier identity, environment, and mechanics version;
-7. obtain every required attributable or independent review; and
-8. refuse a landing grant until all structural, behavioral, semantic, authority, and containment
+7. obtain every required attributable or independent review;
+8. obtain every required resolution from its configured resolver; and
+9. refuse a landing grant until all structural, behavioral, semantic, authority, and containment
    obligations pass.
 
 A review cannot override a failed verifier. A passing verifier does not prove prose beyond the
@@ -837,7 +867,10 @@ The landing commit is the portable result. It carries:
 | `Invariant-Landing-Parent` | expected integration parent commit |
 
 Trailer serialization is deterministic. Validation recomputes the first-parent candidate and
-rejects missing, malformed, copied, or stale bindings. A claimed actor is durable provenance of
+rejects missing, malformed, copied, or stale bindings. History validation applies the same
+acceptance rule as the landing gate: a landing that changes tracked governance is valid only when
+its ledger, or its portable trailers, carries an accepted governance resolution by a resolver the
+parent policy allows. A review alone never attests a governance change. A claimed actor is durable provenance of
 what the gateway received; it is authenticated identity only when the named transport supplied
 authentication.
 
@@ -930,7 +963,7 @@ At minimum, conforming implementations use these codes:
 | Area | Codes |
 |---|---|
 | Repository | `not_repository`, `not_initialized`, `nested_invariant`, `unsupported_git`, `invalid_state`, `invalid_policy` |
-| Governance | `unknown_record`, `unresolved_locator`, `invalid_directive`, `contradictory_directives`, `stale_governance`, `authority_required` |
+| Governance | `unknown_record`, `unresolved_locator`, `invalid_directive`, `contradictory_directives`, `stale_governance`, `authority_required`, `unauthenticated_principal` |
 | Ledger | `missing_change`, `corrupt_ledger`, `concurrent_ledger_movement`, `stale_handoff`, `missing_object` |
 | Recommendation | `invalid_recommendation`, `unbounded_unit`, `overlapping_claims`, `contract_order_violation`, `parallel_limit_exceeded`, `recommendation_required` |
 | Capability | `unknown_capability`, `capability_denied`, `capability_required`, `stale_grant`, `grant_consumed`, `grant_revoked`, `containment_required` |
@@ -967,6 +1000,9 @@ A conforming managed deployment guarantees:
    until an explicitly authorized discard.
 10. **Bounded publication.** Local landing and remote publication are separate; publication is off
     by default and can target only the exact landed commit and existing upstream.
+11. **Authority provenance.** Record authority is derived from attested landing history, `user:`
+    principals exist only on host-authenticated transports, and a review never substitutes for a
+    required resolution.
 
 Invariant does not guarantee that accepted prose is wise, that a semantic reviewer reasons
 correctly, that declared actor identity is authenticated without an authenticating transport, or

@@ -16,9 +16,9 @@ init  status  start  establish  connect  set  serve
 invariant init
 ```
 
-Guided setup asks how semantic resolution may be delegated, whether valid transitions continue
-automatically, whether publication can be requested, and which connected agent new sessions prefer.
-The user remains the intent supplier. `invariant init --defaults` chooses the safe defaults without
+Guided setup asks how semantic resolution may be delegated, whether publication can be requested,
+and which connected agent new sessions prefer. The user remains the intent supplier; execution is
+always an agent's. `invariant init --defaults` chooses the safe defaults without
 questions.
 
 Initialization commits `.invariant/config.yml` as one deterministic bootstrap commit and registers the
@@ -42,10 +42,13 @@ Invariant resolves every locator, validates the candidate record grammar and clo
 and captures exact-tree evidence. When resolution is delegated to `secondary-agent`, Invariant
 opens a fresh independent provider run with an action-bound capability; an accepted resolution
 lands the baseline without asking the user to perform a protocol step. When resolution is `user`,
-Invariant shows a compact plain-language decision brief. `:details` reveals every proposed record,
-material rule, grounding source, and exact Git identity; `:accept` accepts that candidate. If the
-current records already describe the repository, the coordinator reports that there is no change
-to resolve.
+Invariant shows a compact plain-language decision brief followed by the resolution list: every
+review and acceptance the candidate still needs, numbered. `:details` reveals every proposed
+record, material rule, grounding source, and exact Git identity; `:resolve N accept|reject [note]`
+answers one item; `:accept` answers every remaining item and lands. Direct user authority is only
+available from an interactive terminal outside runtime worktrees; a provider run cannot supply it.
+If the current records already describe the repository, the coordinator reports that there is no
+change to resolve.
 
 ## See project state
 
@@ -99,8 +102,10 @@ The session controls are:
 | `:settings` | Show tracked policy and clone-local preferences. |
 | `:set KEY VALUE` | Apply the same one-setting operation as `invariant set`. |
 | `:establish [focus]` | Draft or reconcile the repository governance baseline. |
+| `:pending [CHANGE]` | List the reviews and acceptances the pending change still needs. |
+| `:resolve N accept\|reject [note]` | Answer one item of that list with direct user authority. |
 | `:details [CHANGE]` | Inspect every part of a pending human governance decision. |
-| `:accept [CHANGE]` | Accept an exact candidate when resolution is assigned to the user. |
+| `:accept [CHANGE]` | Answer every remaining item and land the exact candidate. |
 | `:exit` | Leave while preserving the session. |
 
 Conversation turns are read-only while the provider interprets the message. When a change is

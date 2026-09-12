@@ -11,6 +11,7 @@ import yaml
 
 from invariant.errors import Blocked, InvariantError, RemotePushFailed
 from invariant.gateway import CapabilityService
+from invariant.gateway.resolution import accepted_resolution
 from invariant.ledger import Ledger, LedgerStore
 from invariant.mechanics import git
 from invariant.mechanics.locks import file_lock
@@ -18,32 +19,20 @@ from invariant.protocol import (
     ActionKind,
     CapabilityName,
     EventKind,
+    GOVERNANCE_PATHS,
     PROTOCOL_VERSION,
     digest,
     is_direct_user_authority,
+    is_governance_path,
     require_authority_locator,
     require_id,
 )
 
 
-GOVERNANCE_PATHS = (
-    ".invariant/config.yml",
-    ".invariant/records",
-    ".invariant/SOURCES.yml",
-    ".invariant/sources",
-    ".invariant/audits",
-    ".invariant/discoveries",
-)
-
-
-def _is_governance_path(path: str) -> bool:
-    return any(path == prefix or path.startswith(prefix + "/") for prefix in GOVERNANCE_PATHS)
-
-
 def governed_worktree_changes(repo: Path) -> list[str]:
     """Return mutable governance paths that differ from accepted HEAD."""
 
-    return [path for path in git.changed_paths(repo) if _is_governance_path(path)]
+    return [path for path in git.changed_paths(repo) if is_governance_path(path)]
 
 
 def _accepted_governance_action(
@@ -52,28 +41,14 @@ def _accepted_governance_action(
     *,
     policy_change: bool = False,
 ) -> bool:
-    if (
-        action.get("kind") != ActionKind.ACCEPT_GOVERNANCE.value
-        or action.get("status") != "responded"
-        or action.get("response", {}).get("resolution") != "accepted"
-    ):
+    """The landing gate's acceptance rule, applied to one governance acceptance action."""
+
+    if action.get("kind") != ActionKind.ACCEPT_GOVERNANCE.value:
         return False
-    response = action.get("response", {})
-    actor = str(response.get("actor") or "")
-    principal = str(response.get("principal") or "")
-    if is_direct_user_authority(actor, principal):
-        return True
-    if (
-        policy_change
-        or action.get("resolver") != "secondary-agent"
-        or not actor.startswith("agent:")
-    ):
-        return False
-    authors = {item.get("actor") for item in state.get("attempts", {}).values()}
-    principals = {
-        item.get("principal") for item in state.get("attempts", {}).values()
-    }
-    return actor not in authors and principal not in principals
+    resolver = "user" if policy_change else str(action.get("resolver") or "user")
+    return accepted_resolution(
+        action, state, resolver=resolver, policy_change=policy_change
+    )
 
 
 def _authority_action(action: Mapping[str, Any], state: Mapping[str, Any]) -> bool:

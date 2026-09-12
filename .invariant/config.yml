@@ -5,8 +5,6 @@ authority:
     - user
   resolution:
     delegation: secondary-agent
-execution:
-  transitions: auto
 integration_branch: auto
 publication: off
 parallelism:

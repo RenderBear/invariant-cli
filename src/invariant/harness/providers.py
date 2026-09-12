@@ -11,6 +11,8 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from invariant.harness import identity
+
 
 class AgentProvider(StrEnum):
     CODEX = "codex"
@@ -28,6 +30,12 @@ _BUNDLED_EXECUTABLES = {
     ),
     AgentProvider.CLAUDE: (),
 }
+
+
+def _agent_environment() -> dict[str, str]:
+    """Provider processes are never a user transport; the identity check reads this marker."""
+
+    return {**os.environ, identity.AGENT_RUN_VARIABLE: "1"}
 
 
 class AgentInvocationError(Exception):
@@ -456,6 +464,7 @@ def _invoke_codex(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=_agent_environment(),
             )
         except subprocess.TimeoutExpired as exc:
             raise AgentInvocationError(
@@ -545,6 +554,7 @@ def _invoke_claude(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=_agent_environment(),
         )
     except subprocess.TimeoutExpired as exc:
         raise AgentInvocationError(
@@ -679,6 +689,7 @@ def _invoke_codex_write(
                 capture_output=True,
                 text=True,
                 timeout=timeout,
+                env=_agent_environment(),
             )
         except subprocess.TimeoutExpired as exc:
             raise AgentInvocationError(
@@ -770,6 +781,7 @@ def _invoke_claude_write(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env=_agent_environment(),
         )
     except subprocess.TimeoutExpired as exc:
         raise AgentInvocationError(

@@ -6,7 +6,7 @@ from typing import Any, Mapping
 from invariant.governance.records import Directive
 from invariant.governance.selection import GovernanceSelection
 from invariant.mechanics.config import Config
-from invariant.protocol import CapabilityName, DirectiveKind, Scope, digest
+from invariant.protocol import CapabilityName, DirectiveKind, Scope, digest, is_governance_path
 
 
 @dataclass(frozen=True)
@@ -146,9 +146,12 @@ def _governance_resolver(
     if ".invariant/config.yml" in paths:
         return "user"
     if any(
-        path == ".invariant/records" or path.startswith(".invariant/records/")
-        for path in paths
+        record.path in paths and record.authority.startswith("user:")
+        for record in selection.records
     ):
+        # A shape the user accepted supersedes agent judgement.
+        return "user"
+    if any(is_governance_path(path) for path in paths):
         return config.authority.resolution.delegation
     canonical: set[str] = set()
     for record in selection.records:

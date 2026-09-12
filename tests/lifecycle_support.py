@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Mapping
 
 from invariant.application import InvariantApplication
+from invariant.harness.identity import HOST_TTY
 from invariant.mechanics import git
 
 
@@ -25,7 +26,9 @@ def repository(path: Path, *, commits: int = 1, planner: Planner | None = None) 
     InvariantApplication.initialize(path)
     for index in range(commits - 1):
         git.run(["commit", "-q", "--allow-empty", "-m", f"history {index}"], cwd=path)
-    return InvariantApplication.bind(path, planner=planner, principal="user:test")
+    return InvariantApplication.bind(
+        path, planner=planner, principal="user:test", authentication=HOST_TTY
+    )
 
 
 def open_change(

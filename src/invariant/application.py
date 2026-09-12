@@ -10,6 +10,7 @@ from typing import Any, Mapping, Sequence
 from invariant.errors import Blocked, InvariantError
 from invariant.gateway import CapabilityService
 from invariant.governance import GovernanceStore, compile_obligations, select
+from invariant.harness.identity import UNAUTHENTICATED, authenticate_user
 from invariant.ledger import Ledger, LedgerStore
 from invariant.lifecycle.actions import ActionService
 from invariant.lifecycle.changes import ChangeService
@@ -50,10 +51,19 @@ class InvariantApplication:
         repository: Repository,
         *,
         planner=None,
-        principal: str = "user:local",
+        principal: str = "harness:local",
+        authentication: str | None = None,
     ) -> None:
         self.repository = repository
-        self.store = LedgerStore(repository, principal=principal)
+        if authentication is None:
+            authentication = (
+                authenticate_user(repository.primary_worktree)
+                if principal.startswith("user:")
+                else UNAUTHENTICATED
+            )
+        self.store = LedgerStore(
+            repository, principal=principal, authentication=authentication
+        )
         self.capabilities = CapabilityService(self.store)
         self.changes = ChangeService(
             self.store, self.capabilities, RecommendationService(planner)
@@ -71,9 +81,15 @@ class InvariantApplication:
         path: Path | str = ".",
         *,
         planner=None,
-        principal: str = "user:local",
+        principal: str = "harness:local",
+        authentication: str | None = None,
     ) -> "InvariantApplication":
-        return cls(Repository.bind(path), planner=planner, principal=principal)
+        return cls(
+            Repository.bind(path),
+            planner=planner,
+            principal=principal,
+            authentication=authentication,
+        )
 
     @staticmethod
     def initialize(path: Path | str = ".", **values: Any) -> OperationResult:
@@ -161,7 +177,6 @@ class InvariantApplication:
                             "delegation": policy.authority.resolution.delegation
                         },
                     },
-                    "execution": {"transitions": policy.execution.transitions},
                     "integration_branch": target,
                     "publication": policy.publication,
                     "parallelism": {"maximum": policy.parallelism.maximum},
@@ -252,6 +267,11 @@ class InvariantApplication:
     def change_inspect(self, change_id: str) -> OperationResult:
         return OperationResult(
             Outcome.COMPLETED, {"change": self.changes.inspect(change_id)}
+        )
+
+    def change_pending(self, change_id: str) -> OperationResult:
+        return OperationResult(
+            Outcome.COMPLETED, {"pending": self.changes.pending(change_id)}
         )
 
     def change_handoff(self, change_id: str) -> OperationResult:

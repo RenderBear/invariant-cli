@@ -4,6 +4,7 @@ from typing import Any, Mapping
 
 from invariant.errors import Blocked, InvariantError
 from invariant.gateway import CapabilityService
+from invariant.gateway.resolution import independent_agent
 from invariant.ledger import Ledger, LedgerStore
 from invariant.protocol import (
     ActionKind,
@@ -91,14 +92,7 @@ class ActionService:
                     "Invariant: governance acceptance requires its configured resolver",
                     code="authority_required",
                 )
-            authors = {
-                attempt.get("actor") for attempt in state.get("attempts", {}).values()
-            }
-            author_principals = {
-                attempt.get("principal")
-                for attempt in state.get("attempts", {}).values()
-            }
-            if actor in authors or self.store.principal in author_principals:
+            if not independent_agent(actor, self.store.principal, state):
                 raise InvariantError(
                     "Invariant: a governance author cannot accept its own candidate",
                     code="independent_review_required",
