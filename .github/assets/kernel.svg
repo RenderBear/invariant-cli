@@ -120,7 +120,7 @@
     <circle cx="295" cy="474" r="1.6" class="icon-fill"/>
     <path d="M291 466V461" class="icon"/>
     <text x="392" y="474" text-anchor="middle" class="ink body">Secondary agent</text>
-    <text x="392" y="493" text-anchor="middle" class="mono green small">intent.resolve · one question</text>
+    <text x="392" y="493" text-anchor="middle" class="mono green small">one scoped intent.resolve</text>
 
     <text x="560" y="486" text-anchor="middle" class="mono muted small">judged against</text>
     <rect x="628" y="450" width="256" height="60" rx="4" class="ground-box"/>
