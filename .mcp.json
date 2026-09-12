@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "invariant": {
+      "command": "invariant-mcp"
+    }
+  }
+}
