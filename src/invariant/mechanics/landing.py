@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+import re
 from typing import Any, Mapping
 
 from invariant.errors import Blocked, InvariantError, RemotePushFailed
@@ -11,7 +12,210 @@ from invariant.gateway import CapabilityService
 from invariant.ledger import Ledger, LedgerStore
 from invariant.mechanics import git
 from invariant.mechanics.locks import file_lock
-from invariant.protocol import CapabilityName, EventKind, PROTOCOL_VERSION, digest
+from invariant.protocol import (
+    ActionKind,
+    CapabilityName,
+    EventKind,
+    PROTOCOL_VERSION,
+    digest,
+    is_direct_user_authority,
+    require_authority_locator,
+    require_id,
+)
+
+
+GOVERNANCE_PATHS = (
+    ".invariant/config.yml",
+    ".invariant/records",
+    ".invariant/SOURCES.yml",
+    ".invariant/sources",
+    ".invariant/audits",
+    ".invariant/discoveries",
+)
+
+
+def _is_governance_path(path: str) -> bool:
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in GOVERNANCE_PATHS)
+
+
+def governed_worktree_changes(repo: Path) -> list[str]:
+    """Return mutable governance paths that differ from accepted HEAD."""
+
+    return [path for path in git.changed_paths(repo) if _is_governance_path(path)]
+
+
+def _portable_governance_attestation(repo: Path, commit: str) -> bool:
+    def one(key: str) -> str | None:
+        values = git.trailers(repo, commit, key)
+        return values[0] if len(values) == 1 else None
+
+    protocol = one("Invariant-Protocol")
+    change = one("Invariant-Change")
+    intent = one("Invariant-Intent")
+    plan = one("Invariant-Plan")
+    evidence = one("Invariant-Evidence")
+    landing_parent = one("Invariant-Landing-Parent")
+    if None in {protocol, change, intent, plan, evidence, landing_parent}:
+        return False
+    if protocol != str(PROTOCOL_VERSION):
+        return False
+    try:
+        require_id(change, "attested change")
+        intent_digest, supplier, principal = str(intent).split(" ", 2)
+        require_authority_locator(supplier, "attested intent supplier")
+        require_authority_locator(principal, "attested intent principal")
+    except (InvariantError, ValueError):
+        return False
+    if (
+        not is_direct_user_authority(supplier, principal)
+        or not re.fullmatch(r"[0-9a-f]{64}", intent_digest)
+    ):
+        return False
+    plan_id, separator, plan_digest = str(plan).rpartition("@")
+    if not separator or not re.fullmatch(r"[0-9a-f]{64}", plan_digest):
+        return False
+    try:
+        require_id(plan_id, "attested plan")
+    except InvariantError:
+        return False
+    if not re.fullmatch(r"[0-9a-f]{64}", str(evidence)):
+        return False
+    parents = git.run(
+        ["rev-list", "--parents", "-n", "1", commit], cwd=repo, check=False
+    ).stdout.split()
+    if len(parents) != 2 or parents[1] != landing_parent:
+        return False
+    decisions = git.trailers(repo, commit, "Invariant-Decision")
+    units = git.trailers(repo, commit, "Invariant-Unit")
+    authorities = git.trailers(repo, commit, "Invariant-Authority")
+    valid_units = True
+    for value in units:
+        parts = value.split(" ")
+        if len(parts) != 4 or not re.fullmatch(r"[0-9a-f]{40,64}", parts[1]):
+            valid_units = False
+            break
+        try:
+            require_id(parts[0], "attested unit")
+            require_authority_locator(parts[2], "attested unit actor")
+            require_authority_locator(parts[3], "attested unit principal")
+        except InvariantError:
+            valid_units = False
+            break
+    valid_authorities = True
+    for value in authorities:
+        parts = value.split(" ")
+        if len(parts) != 4 or not re.fullmatch(r"[0-9a-f]{64}", parts[1]):
+            valid_authorities = False
+            break
+        try:
+            require_id(parts[0], "attested authority action")
+            require_authority_locator(parts[2], "attested authority actor")
+            require_authority_locator(parts[3], "attested authority principal")
+        except InvariantError:
+            valid_authorities = False
+            break
+        if not is_direct_user_authority(parts[2], parts[3]):
+            valid_authorities = False
+            break
+    return bool(decisions and units and authorities) and valid_units and valid_authorities and all(
+        re.fullmatch(r"[0-9a-f]{64}", value) for value in decisions
+    )
+
+
+def validate_governance_history(
+    repo: Path,
+    tip: str,
+    states: Mapping[str, Mapping[str, Any]],
+) -> None:
+    """Require every post-initialization governance change to be attested."""
+
+    baseline_rows = git.run(
+        [
+            "log",
+            "--first-parent",
+            "--reverse",
+            "--format=%H",
+            "--diff-filter=A",
+            tip,
+            "--",
+            ".invariant/config.yml",
+        ],
+        cwd=repo,
+        check=False,
+    ).stdout.splitlines()
+    if not baseline_rows:
+        raise InvariantError(
+            "Invariant: integration history has no governance trust root",
+            code="not_initialized",
+        )
+    baseline = baseline_rows[0]
+    baseline_governance = [
+        path
+        for path in git.run(
+            ["ls-tree", "-r", "--name-only", baseline, "--", *GOVERNANCE_PATHS],
+            cwd=repo,
+        ).stdout.splitlines()
+        if path
+    ]
+    if baseline_governance != [".invariant/config.yml"]:
+        raise InvariantError(
+            "Invariant: governance trust root must introduce only config.yml",
+            code="invalid_attestation",
+            data={"commit": baseline, "paths": baseline_governance},
+        )
+    commits = git.run(
+        [
+            "log",
+            "--first-parent",
+            "--reverse",
+            "--format=%H",
+            f"{baseline}..{tip}",
+            "--",
+            *GOVERNANCE_PATHS,
+        ],
+        cwd=repo,
+        check=False,
+    ).stdout.splitlines()
+    invalid: list[str] = []
+    for commit in commits:
+        changes = git.trailers(repo, commit, "Invariant-Change")
+        state = states.get(changes[0]) if len(changes) == 1 else None
+        if state is not None:
+            landing = state.get("landing") or {}
+            accepted = any(
+                action.get("kind") == ActionKind.ACCEPT_GOVERNANCE.value
+                and action.get("status") == "responded"
+                and action.get("response", {}).get("resolution") == "accepted"
+                and is_direct_user_authority(
+                    action.get("response", {}).get("actor"),
+                    action.get("response", {}).get("principal"),
+                )
+                for action in state.get("actions", {}).values()
+            )
+            if (
+                state.get("stage") != "completed"
+                or landing.get("commit") != commit
+                or not is_direct_user_authority(
+                    state.get("intent", {}).get("supplier"),
+                    state.get("intent", {}).get("principal"),
+                )
+                or not accepted
+            ):
+                invalid.append(commit)
+                continue
+            try:
+                validate_landing_attestation(repo, state)
+            except InvariantError:
+                invalid.append(commit)
+            continue
+        if not _portable_governance_attestation(repo, commit):
+            invalid.append(commit)
+    if invalid:
+        raise InvariantError(
+            "Invariant: integration history contains unattested governance changes",
+            code="invalid_attestation",
+            data={"commits": invalid},
+        )
 
 
 @dataclass(frozen=True)
@@ -170,24 +374,46 @@ class IntegrationService:
         trailers = [
             f"Invariant-Protocol: {PROTOCOL_VERSION}",
             f"Invariant-Change: {state['change']}",
-            f"Invariant-Intent: {state['intent']['digest']} {state['intent']['supplier']}",
+            "Invariant-Intent: "
+            f"{state['intent']['digest']} {state['intent']['supplier']} "
+            f"{state['intent']['principal']}",
             f"Invariant-Plan: {recommendation['id']}@{recommendation['digest']}",
         ]
         for unit in recommendation["units"]:
             attempts = [item for item in state["attempts"].values() if item["unit"] == unit["id"] and item.get("tip")]
             if attempts:
                 attempt = attempts[-1]
-                trailers.append(f"Invariant-Unit: {unit['id']} {attempt['tree']} {attempt['actor']}")
+                trailers.append(
+                    f"Invariant-Unit: {unit['id']} {attempt['tree']} "
+                    f"{attempt['actor']} {attempt['principal']}"
+                )
         for grant in state["grants"].values():
             if grant.get("status") == "consumed":
                 trailers.append(f"Invariant-Decision: {grant['decision_digest']}")
         trailers.append(f"Invariant-Decision: {landing_decision}")
+        for action_id, action in sorted(state.get("actions", {}).items()):
+            response = action.get("response", {})
+            if (
+                action.get("kind")
+                in {ActionKind.ACCEPT_GOVERNANCE.value, ActionKind.SUPPLY_INTENT.value}
+                and action.get("status") == "responded"
+                and is_direct_user_authority(
+                    response.get("actor"), response.get("principal")
+                )
+            ):
+                trailers.append(
+                    f"Invariant-Authority: {action_id} {response['event']} "
+                    f"{response['actor']} {response['principal']}"
+                )
         for record in state["governance"]["records"]:
             trailers.append(f"Invariant-Governance: {record}")
         evidence_digest = digest(state.get("evidence", []))
         trailers.append(f"Invariant-Evidence: {evidence_digest}")
         for review in state.get("reviews", []):
-            trailers.append(f"Invariant-Review: {review['digest']} {review['mode']} {review['authority']}")
+            trailers.append(
+                f"Invariant-Review: {review['digest']} {review['mode']} "
+                f"{review['authority']} {review['principal']}"
+            )
         trailers.append(f"Invariant-Landing-Parent: {state['base']}")
         return line + "\n\n" + "\n".join(trailers) + "\n"
 
@@ -213,7 +439,8 @@ def validate_landing_attestation(repo: Path, state: Mapping[str, Any]) -> None:
         "Invariant-Protocol": str(PROTOCOL_VERSION),
         "Invariant-Change": str(state["change"]),
         "Invariant-Intent": (
-            f"{state['intent']['digest']} {state['intent']['supplier']}"
+            f"{state['intent']['digest']} {state['intent']['supplier']} "
+            f"{state['intent']['principal']}"
         ),
         "Invariant-Plan": (
             f"{state['recommendation']['id']}@{state['recommendation']['digest']}"
@@ -237,6 +464,21 @@ def validate_landing_attestation(repo: Path, state: Mapping[str, Any]) -> None:
     if sorted(git.trailers(repo, commit, "Invariant-Decision")) != expected_decisions:
         failures.append("Invariant-Decision")
 
+    expected_authorities = sorted(
+        f"{action_id} {action['response']['event']} "
+        f"{action['response']['actor']} {action['response']['principal']}"
+        for action_id, action in state.get("actions", {}).items()
+        if action.get("kind")
+        in {ActionKind.ACCEPT_GOVERNANCE.value, ActionKind.SUPPLY_INTENT.value}
+        and action.get("status") == "responded"
+        and is_direct_user_authority(
+            action.get("response", {}).get("actor"),
+            action.get("response", {}).get("principal"),
+        )
+    )
+    if sorted(git.trailers(repo, commit, "Invariant-Authority")) != expected_authorities:
+        failures.append("Invariant-Authority")
+
     unit_trailers = git.trailers(repo, commit, "Invariant-Unit")
     for unit in candidate.get("units", []):
         attempts = [
@@ -248,12 +490,14 @@ def validate_landing_attestation(repo: Path, state: Mapping[str, Any]) -> None:
             failures.append(f"Invariant-Unit:{unit}")
             continue
         attempt = attempts[-1]
-        expected = f"{unit} {attempt['tree']} {attempt['actor']}"
+        expected = (
+            f"{unit} {attempt['tree']} {attempt['actor']} {attempt['principal']}"
+        )
         if expected not in unit_trailers:
             failures.append(f"Invariant-Unit:{unit}")
 
     expected_reviews = sorted(
-        f"{review['digest']} {review['mode']} {review['authority']}"
+        f"{review['digest']} {review['mode']} {review['authority']} {review['principal']}"
         for review in state.get("reviews", [])
     )
     if sorted(git.trailers(repo, commit, "Invariant-Review")) != expected_reviews:

@@ -171,6 +171,17 @@ def require_authority_locator(value: object, label: str = "authority") -> str:
     return value
 
 
+def is_direct_user_authority(actor: object, principal: object) -> bool:
+    """Return whether an asserted user is bound to the same transport principal."""
+
+    return (
+        isinstance(actor, str)
+        and isinstance(principal, str)
+        and actor.startswith("user:")
+        and actor == principal
+    )
+
+
 @dataclass(frozen=True)
 class Intent:
     """One desired-state statement and the authority that supplied it."""

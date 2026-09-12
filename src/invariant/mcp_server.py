@@ -59,7 +59,7 @@ def create_server(
     *,
     principal: str = "harness:mcp",
 ) -> MCPServer:
-    app = InvariantApplication.bind(repository)
+    app = InvariantApplication.bind(repository, principal=principal)
     server = MCPServer(
         "invariant",
         title="Invariant",

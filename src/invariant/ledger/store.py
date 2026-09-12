@@ -8,7 +8,13 @@ from typing import Any, Iterable, Mapping
 from invariant.errors import Blocked, InvariantError
 from invariant.ledger.events import Event, reduce_event, serialized
 from invariant.mechanics import git
-from invariant.protocol import EventKind, canonical_json, digest, require_id
+from invariant.protocol import (
+    EventKind,
+    canonical_json,
+    digest,
+    require_authority_locator,
+    require_id,
+)
 from invariant.repository import Repository
 
 
@@ -31,8 +37,10 @@ class Ledger:
 
 
 class LedgerStore:
-    def __init__(self, repository: Repository) -> None:
+    def __init__(self, repository: Repository, *, principal: str) -> None:
+        require_authority_locator(principal, "transport principal")
         self.repository = repository
+        self.principal = principal
 
     def ref(self, change_id: str) -> str:
         require_id(change_id, "change id")
@@ -102,7 +110,14 @@ class LedgerStore:
                 code="concurrent_ledger_movement",
                 data={"expected": expected_head, "actual": current_head},
             )
-        request_digest = digest({"kind": kind.value, "actor": actor, "payload": payload})
+        request_digest = digest(
+            {
+                "kind": kind.value,
+                "actor": actor,
+                "principal": self.principal,
+                "payload": payload,
+            }
+        )
         if ledger:
             existing = ledger.operation(operation_id)
             if existing:
@@ -117,6 +132,7 @@ class LedgerStore:
             operation_id=operation_id,
             kind=kind,
             actor=actor,
+            principal=self.principal,
             prior=current_head,
             payload=payload,
         )

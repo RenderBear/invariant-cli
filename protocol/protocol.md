@@ -138,6 +138,12 @@ Invariant proves what it observed and bound together. It does not prove the real
 behind a host-supplied locator unless the transport authenticates that identity. Responses and
 attestations MUST preserve that distinction.
 
+Every durable event records both the asserted actor and the transport principal that supplied the
+assertion. A different asserted actor does not create independent authority when the transport
+principal is unchanged. Independent review requires both a distinct actor and a distinct transport
+principal from every contributing attempt. Direct user authority additionally requires the asserted
+`user:` locator to equal the authenticated transport principal.
+
 Repository policy is user-owned. An agent MAY propose policy but MUST NOT accept a policy change.
 The policy from the integration parent governs the candidate that changes it.
 
@@ -168,6 +174,12 @@ The integration history carries portable repository authority:
 Initialization creates only `config.yml`. Records exist only after acceptance through the governed
 landing lifecycle. There is no authoritative generated index; indexes are deterministic views of
 the files at an exact tree.
+
+The commit that first introduces `config.yml` is the repository's governance trust root. Every
+later first-parent commit that changes tracked policy, records, sources, audits, or discoveries MUST
+be an Invariant landing with a valid attestation. `state.validate` evaluates the accepted integration
+tree and its first-parent history, never mutable worktree governance; an uncommitted governance
+edit is invalid state rather than provisional authority.
 
 ### 2.2 Durable operational ledger
 
@@ -511,6 +523,10 @@ Recording a semantic recommendation or review is an action response and consumes
 unless the response is direct intent supply from an allowed supplier. These operations remain
 schema-validated and causally bound.
 
+There is no direct policy-edit operation. A policy edit is ordinary isolated work whose exact
+candidate is evaluated under the integration parent's policy, receives direct user acceptance, and
+lands through `integration.land`.
+
 ### 5.2 Decisions
 
 A **capability request** names the actor, change, unit and attempt when applicable, capability,
@@ -788,13 +804,14 @@ The landing commit is the portable result. It carries:
 |---|---|
 | `Invariant-Protocol` | literal protocol version `1` |
 | `Invariant-Change` | change id |
-| `Invariant-Intent` | intent digest and supplier |
+| `Invariant-Intent` | intent digest, supplier, and supplying transport principal |
 | `Invariant-Plan` | recommendation id and digest |
-| `Invariant-Unit` | repeated unit id, result tree, and attributed actor |
+| `Invariant-Unit` | repeated unit id, result tree, attributed actor, and transport principal |
 | `Invariant-Decision` | each privileged decision digest consumed by landing |
+| `Invariant-Authority` | direct user action id, event digest, asserted user, and transport principal |
 | `Invariant-Governance` | each selected record id and digest |
 | `Invariant-Evidence` | exact candidate evidence-set digest |
-| `Invariant-Review` | review digest, mode, and authority when required |
+| `Invariant-Review` | review digest, mode, authority, and transport principal when required |
 | `Invariant-Landing-Parent` | expected integration parent commit |
 
 Trailer serialization is deterministic. Validation recomputes the first-parent candidate and
@@ -843,6 +860,9 @@ verification stop; it is not a transport failure. `outcome` is:
 
 Denial, staleness, missing authority, and verification failure are valid protocol results. MCP or
 process transport MUST NOT translate them into transport errors.
+
+Closed-vocabulary decoding is part of the operation boundary. An unknown capability or locator
+returns this envelope with its stable diagnostic code; it MUST NOT escape as a transport exception.
 
 ### 9.2 Operation families
 

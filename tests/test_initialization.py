@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from invariant.application import InvariantApplication
-from invariant.errors import Blocked
+from invariant.errors import Blocked, InvariantError
 from invariant.mechanics import git
 
 
@@ -47,3 +47,40 @@ def test_init_refuses_to_capture_existing_tracked_changes(tmp_path: Path) -> Non
 
     assert captured.value.code == "dirty_initialization"
     assert not (repo / ".invariant/config.yml").exists()
+
+
+def test_uncommitted_policy_is_not_accepted_state(tmp_path: Path) -> None:
+    repo = git_repository(tmp_path / "repo")
+    InvariantApplication.initialize(repo)
+    policy = repo / ".invariant/config.yml"
+    policy.write_text(
+        policy.read_text(encoding="utf-8").replace("publication: off", "publication: on"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(InvariantError) as captured:
+        InvariantApplication.bind(repo).state_validate()
+
+    assert captured.value.code == "invalid_state"
+    assert captured.value.data == {"paths": [".invariant/config.yml"]}
+
+
+def test_unattested_policy_commit_is_rejected_by_history_validation(
+    tmp_path: Path,
+) -> None:
+    repo = git_repository(tmp_path / "repo")
+    InvariantApplication.initialize(repo)
+    policy = repo / ".invariant/config.yml"
+    policy.write_text(
+        policy.read_text(encoding="utf-8").replace("publication: off", "publication: on"),
+        encoding="utf-8",
+    )
+    git.run(["add", ".invariant/config.yml"], cwd=repo)
+    git.run(["commit", "-qm", "bypass policy governance"], cwd=repo)
+    bypass = git.resolve(repo, "HEAD")
+
+    with pytest.raises(InvariantError) as captured:
+        InvariantApplication.bind(repo).state_validate()
+
+    assert captured.value.code == "invalid_attestation"
+    assert captured.value.data == {"commits": [bypass]}

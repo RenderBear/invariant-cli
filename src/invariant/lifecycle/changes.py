@@ -9,7 +9,14 @@ from invariant.ledger import Ledger, LedgerStore
 from invariant.ledger import handoff
 from invariant.mechanics import git
 from invariant.planning import RecommendationService
-from invariant.protocol import CapabilityName, EventKind, Intent, Scope, require_id
+from invariant.protocol import (
+    CapabilityName,
+    EventKind,
+    Intent,
+    Scope,
+    is_direct_user_authority,
+    require_id,
+)
 
 
 class ChangeService:
@@ -53,6 +60,13 @@ class ChangeService:
         if not policy.authority.intent.permits(supplier):
             raise InvariantError(
                 f"Invariant: policy does not accept intent supplied by '{supplier}'",
+                code="authority_required",
+            )
+        if supplier.startswith("user:") and not is_direct_user_authority(
+            supplier, self.store.principal
+        ):
+            raise InvariantError(
+                "Invariant: user intent must match the transport principal",
                 code="authority_required",
             )
         governance = GovernanceStore(self.repository.primary_worktree).load(base)

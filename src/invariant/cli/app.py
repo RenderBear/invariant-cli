@@ -45,7 +45,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     init = groups.add_parser("init")
     init.add_argument("--defaults", action="store_true")
-    init.add_argument("--replace", action="store_true")
 
     status = groups.add_parser("status")
 
@@ -171,9 +170,6 @@ def build_parser() -> argparse.ArgumentParser:
     publish.add_argument("--token", required=True)
     _mutating(publish)
 
-    setting = groups.add_parser("set")
-    setting.add_argument("key")
-    setting.add_argument("value")
     return parser
 
 
@@ -186,10 +182,8 @@ def _read_json(path: str) -> Any:
 
 def dispatch(args: argparse.Namespace) -> tuple[str, OperationResult]:
     if args.group == "init":
-        return "init", InvariantApplication.initialize(
-            ".", overwrite=args.replace
-        )
-    app = InvariantApplication.bind(".")
+        return "init", InvariantApplication.initialize(".")
+    app = InvariantApplication.bind(".", principal="user:cli")
     if args.group == "status":
         return "state.validate", app.state_validate()
     if args.group == "governance":
@@ -200,13 +194,6 @@ def dispatch(args: argparse.Namespace) -> tuple[str, OperationResult]:
             contracts=args.contract,
             capability=args.capability,
             at=args.at,
-        )
-    if args.group == "set":
-        from invariant.mechanics import config
-
-        lines = config.set_value(app.repository.primary_worktree, args.key, args.value)
-        return "policy.set", OperationResult(
-            app.state_validate().outcome, {"messages": lines}
         )
     if args.group == "change":
         if args.subcommand == "open":
@@ -333,6 +320,16 @@ def dispatch(args: argparse.Namespace) -> tuple[str, OperationResult]:
     )
 
 
+def _command_name(args: argparse.Namespace) -> str:
+    if args.group == "init":
+        return "init"
+    if args.group == "status":
+        return "state.validate"
+    if args.group == "governance":
+        return "governance.context"
+    return f"{args.group}.{args.subcommand}"
+
+
 def run(argv: list[str] | None = None) -> int:
     parser = build_parser()
     command = "unknown"
@@ -341,6 +338,7 @@ def run(argv: list[str] | None = None) -> int:
     try:
         args = parser.parse_args(values)
         format_name = args.format
+        command = _command_name(args)
         command, result = dispatch(args)
         return emit(command, result, format_name)
     except InvariantError as exc:

@@ -19,6 +19,7 @@ from invariant.protocol import (
     Outcome,
     Scope,
     digest,
+    is_direct_user_authority,
     require_authority_locator,
     require_id,
 )
@@ -86,6 +87,7 @@ class CapabilityService:
             expected_request = {
                 "capability": name.value,
                 "actor": actor,
+                "principal": self.store.principal,
                 "change": change_id,
                 "unit": unit,
                 "attempt": attempt,
@@ -154,6 +156,7 @@ class CapabilityService:
             "capability": name.value,
             "class": name.capability_class.value,
             "actor": actor,
+            "principal": self.store.principal,
             "change": change_id,
             "unit": unit,
             "attempt": attempt,
@@ -161,6 +164,7 @@ class CapabilityService:
             "request": {
                 "capability": name.value,
                 "actor": actor,
+                "principal": self.store.principal,
                 "change": change_id,
                 "unit": unit,
                 "attempt": attempt,
@@ -214,6 +218,7 @@ class CapabilityService:
             "capability": name.value,
             "class": name.capability_class.value,
             "actor": actor,
+            "principal": self.store.principal,
             "change": change_id,
             "unit": unit,
             "attempt": attempt,
@@ -338,7 +343,10 @@ class CapabilityService:
             if not action or action.get("status") != "pending":
                 return DecisionState.STALE, "the bound action is not pending"
             kind = action.get("kind")
-            if kind in {ActionKind.ACCEPT_GOVERNANCE.value, ActionKind.SUPPLY_INTENT.value} and not actor.startswith("user:"):
+            if kind in {
+                ActionKind.ACCEPT_GOVERNANCE.value,
+                ActionKind.SUPPLY_INTENT.value,
+            } and not is_direct_user_authority(actor, self.store.principal):
                 return DecisionState.NEEDS_AUTHORITY, "fresh user intent is required"
             if actor.startswith("agent:") and resolution_delegation != "secondary-agent":
                 return (
@@ -368,7 +376,7 @@ class CapabilityService:
             if not reason:
                 return DecisionState.NEEDS_AUTHORITY, "invalidation requires an attributable reason"
         elif name is CapabilityName.WORK_DISCARD and not (
-            actor.startswith("user:")
+            is_direct_user_authority(actor, self.store.principal)
             and self.repository.policy_at(
                 state["base"], state["target"]["branch"]
             ).authority.intent.permits(actor)
@@ -381,9 +389,10 @@ class CapabilityService:
         for action in state.get("actions", {}).values():
             response = action.get("response", {})
             actor = response.get("actor", "") if isinstance(response, dict) else ""
+            principal = response.get("principal", "") if isinstance(response, dict) else ""
             accepted = response.get("resolution") == "accepted" or response.get("verdict") == "accepted"
             if action.get("for_capability") == capability.value and action.get("status") == "responded" and accepted:
-                if actor.startswith("user:"):
+                if is_direct_user_authority(actor, principal):
                     return True
                 if resolver == "any-attributable" or (
                     resolver == "secondary-agent" and actor.startswith("agent:")

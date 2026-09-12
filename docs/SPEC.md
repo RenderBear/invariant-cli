@@ -136,10 +136,13 @@ ObligationSet
 Unknown closed fields and directive kinds are rejected. Open `relations` and `facets` are retained
 as data but never consulted by authorization or planning mechanics.
 
-Record filenames equal their ids. IDs are unique per kind. Every architecture locator resolves to a
-heading carrying an explicit `{#stable-anchor}`. The digest serializer normalizes mappings and sets,
-preserves ordered prose where order matters, reads exact canonical sections from the selected tree,
-and hashes the resulting UTF-8 bytes.
+Record filenames equal their ids. IDs are unique per kind. Every locator in a closed record or
+directive field resolves against the exact selected tree: record locators name existing records,
+repository paths and prefixes are tracked, audit ids name saved audits, verifier paths are files,
+and interfaces are declared by a domain. Architecture locators resolve to headings carrying an
+explicit `{#stable-anchor}`. The digest serializer normalizes mappings and sets, preserves ordered
+prose where order matters, reads exact canonical sections from the selected tree, and hashes the
+resulting UTF-8 bytes.
 
 The v1 schema is direct:
 
@@ -637,8 +640,10 @@ extra fields.
 
 The stdio client is one `harness:<instance>` principal configured at startup or generated for that
 server run. Calls name worker actors beneath it, but the transport principal attests who supplied
-those names. The ledger records both. Independent review requires a distinct actor and no authorship
-event for the candidate; a different string from the same author attempt is insufficient.
+those names. Every event and projected actor-bearing value records both. Independent review requires
+a distinct actor and a distinct transport principal from every candidate author; changing only the
+asserted actor string is insufficient. Direct user authority is valid only when the asserted
+`user:` locator equals the transport principal.
 
 Remote MCP transport is outside the initial implementation. It cannot be added without an explicit
 authentication and principal-binding design.
@@ -669,7 +674,6 @@ invariant work create|submit|discard ...
 invariant candidate converge|evidence ...
 invariant integration land|reconcile ...
 invariant publication publish ...
-invariant set <key> <value>
 invariant-mcp --repository <path>
 ```
 
@@ -816,11 +820,13 @@ are acceptable only when their ref heads are included in the cache key and retur
 attestation may exceed practical commit-message size, so trailers contain stable digests and compact
 repeated unit bindings while the retained ledger contains full explanations.
 
-`state.validate` walks first-parent integration history from a valid checkpoint or root and verifies:
+`state.validate` loads policy and records from the accepted integration commit, rejects mutable
+worktree governance, then walks first-parent history from the commit that first introduced
+`.invariant/config.yml`. It verifies:
 
 - landing parent and candidate identity;
 - change, supplied-intent, recommendation, and decision digests;
-- unit result and actor bindings;
+- unit result, actor, and transport-principal bindings;
 - governance versions and required retirement markers;
 - review and evidence digests;
 - policy authority for governed policy changes; and
@@ -828,8 +834,7 @@ repeated unit bindings while the retained ledger contains full explanations.
 
 A copied or rewritten landing commit fails because its first parent and recomputed tree differ. A
 missing local ledger does not invalidate an otherwise complete portable landing attestation, but it
-reduces available explanatory detail and is reported as `ledger_unavailable`, not as successful
-active handoff.
+reduces available explanatory detail and cannot support active handoff.
 
 Inspection is projection, never reconstruction by prose. `change inspect` can answer:
 

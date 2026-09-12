@@ -24,6 +24,7 @@ class Event:
     request_digest: str
     kind: EventKind
     actor: str
+    principal: str
     prior: str | None
     occurred_at: str
     payload: Mapping[str, Any]
@@ -37,13 +38,20 @@ class Event:
         operation_id: str,
         kind: EventKind,
         actor: str,
+        principal: str,
         prior: str | None,
         payload: Mapping[str, Any],
     ) -> "Event":
         require_id(operation_id, "operation id")
         require_authority_locator(actor, "event actor")
+        require_authority_locator(principal, "transport principal")
         request_digest = digest(
-            {"kind": kind.value, "actor": actor, "payload": payload}
+            {
+                "kind": kind.value,
+                "actor": actor,
+                "principal": principal,
+                "payload": payload,
+            }
         )
         body = {
             "version": PROTOCOL_VERSION,
@@ -52,6 +60,7 @@ class Event:
             "request_digest": request_digest,
             "kind": kind.value,
             "actor": actor,
+            "principal": principal,
             "prior": prior,
             "occurred_at": datetime.now(timezone.utc).isoformat(),
             "payload": payload,
@@ -63,6 +72,7 @@ class Event:
             request_digest,
             kind,
             actor,
+            principal,
             prior,
             body["occurred_at"],
             deepcopy(dict(payload)),
@@ -75,7 +85,7 @@ class Event:
             raise InvariantError("Invariant: corrupt ledger event", code="corrupt_ledger")
         allowed = {
             "version", "sequence", "operation_id", "request_digest", "kind", "actor",
-            "prior", "occurred_at", "payload", "digest",
+            "principal", "prior", "occurred_at", "payload", "digest",
         }
         if value.get("version") != PROTOCOL_VERSION or set(value) != allowed:
             raise InvariantError("Invariant: invalid ledger event version", code="corrupt_ledger")
@@ -83,6 +93,7 @@ class Event:
             kind = EventKind(value["kind"])
             require_id(value["operation_id"], "operation id")
             require_authority_locator(value["actor"], "event actor")
+            require_authority_locator(value["principal"], "transport principal")
         except (ValueError, InvariantError) as exc:
             raise InvariantError(f"Invariant: invalid ledger event: {exc}", code="corrupt_ledger") from exc
         sequence = value["sequence"]
@@ -95,13 +106,19 @@ class Event:
         if digest(body) != value["digest"]:
             raise InvariantError("Invariant: ledger event digest mismatch", code="corrupt_ledger")
         expected_request = digest(
-            {"kind": kind.value, "actor": value["actor"], "payload": payload}
+            {
+                "kind": kind.value,
+                "actor": value["actor"],
+                "principal": value["principal"],
+                "payload": payload,
+            }
         )
         if expected_request != value["request_digest"]:
             raise InvariantError("Invariant: ledger request digest mismatch", code="corrupt_ledger")
         return cls(
             PROTOCOL_VERSION, sequence, value["operation_id"], value["request_digest"], kind,
-            value["actor"], value["prior"], value["occurred_at"], payload, value["digest"],
+            value["actor"], value["principal"], value["prior"], value["occurred_at"],
+            payload, value["digest"],
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -112,6 +129,7 @@ class Event:
             "request_digest": self.request_digest,
             "kind": self.kind.value,
             "actor": self.actor,
+            "principal": self.principal,
             "prior": self.prior,
             "occurred_at": self.occurred_at,
             "payload": deepcopy(dict(self.payload)),
@@ -135,7 +153,7 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         state = {
             "version": PROTOCOL_VERSION,
             "change": event.payload["change"],
-            "intent": event.payload["intent"],
+            "intent": {**event.payload["intent"], "principal": event.principal},
             "repository": event.payload["repository"],
             "target": event.payload["target"],
             "base": event.payload["base"],
@@ -176,12 +194,16 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
             raise InvariantError("Invariant: action response has no pending action", code="corrupt_ledger")
         actions[action_id]["status"] = "responded"
         actions[action_id]["response"] = deepcopy(event.payload["response"])
+        actions[action_id]["response"]["principal"] = event.principal
+        actions[action_id]["response"]["event"] = event.digest
         state["stage"] = event.payload.get("next_stage", "evidencing")
     elif event.kind is EventKind.DECISION_RECORDED:
         decision = deepcopy(event.payload["decision"])
+        decision["principal"] = event.principal
         _require(state, "decisions")[decision["id"]] = decision
     elif event.kind is EventKind.GRANT_ISSUED:
         grant = deepcopy(event.payload["grant"])
+        grant["principal"] = event.principal
         grant["status"] = "live"
         _require(state, "grants")[grant["id"]] = grant
     elif event.kind in {EventKind.GRANT_REVOKED, EventKind.GRANT_CONSUMED}:
@@ -195,6 +217,7 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         grants[grant_id]["closed_by"] = event.operation_id
     elif event.kind is EventKind.ATTEMPT_CREATED:
         attempt = deepcopy(event.payload["attempt"])
+        attempt["principal"] = event.principal
         _require(state, "attempts")[attempt["id"]] = attempt
         state["stage"] = "executing"
     elif event.kind is EventKind.ATTEMPT_SUBMITTED:
@@ -231,7 +254,9 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         }
         state["stage"] = event.payload.get("next_stage", "ready-to-land")
     elif event.kind is EventKind.CANDIDATE_REVIEWED:
-        state["reviews"].append(deepcopy(event.payload["review"]))
+        review = deepcopy(event.payload["review"])
+        review["principal"] = event.principal
+        state["reviews"].append(review)
         state["stage"] = event.payload.get("next_stage", "ready-to-land")
     elif event.kind is EventKind.LANDING_STARTED:
         state["landing"] = deepcopy(event.payload["landing"])
@@ -255,6 +280,7 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         "request_digest": event.request_digest,
         "event_digest": event.digest,
         "sequence": event.sequence,
+        "principal": event.principal,
     }
     state["sequence"] = event.sequence
     state["last_event"] = event.digest

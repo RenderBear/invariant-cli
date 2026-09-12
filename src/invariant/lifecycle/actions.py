@@ -12,6 +12,7 @@ from invariant.protocol import (
     ReviewMode,
     ReviewVerdict,
     digest,
+    is_direct_user_authority,
     require_authority_locator,
 )
 
@@ -41,7 +42,11 @@ class ActionService:
         require_authority_locator(actor, "response actor")
         ledger = self.store.load(change_id)
         replay = ledger.event_for(operation_id)
-        normalized = {**dict(response), "actor": actor}
+        normalized = {
+            **dict(response),
+            "actor": actor,
+            "principal": self.store.principal,
+        }
         if replay:
             if (
                 replay.kind is EventKind.ACTION_RESPONDED
@@ -71,7 +76,7 @@ class ActionService:
             state["base"], state["target"]["branch"]
         )
         direct_user_intent = (
-            actor.startswith("user:")
+            is_direct_user_authority(actor, self.store.principal)
             and policy.authority.intent.permits(actor)
             and token is None
         )
@@ -93,7 +98,12 @@ class ActionService:
             ):
                 raise InvariantError("Invariant: accepted review requires a summary", code="invalid_invocation")
             authors = {attempt.get("actor") for attempt in state.get("attempts", {}).values()}
-            if expected_mode is ReviewMode.INDEPENDENT and actor in authors:
+            author_principals = {
+                attempt.get("principal") for attempt in state.get("attempts", {}).values()
+            }
+            if expected_mode is ReviewMode.INDEPENDENT and (
+                actor in authors or self.store.principal in author_principals
+            ):
                 raise InvariantError(
                     "Invariant: an author cannot mark its own work independent",
                     code="independent_review_required",
@@ -156,6 +166,7 @@ class ActionService:
             "verdict": verdict.value,
             "mode": expected_mode.value,
             "authority": actor,
+            "principal": self.store.principal,
             "summary": summary.strip(),
             "defects": response.get("defects", []),
         }

@@ -260,10 +260,27 @@ class GovernanceStore:
         return Record(kind, identifier, authority, normalized, directives, record_digest, path)
 
     def _validate_links(self, governance: Governance, ref: str | None) -> None:
-        domains = {record.identifier for record in governance.records if record.kind == "domain"}
-        contracts = {record.identifier for record in governance.records if record.kind == "contract"}
+        identifiers = {
+            kind: {
+                record.identifier for record in governance.records if record.kind == kind
+            }
+            for kind in KINDS
+        }
+        domains = identifiers["domain"]
+        contracts = identifiers["contract"]
+        interfaces = {
+            locator.removeprefix("interface:")
+            for record in governance.records
+            if record.kind == "domain"
+            for locator in record.strings("interfaces")
+            if locator.startswith("interface:")
+        }
         parents: dict[str, str] = {}
         for record in governance.records:
+            if record.authority.startswith("design:"):
+                self._architecture_section(
+                    "architecture:" + record.authority.removeprefix("design:"), ref
+                )
             if record.kind == "domain":
                 parent = record.data.get("parent")
                 if parent is not None:
@@ -275,10 +292,19 @@ class GovernanceStore:
                     value = contract.removeprefix("contract:")
                     if value not in contracts:
                         raise InvariantError(f"Invariant: {record.path} has missing contract '{value}'", code="unresolved_locator")
-            for locator in (*record.strings("applies_to"), *record.strings("between")):
-                if locator.startswith("domain:") and locator.removeprefix("domain:") not in domains:
-                    raise InvariantError(f"Invariant: unresolved locator '{locator}'", code="unresolved_locator")
-            self._validate_record_locators(record, ref)
+            if record.kind == "semantic":
+                for identifier in record.strings("supersedes"):
+                    if identifier.removeprefix("semantic:") not in identifiers["semantic"]:
+                        raise InvariantError(
+                            f"Invariant: unresolved semantic record '{identifier}'",
+                            code="unresolved_locator",
+                        )
+            self._validate_record_locators(
+                record,
+                ref,
+                identifiers=identifiers,
+                interfaces=interfaces,
+            )
         for start in parents:
             seen: set[str] = set()
             current = start
@@ -288,51 +314,135 @@ class GovernanceStore:
                 seen.add(current)
                 current = parents[current]
 
-    def _validate_record_locators(self, record: Record, ref: str | None) -> None:
+    def _validate_record_locators(
+        self,
+        record: Record,
+        ref: str | None,
+        *,
+        identifiers: Mapping[str, set[str]],
+        interfaces: set[str],
+    ) -> None:
         fields = (
             "applies_to", "revisit_on", "scope", "interfaces", "architecture",
             "contracts", "between", "surfaces", "material", "verifies",
         )
         for field in fields:
             for locator in record.strings(field):
+                normalized = locator
                 if field == "contracts" and ":" not in locator:
-                    continue
-                kind, separator, value = locator.partition(":")
-                if not separator or kind not in {
-                    "architecture", "repo", "interface", "domain", "contract",
-                    "semantic", "capability", "command", "test", "runner", "audit",
-                }:
-                    raise InvariantError(
-                        f"Invariant: invalid locator '{locator}' in {record.path}",
-                        code="unresolved_locator",
-                    )
-                if kind == "capability":
-                    try:
-                        CapabilityName(value)
-                    except ValueError as exc:
-                        raise InvariantError(
-                            f"Invariant: unknown capability locator '{locator}'",
-                            code="unknown_capability",
-                        ) from exc
-                elif kind == "architecture":
-                    self._architecture_section(locator, ref)
-                elif kind in {"repo", "command", "test"}:
-                    path = value.removeprefix("repo:")
-                    if Path(path).is_absolute() or ".." in Path(path).parts:
-                        raise InvariantError(
-                            f"Invariant: locator escapes repository '{locator}'",
-                            code="unresolved_locator",
-                        )
-                    if kind in {"command", "test"} and not self._file_exists(path, ref):
-                        raise InvariantError(
-                            f"Invariant: verifier does not resolve '{locator}'",
-                            code="unresolved_locator",
-                        )
+                    normalized = "contract:" + locator
+                elif field == "between" and ":" not in locator:
+                    normalized = "domain:" + locator
+                self._validate_locator(
+                    normalized,
+                    record.path,
+                    ref,
+                    identifiers=identifiers,
+                    interfaces=interfaces,
+                )
+        for directive in record.directives:
+            if directive.kind is DirectiveKind.REQUIRE_VERIFIER:
+                locators = (str(directive.values["locator"]),)
+            elif directive.kind is DirectiveKind.SERIALIZE:
+                locators = tuple(str(value) for value in directive.values["on"])
+            else:
+                locators = ()
+            for locator in locators:
+                self._validate_locator(
+                    locator,
+                    f"{record.path}.directives.{directive.identifier}",
+                    ref,
+                    identifiers=identifiers,
+                    interfaces=interfaces,
+                )
 
-    def _file_exists(self, path: str, ref: str | None) -> bool:
+    def _validate_locator(
+        self,
+        locator: str,
+        source: str,
+        ref: str | None,
+        *,
+        identifiers: Mapping[str, set[str]],
+        interfaces: set[str],
+    ) -> None:
+        kind, separator, value = locator.partition(":")
+        if not separator or not value or kind not in {
+            "architecture", "repo", "interface", "domain", "contract",
+            "semantic", "constraint", "capability", "command", "test", "runner",
+            "audit",
+        }:
+            raise InvariantError(
+                f"Invariant: invalid locator '{locator}' in {source}",
+                code="unresolved_locator",
+            )
+        if kind == "capability":
+            try:
+                CapabilityName(value)
+            except ValueError as exc:
+                raise InvariantError(
+                    f"Invariant: unknown capability locator '{locator}'",
+                    code="unknown_capability",
+                ) from exc
+            return
+        if kind == "architecture":
+            self._architecture_section(locator, ref)
+            return
+        if kind in {"repo", "command", "test"}:
+            if Path(value).is_absolute() or ".." in Path(value).parts:
+                raise InvariantError(
+                    f"Invariant: locator escapes repository '{locator}'",
+                    code="unresolved_locator",
+                )
+            if not self._path_exists(value, ref, file_only=kind in {"command", "test"}):
+                raise InvariantError(
+                    f"Invariant: repository target does not resolve '{locator}'",
+                    code="unresolved_locator",
+                )
+            return
+        if kind in identifiers:
+            if value not in identifiers[kind]:
+                raise InvariantError(
+                    f"Invariant: record target does not resolve '{locator}'",
+                    code="unresolved_locator",
+                )
+            return
+        if kind == "interface":
+            if value not in interfaces:
+                raise InvariantError(
+                    f"Invariant: interface does not resolve '{locator}'",
+                    code="unresolved_locator",
+                )
+            return
+        if kind == "audit":
+            try:
+                require_id(value, f"{source} audit id")
+            except InvariantError as exc:
+                raise InvariantError(
+                    f"Invariant: audit does not resolve '{locator}'",
+                    code="unresolved_locator",
+                ) from exc
+            if not self._path_exists(
+                f".invariant/audits/{value}.yml", ref, file_only=True
+            ):
+                raise InvariantError(
+                    f"Invariant: audit does not resolve '{locator}'",
+                    code="unresolved_locator",
+                )
+            return
+        raise InvariantError(
+            f"Invariant: no configured runner resolves '{locator}'",
+            code="unresolved_locator",
+        )
+
+    def _path_exists(self, path: str, ref: str | None, *, file_only: bool) -> bool:
         if ref:
-            return git.run(["cat-file", "-e", f"{ref}:{path}"], cwd=self.repo, check=False).returncode == 0
-        return (self.repo / path).is_file()
+            result = git.run(["cat-file", "-t", f"{ref}:{path}"], cwd=self.repo, check=False)
+            return result.returncode == 0 and (not file_only or result.stdout == "blob")
+        tracked = git.run(["ls-files", "--cached", "--", path], cwd=self.repo).stdout.splitlines()
+        if file_only:
+            return path in tracked and (self.repo / path).is_file()
+        prefix = path.rstrip("/") + "/"
+        return any(item == path or item.startswith(prefix) for item in tracked)
 
     def _architecture_section(self, locator: str, ref: str | None) -> str:
         value = locator.removeprefix("architecture:")

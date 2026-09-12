@@ -17,6 +17,8 @@ from invariant.mechanics import config, git
 from invariant.mechanics.landing import (
     IntegrationService,
     PublicationService,
+    governed_worktree_changes,
+    validate_governance_history,
     validate_landing_attestation,
 )
 from invariant.mechanics.verification import VerificationService
@@ -48,9 +50,10 @@ class InvariantApplication:
         repository: Repository,
         *,
         planner=None,
+        principal: str = "user:local",
     ) -> None:
         self.repository = repository
-        self.store = LedgerStore(repository)
+        self.store = LedgerStore(repository, principal=principal)
         self.capabilities = CapabilityService(self.store)
         self.changes = ChangeService(
             self.store, self.capabilities, RecommendationService(planner)
@@ -63,11 +66,17 @@ class InvariantApplication:
         self.publication = PublicationService(self.store, self.capabilities)
 
     @classmethod
-    def bind(cls, path: Path | str = ".", *, planner=None) -> "InvariantApplication":
-        return cls(Repository.bind(path), planner=planner)
+    def bind(
+        cls,
+        path: Path | str = ".",
+        *,
+        planner=None,
+        principal: str = "user:local",
+    ) -> "InvariantApplication":
+        return cls(Repository.bind(path), planner=planner, principal=principal)
 
     @staticmethod
-    def initialize(path: Path | str = ".", *, overwrite: bool = False, **values: Any) -> OperationResult:
+    def initialize(path: Path | str = ".", **values: Any) -> OperationResult:
         repo = git.root(path)
         git.require_capabilities(repo)
         nested = git.tracked_nested_invariant_paths(repo)
@@ -78,7 +87,7 @@ class InvariantApplication:
                 data={"paths": nested},
             )
         policy_path = repo / config.CONFIG_PATH
-        if policy_path.exists() and not overwrite:
+        if policy_path.exists():
             raise InvariantError(
                 f"Invariant: {config.CONFIG_PATH.as_posix()} already exists",
                 code="config_exists",
@@ -97,11 +106,10 @@ class InvariantApplication:
             nonce = git.common_dir(repo) / "invariant-bootstrap"
             if not nonce.exists():
                 nonce.write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
-        lines = config.initialize(repo, overwrite=overwrite, **values)
+        lines = config.initialize(repo, **values)
         git.run(["add", "--", config.CONFIG_PATH.as_posix()], cwd=repo)
-        subject = "Update Invariant policy" if overwrite else "Initialize Invariant"
         git.run(
-            ["commit", "-q", "-m", subject, "--", config.CONFIG_PATH.as_posix()],
+            ["commit", "-q", "-m", "Initialize Invariant", "--", config.CONFIG_PATH.as_posix()],
             cwd=repo,
         )
         commit = git.resolve(repo, "HEAD")
@@ -115,9 +123,17 @@ class InvariantApplication:
         )
 
     def state_validate(self) -> OperationResult:
-        policy = self.repository.policy
-        governance = GovernanceStore(self.repository.primary_worktree).load()
+        dirty_governance = governed_worktree_changes(self.repository.primary_worktree)
+        if dirty_governance:
+            raise InvariantError(
+                "Invariant: mutable worktree governance is not accepted state",
+                code="invalid_state",
+                data={"paths": dirty_governance},
+            )
+        target, target_head, policy = self.repository.integration()
+        governance = GovernanceStore(self.repository.primary_worktree).load(target_head)
         changes: list[dict[str, str]] = []
+        states: dict[str, Mapping[str, Any]] = {}
         refs = git.run(
             ["for-each-ref", "--format=%(refname)", "refs/invariant/changes"],
             cwd=self.repository.root,
@@ -126,11 +142,13 @@ class InvariantApplication:
         for ref in refs:
             change_id = ref.removeprefix("refs/invariant/changes/")
             ledger = self.store.load(change_id)
+            states[change_id] = ledger.state
             if ledger.state.get("stage") == "completed":
                 validate_landing_attestation(self.repository.root, ledger.state)
             changes.append(
                 {"id": change_id, "ledger": ledger.head, "stage": str(ledger.state["stage"])}
             )
+        validate_governance_history(self.repository.root, target_head, states)
         return OperationResult(
             Outcome.COMPLETED,
             {
@@ -144,7 +162,7 @@ class InvariantApplication:
                         },
                     },
                     "execution": {"transitions": policy.execution.transitions},
-                    "integration_branch": policy.integration_branch,
+                    "integration_branch": target,
                     "publication": policy.publication,
                     "parallelism": {"maximum": policy.parallelism.maximum},
                 },
@@ -169,10 +187,22 @@ class InvariantApplication:
         scope = Scope.create(
             paths=paths, interfaces=interfaces, domains=domains, contracts=contracts
         )
-        selected_capability = CapabilityName(capability) if capability else None
-        governance = GovernanceStore(self.repository.primary_worktree).load(at)
+        try:
+            selected_capability = CapabilityName(capability) if capability else None
+        except ValueError as exc:
+            raise InvariantError(
+                f"Invariant: unknown capability '{capability}'",
+                code="unknown_capability",
+            ) from exc
+        target, target_head, policy = self.repository.integration()
+        ground = at or target_head
+        governance = GovernanceStore(self.repository.primary_worktree).load(ground)
         selection = select(governance, scope, selected_capability)
-        obligations = compile_obligations(self.repository.policy, selection, scope)
+        obligations = compile_obligations(
+            self.repository.policy_at(ground, target) if at else policy,
+            selection,
+            scope,
+        )
         return OperationResult(
             Outcome.COMPLETED,
             {

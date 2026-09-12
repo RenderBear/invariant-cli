@@ -25,7 +25,7 @@ def repository(path: Path, *, commits: int = 1, planner: Planner | None = None) 
     InvariantApplication.initialize(path)
     for index in range(commits - 1):
         git.run(["commit", "-q", "--allow-empty", "-m", f"history {index}"], cwd=path)
-    return InvariantApplication.bind(path, planner=planner)
+    return InvariantApplication.bind(path, planner=planner, principal="user:test")
 
 
 def open_change(

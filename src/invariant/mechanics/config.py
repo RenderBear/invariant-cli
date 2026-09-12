@@ -16,16 +16,6 @@ from invariant.protocol import PROTOCOL_VERSION
 
 
 CONFIG_PATH = Path(".invariant/config.yml")
-SETTABLE_KEYS = {
-    "authority.intent.suppliers",
-    "authority.resolution.delegation",
-    "execution.transitions",
-    "integration_branch",
-    "publication",
-    "parallelism.maximum",
-}
-
-
 @dataclass(frozen=True)
 class IntentAuthority:
     suppliers: tuple[str, ...] = ("user",)
@@ -296,9 +286,9 @@ def default_document(
     }
 
 
-def initialize(repo: Path, *, overwrite: bool = False, **values: Any) -> list[str]:
+def initialize(repo: Path, **values: Any) -> list[str]:
     path = repo / CONFIG_PATH
-    if path.exists() and not overwrite:
+    if path.exists():
         raise InvariantError(
             f"Invariant: {CONFIG_PATH.as_posix()} already exists", code="config_exists"
         )
@@ -323,51 +313,7 @@ def initialize(repo: Path, *, overwrite: bool = False, **values: Any) -> list[st
     if ignored not in current_excludes.splitlines():
         separator = "" if not current_excludes or current_excludes.endswith("\n") else "\n"
         exclude.write_text(current_excludes + separator + ignored + "\n", encoding="utf-8")
-    action = "replaced" if overwrite else "created"
-    return [f"CONFIG: {action} {CONFIG_PATH.as_posix()}", *lines(resolve(repo))]
-
-
-def set_value(repo: Path, key: str, value: str) -> list[str]:
-    if key not in SETTABLE_KEYS:
-        raise InvariantError(
-            f"Invariant: configuration key '{key}' is not settable",
-            code="invalid_config_key",
-        )
-    path = repo / CONFIG_PATH
-    current = resolve(repo)
-    raw = load_config_yaml(path)
-    if not isinstance(raw, dict):
-        raise InvariantError("Invariant: configuration must be a mapping", code="invalid_policy")
-    document = dict(raw)
-    if key == "authority.intent.suppliers":
-        document["authority"] = {
-            **document["authority"],
-            "intent": {"suppliers": [item.strip() for item in value.split(",") if item.strip()]},
-        }
-    elif key == "authority.resolution.delegation":
-        document["authority"] = {
-            **document["authority"],
-            "resolution": {"delegation": value},
-        }
-    elif key == "execution.transitions":
-        document["execution"] = {"transitions": value}
-    elif key == "integration_branch":
-        document[key] = value
-    elif key == "publication":
-        document[key] = value
-    else:
-        document["parallelism"] = {
-            "maximum": int(value) if value.isdigit() else value
-        }
-    _from_raw(
-        repo,
-        document,
-        source=CONFIG_PATH.as_posix(),
-        fallback_branch=current.integration_branch,
-        fallback_source=current.branch_source,
-    )
-    dump_config_yaml(path, document)
-    return [f"CONFIG: set {key}={value}", *lines(resolve(repo))]
+    return [f"CONFIG: created {CONFIG_PATH.as_posix()}", *lines(resolve(repo))]
 
 
 def lines(value: Config) -> list[str]:

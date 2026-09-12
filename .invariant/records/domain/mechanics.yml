@@ -8,6 +8,8 @@ scope:
 - repo:src/invariant/mechanics
 interfaces:
 - interface:git-lifecycle
+- interface:git-common-directory
+- interface:integration-ref
 architecture:
 - architecture:docs/SPEC.md#mechanics
 contracts: []

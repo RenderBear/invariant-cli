@@ -14,19 +14,9 @@ invariant governance explain --path src/payments
 Initialization writes v1 policy and commits it as an isolated Git change before opening a governed
 change. Existing tracked edits block initialization; unrelated untracked files are not included.
 
-The tracked settings are:
-
-```bash
-invariant set authority.intent.suppliers user
-invariant set authority.resolution.delegation secondary-agent
-invariant set execution.transitions auto
-invariant set integration_branch main
-invariant set publication off
-invariant set parallelism.maximum 4
-```
-
-Intent supply and resolution delegation are authority policy. `execution.transitions` is a hint
-for compound host UX only; the low-level CLI remains explicit. It grants no semantic authority.
+Intent supply and resolution delegation are authority policy. Policy changes are made as isolated
+work inside an ordinary governed change and accepted under the integration parent's policy. There
+is no direct configuration editor in the operator CLI.
 
 ## Open a change
 
