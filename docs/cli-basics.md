@@ -10,6 +10,27 @@ Questions, changes, status, recovery, and authority decisions happen inside a du
 conversation. The user is never asked to operate task IDs, worktrees, review files, or lifecycle
 commands.
 
+## Connect an agent harness
+
+The separate `invariant-mcp` executable is the harness-facing surface. It starts a local stdio MCP
+server bound to exactly one Git repository:
+
+```bash
+invariant-mcp --repository /absolute/path/to/repository
+```
+
+Register that command with any MCP host. The server exposes typed tools for repository status,
+tracked-state validation, semantic retrieval, reach, managed tasks, resumption and recovery,
+candidate evidence, parallel-plan validation, and causal leases. It invokes the same versioned
+command contract as the CLI and returns its JSON envelope unchanged, including valid `blocked`,
+`needs_input`, and `awaiting_approval` outcomes.
+
+The server owns no durable state and accepts no repository argument after startup. Restarting it
+therefore reconnects to the same repository kernel; a harness cannot use one server instance to
+cross into another repository. MCP tool annotations help clients present mutations, but are not a
+security boundary. Invariant's tracked policy, exact-tree checks, and guarded Git operations remain
+the authority boundary.
+
 ## Connect a coding agent
 
 Invariant uses an existing Codex or Claude Code installation and stores no provider credentials.

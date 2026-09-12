@@ -77,6 +77,18 @@ invariant establish
 the findings and exact proposal there; discuss it normally, then enter `:record` to accept. Publishing
 is off by default.
 
+Agent harnesses can call the same kernel directly over MCP. Each server is bound to one Git
+repository; it exposes typed semantic, lifecycle, evidence, plan, and lease tools over stdio while
+the versioned CLI command contract remains authoritative:
+
+```bash
+invariant-mcp --repository /absolute/path/to/repository
+```
+
+Configure that command in the harness as a local stdio MCP server. The MCP process keeps no
+authoritative memory of its own: restarting it reconnects to the records, task state, and Git objects
+owned by the repository.
+
 ## Bring your agent. Add only what you need.
 
 Invariant owns the durable lifecycle; your provider owns the model account, authentication, quota, and
@@ -107,7 +119,26 @@ invariant set harness claude
 
 The human surface is exactly `init`, `connect`, `start`, `establish`, `serve`, `source`, and `set`.
 The deterministic task, governance, evidence, coordination, and candidate engine stays behind that
-surface.
+surface. `invariant-mcp` is the typed harness surface over the same engine, not another lifecycle.
+
+## Not another instruction file
+
+An instruction file asks a model to behave. An Invariant record gives accepted meaning a stable
+identity, scope, authority, invalidation rule, and—where the promise is observable—an executable
+witness. Records are selected again from the accepted tree, checked against the exact candidate,
+and bound into the landing commit.
+
+That distinction matters. A prose constraint is still only as reliable as the reviewer interpreting
+it. A policy or verifier enforced by the kernel does not depend on model obedience. For example,
+`push_remote: off` prevents Invariant from publishing at all; when publication is enabled, the
+landing code still permits only the exact landed commit and the integration branch's existing
+upstream. The semantic record explains why that boundary exists and makes changes to it
+consequential. The mechanics enforce it.
+
+Invariant cannot revoke a separate capability the harness already granted. A worker with remote
+credentials and unrestricted network access can still run `git push` outside the lifecycle. For a
+hard publication boundary, workers must lack that capability and only the configured Invariant
+landing process may hold it.
 
 ## What persists
 

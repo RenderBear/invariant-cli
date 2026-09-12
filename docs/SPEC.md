@@ -1011,7 +1011,27 @@ beyond the separately configured upstream push belong to the host.
   where the result can be computed without mutation.
 - Repeating an idempotent command with unchanged inputs yields an equivalent result.
 
-### 8.5 Per-user local host
+### 8.5 Repository-bound MCP transport
+
+`invariant-mcp --repository <path>` runs a stdio MCP server bound at startup to the primary
+worktree of exactly one Git common directory. It exposes typed tools for repository status and
+validation, semantic retrieval and reach, managed task progression, resumption, actions, and
+recovery, candidate evidence, parallel-plan validation, and causal lease operations. It accepts no
+per-call repository path and does not expose a generic command or arbitrary Git execution tool.
+
+Every tool invokes the existing typed CLI command contract in a fresh child process and returns its
+versioned JSON envelope unchanged. A protocol `blocked`, `needs_input`, or `awaiting_approval`
+outcome remains a successful MCP exchange so the harness can inspect its action or diagnostics; MCP
+transport failure is distinct from a valid lifecycle refusal. Structured action responses and plans
+are written only to temporary transport files and then validated by the ordinary core schemas.
+
+The MCP server retains no policy, receipt, review, evidence, plan, lease, or Git authority of its
+own. Tool annotations describe read and mutation behavior to a host but are never trusted as
+authorization. Restarting the server therefore reconnects to repository and runtime state rather
+than creating a second lifecycle. The stdio transport opens no listening socket; remote MCP
+transport and its authentication model are outside version one.
+
+### 8.6 Per-user local host
 
 `invariant serve` starts one loopback-only HTTP/1.1 host for the current OS user. Its default port is
 `3000`; `--port` selects another machine-local port for that invocation. The host owns the personal
@@ -1402,6 +1422,7 @@ Invariant is a standard `src`-layout Python distribution built with `uv_build`:
 ```text
 src/invariant/
   frontend.py  human command surface and local-provider orchestration
+  mcp_server.py repository-bound stdio transport over the typed command contract
   protocol.py  stable cross-layer values for stages, outcomes, reach, boundaries, and evidence
   semantics/   typed envelopes plus free-form stage guidance
   mechanics/   deterministic repository operations
@@ -1416,12 +1437,12 @@ Git. `protocol.py` contains data types only—no policy, I/O, or repository oper
 exchange discriminated values without importing each other. Compatibility shell paths translate
 arguments into package calls and contain no policy.
 
-The distribution is `invariant-cli`; its console entry point is `invariant`, with the advanced
-`invariant-agent` host executable in the same package. `invariant` exposes only the seven human
-commands and implements model-backed operations outside the core dependency layers. The typed core
-CLI is an internal application module used by the host and tests.
-Any future MCP or richer harness adapter must call the same command contract rather than duplicate
-it.
+The distribution is `invariant-cli`; its console entry points are `invariant`, the advanced
+`invariant-agent` host executable, and the repository-bound `invariant-mcp` server. `invariant`
+exposes only the seven human commands and implements model-backed operations outside the core
+dependency layers. The typed core CLI is an internal application module used by the host, MCP
+transport, and tests. Any richer harness adapter must call the same command contract rather than
+duplicate it.
 
 Tracked governance remains version 1 unless an actual model change requires another version. The
 version-one protocol uses only the Invariant namespace and does not translate earlier names.
@@ -1456,6 +1477,8 @@ The first CLI release is complete when:
 - routine managed work passes through receipts, generated branches, and atomic landing without
   unnecessary semantic or confirmation ceremony;
 - a Codex task can use the CLI through shell execution without a custom Codex integration;
+- an MCP host can use the same repository-bound semantics, lifecycle, evidence, and coordination
+  operations without receiving an arbitrary command or per-call repository escape hatch;
 - the optional harness can resolve the same schema-bound read-only action through either a locally
   authenticated Codex or Claude Code process without introducing a core-to-harness dependency;
 - another application can consume the same behavior through JSON without parsing prose;

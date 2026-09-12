@@ -1,0 +1,11 @@
+#!/bin/sh
+# Source-tree launcher for the repository-bound MCP server.
+set -eu
+
+root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+python="$root/.venv/bin/python"
+if [ ! -x "$python" ]; then
+  python=${PYTHON:-python3}
+fi
+
+PYTHONPATH="$root/src${PYTHONPATH:+:$PYTHONPATH}" exec "$python" -P -m invariant.mcp_server "$@"
