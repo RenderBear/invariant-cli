@@ -1,1490 +1,958 @@
-# Invariant CLI — design of record
+# Invariant — implementation design of record
 
-This document is the design of record for the reference CLI implementation. The
-implementation-independent contract it implements — tracked state, record envelopes, the task
-lifecycle and its actions, landing guarantees, commit trailers, and the JSON envelope — is defined
-in [`protocol/protocol.md`](../protocol/protocol.md). Where the two disagree, the protocol governs
-and this document is wrong.
+This document specifies the reference implementation of [protocol version 2](../protocol/protocol.md).
+The protocol defines the implementation-independent contract; this file defines the Python package,
+Git representation, compiler, recommendation engine, capability gateway, MCP tools, CLI, and local
+execution mechanics. Where they disagree, the protocol governs and this document is wrong.
 
-Invariant is a repository-native control plane for long-running agentic work, delivered as a
-portable command-line application. It records accepted architectural meaning and binds explicit
-review assertions to repository changes while owning deterministic mechanics, the fixed repository
-lifecycle, a small semantic protocol, and optional integrations for agents and automation. It does
-not host or execute the model loop.
+This is the target design. The existing version-one code is intentionally allowed to lag while the
+implementation plan at [`plan.md`](../plan.md) is executed. Version two replaces obsolete schemas,
+runtime receipts, commands, and tools directly. It does not add compatibility readers or migrations.
 
-The design separates three concerns:
+Invariant is the governance layer for complex agentic work:
 
-1. **Semantics** decides what the requested change means.
-2. **Mechanics** calculates and enforces deterministic repository facts.
-3. **Lifecycle** advances work through briefing, isolation, verification, and landing.
+> A harness says what it wants and runs the workers. Invariant decides the admissible work shape,
+> grants bounded consequences, verifies the exact result, and records why it was allowed.
 
-The core product philosophy is:
+“Governance” here is operational. Accepted meaning must affect context, review, verification,
+parallel ordering, capability issuance, or landing. A record that has no possible protocol effect is
+documentation or evidence, not governance.
 
-1. free-form agent reasoning for accuracy;
-2. deterministic, inspectable state where reasoning becomes consequential;
-3. near-zero user ceremony for routine work;
-4. hard authority boundaries when an accepted promise is genuinely at risk.
+---
 
-The CLI owns mechanics and lifecycle. A coding agent or harness owns repository investigation and
-implementation. Humans provide goals, resolve escalated ambiguity or conflict, and may approve
-lifecycle transitions; they are not expected to inspect repository internals. Explicit repository
-configuration may authorize one bounded external effect—publishing a verified landing to an
-existing Git upstream—and the host owns every other external effect. None of these layers may
-silently assume another layer's authority.
+## 1. Product boundary
 
-## 1. Goals
+### 1.1 Goals
 
-Invariant answers:
+The reference implementation answers these questions for every requested change:
 
-1. Which accepted responsibilities, architecture decisions, and contracts may apply?
-2. Which facts can be derived exactly from repository state?
-3. Does a candidate preserve the accepted meaning selected by its semantic reviewer?
-4. Which executable checks apply to that exact candidate?
-5. Can a requested local ref update happen without races, hidden conflicts, or unverifiable
-   mechanical claims inside this clone?
+1. Which accepted repository meaning applies to this goal and its actual result?
+2. Which consequences does that meaning require or prohibit?
+3. Should the change remain one unit, or what is the maximum admissible parallel frontier?
+4. Which narrowly scoped capabilities may be issued to which worker attempt?
+5. What work, evidence, and review produced this exact candidate tree?
+6. May the candidate move the integration ref or publish its landed commit?
+7. Can another harness resume correctly after processes, sessions, or substantial time have passed?
 
-Invariant should be usable from:
+The answer must be deterministic wherever repository facts suffice, typed wherever judgment is
+required, causally bound to Git objects, and durable enough to reconstruct without a transcript.
 
-- an interactive shell;
-- a coding agent such as Codex;
-- an IDE or desktop application;
-- CI;
-- a repository hook;
-- a purpose-built agent harness.
-
-No integration is privileged. The same CLI contract serves all of them.
-
-## 2. Non-goals
+### 1.2 Non-goals
 
 Invariant does not:
 
-- provide its own language model or conversation loop;
-- implement the user's requested repository change;
-- infer semantic domains from directory names;
-- decide whether a new promise deserves authority;
-- replace repository tests, code review, or deployment policy;
-- treat cached content as model memory;
-- infer or configure a remote destination, deploy, publish artifacts, perform destructive cleanup,
-  or authorize unbounded external side effects.
+- choose the harness's models, worker count, machines, retry policy, or message transport;
+- run implementation workers or own their conversation state;
+- expose a generic shell, arbitrary Git command, network client, or credential proxy;
+- infer permission from free-form prose, `AGENTS.md`, model confidence, or tool annotations;
+- claim hard containment when a worker retains an out-of-band path;
+- prove that an accepted architectural decision is wise;
+- turn a verifier into proof of the entire prose assertion;
+- replace Git hosting, CI, identity providers, or an operating-system sandbox; or
+- make active change refs portable through an ordinary clone without explicit export.
 
-## 3. Layer ownership
+### 1.3 The product surfaces
 
-### 3.1 Semantics
+There is one application service with two transports:
 
-Semantic work is normally performed by the coding agent, with human authority requested only when
-accepted governance is insufficient or contradictory. It owns:
+- **MCP is the harness-facing capability gateway.** It is repository-bound at process startup and
+  exposes only typed operations.
+- **The CLI is the operator, inspection, and recovery surface.** It calls the same application
+  service and is useful when no MCP host is present.
 
-- interpreting the user's requested outcome;
-- selecting relevant semantic domains;
-- distinguishing architecture, contracts, and implementation detail;
-- deciding whether durable meaning is unchanged, changed, or uncertain;
-- interpreting audit evidence;
-- authoring accepted governance;
-- reviewing architecture against a candidate;
-- resolving incompatible meaning within granted authority.
+Neither transport is authoritative. Git-backed governance and ledgers are authoritative. The MCP
+server does not shell out to the CLI, and the CLI does not reimplement MCP behavior.
 
-Semantic work produces explicit inputs to the CLI. The agent may inspect code and prepare those
-inputs; the human supplies goals and decisions, not repository plumbing. Semantic output never gains
-authority merely because a model said something or a path matched a pattern.
+---
 
-Skills may assist semantic work, but skills are optional adapters. They do not implement repository
-state transitions, branch policy, caches, retries, or the execution loop.
+## 2. Trust and containment
 
-### 3.2 Mechanics
+The application evaluates two different properties for every operation:
 
-The `invariant` CLI owns deterministic operations:
+1. **Authorization:** accepted policy and governance permit this consequence.
+2. **Containment:** the actor has no alternative path around the gateway for this consequence.
 
-- parsing and validating tracked Invariant state;
-- checking identifiers, references, and Markdown anchors;
-- deriving path and package scopes;
-- projecting selected governance;
-- calculating content digests;
-- detecting changed material;
-- proving the installed Git supports required exact-candidate and linked-worktree operations before
-  lifecycle mutation;
-- constructing exact Git candidates;
-- selecting declared verifiers;
-- running checks against an exact tree and capturing their command, environment, result, output
-  digest, and log as evidence;
-- validating audit and lease freshness;
-- detecting conflicts and concurrent ref movement;
-- atomically updating a local ref when explicitly requested;
-- pushing the exact landed commit to an existing upstream only when tracked policy opts in.
+Authorization is implemented in version two. Containment is reported per capability and may be
+`advisory` until a concrete containment provider proves otherwise. The UI and structured output must
+never collapse those properties into one “safe” flag.
 
-The CLI does not call a model or select semantic domains. It may prepare `no-record` for a
-mechanically local or bounded routine candidate; reach never manufactures authority for an open or
-gated transition. Other semantic assertions come from the caller and are validated against
-mechanical facts.
+A containment provider is host-local configuration, not repository authority. It reports the
+mechanism and observations that justify `managed`, for example:
 
-### 3.3 Lifecycle
+- a worker sandbox cannot write the integration common directory;
+- only the Invariant service owns the remote credential;
+- worker network access cannot reach the Git remote; or
+- a delegated filesystem handle exposes only one generated worktree.
 
-The CLI owns the fixed repository lifecycle. It owns:
+The first implementation includes `uncontained`, which always reports `advisory`. Additional
+providers plug into the gateway behind a fixed interface. A harness assertion about its own sandbox
+is recorded as `harness:` provenance but does not by itself upgrade enforcement.
 
-- capturing the integration target and causal ground;
-- creating and refreshing a task receipt;
-- creating or reusing an isolated generated worktree;
-- recording lifecycle state needed for resumption;
-- constructing the prospective integration tree;
-- requiring semantic inputs at the points where mechanics cannot decide;
-- running exact-tree verification;
-- atomically landing onto the integration target;
-- optionally publishing that exact landing under explicit tracked policy;
-- releasing associated leases, removing active work, and archiving the completed argument trail.
+Grant tokens are bearer secrets. The service generates 256 random bits, returns the token exactly
+once, and stores only its SHA-256 digest in the ledger. Tokens never appear in text rendering, logs,
+commit messages, handoff capsules, or verification artifacts. A resumed harness revokes abandoned
+live grants and requests new ones.
 
-The host may be a coding agent, purpose-built harness, IDE integration, or automation system. It
-owns the conversation, performs implementation inside the CLI-provided work context, supplies
-semantic decisions, presents progress and approval requests to the human, and owns every external
-effect beyond the optional configured Git publication step.
+---
 
-The lifecycle is fixed even when execution is automatic. Automation removes routine pauses; it does
-not remove lifecycle stages or checks.
+## 3. Semantics {#semantics}
 
-## 4. Application boundary
+### 3.1 Record model
 
-The core CLI is a standalone local lifecycle application, but it is not an agent harness. Its
-primary role is to be executed as a child process by a coding agent or another application. Direct
-human use is limited to configuration, inspection, resolution support, and optional lifecycle
-control—not repository investigation or implementation.
-
-The dependency direction is always:
+Version-two records are immutable typed values loaded from one exact Git tree. The package defines:
 
 ```text
-human goals, authority, and optional approvals
-          |
-          v
-coding agent / IDE / harness / automation
-          | repository analysis + implementation + semantic protocol
-          v
-     invariant task lifecycle
-          | deterministic mechanics
-          v
-      Git repository + .invariant
+SemanticRecord
+DomainRecord
+ContractRecord
+ConstraintRecord
+Directive
+RecordDigest
+GovernanceSelection
+ObligationSet
 ```
 
-The CLI must never require the caller to expose its conversation internals. The caller supplies
-arguments or a structured input document and receives structured results.
+Unknown closed fields and directive kinds are rejected. Open `relations` and `facets` are retained
+as data but never consulted by authorization or planning mechanics.
 
-An external application can integrate at three levels:
+Record filenames equal their ids. IDs are unique per kind. Every architecture locator resolves to a
+heading carrying an explicit `{#stable-anchor}`. The digest serializer normalizes mappings and sets,
+preserves ordered prose where order matters, reads exact canonical sections from the selected tree,
+and hashes the resulting UTF-8 bytes.
 
-1. **Shell binding** — execute `invariant --format json ...` and interpret its exit status and JSON.
-2. **Typed tool binding** — expose selected CLI commands through function calling or MCP while the
-   tool implementation invokes the CLI.
-3. **Harness binding** — use an agent SDK or app-server to own conversations, approvals, and
-   resumption while invoking the CLI as the repository mechanics tool.
+The version-two schema changes are direct:
 
-The first form is the compatibility baseline. The other forms must preserve the same command,
-lifecycle, and result semantics rather than reimplementing Invariant rules.
+- semantic records add `directives`, and `applies_to` may name `capability:<name>`;
+- domains add `scope` and `interfaces` as planning and selection coordinates;
+- contracts retain mandatory `between`, `surfaces`, `architecture`, and `verifies`;
+- constraints add `directives` and require at least one directive or verifier;
+- bare domain ids in `applies_to` become typed `domain:<id>` locators; and
+- every tracked configuration and record uses `version: 2`.
 
-### 4.1 Fixed task lifecycle
+No version-one record is accepted by the version-two loader.
 
-In a repository whose agent instructions activate Invariant, every repository mutation is a managed
-task and follows the same shape:
+### 3.2 Selection
+
+Selection takes an exact tree plus goal-derived and observed reach:
 
 ```text
-begin
-  -> receipt + isolated work branch
-  -> task.created hook actions
-  -> implementation by the host
-  -> exact prospective tree
-  -> reach + exact-tree mechanical evidence
-  -> candidate.evidenced hook actions
-  -> final verification
-  -> atomic local landing
-  -> optional configured upstream push
-  -> active-state cleanup + completed argument archive
+paths + interfaces + domains + contracts + capabilities + governed material
+    -> direct record intersection
+    -> domain parents and named contracts
+    -> semantic revisit dependencies
+    -> canonical sections and defining material
+    -> stable ordered GovernanceSelection
 ```
 
-`invariant task begin` captures the target, gathers the mechanically available context, records the
-semantic envelope, and creates or reuses a generated branch in a dedicated linked worktree. It
-leaves the integration checkout unchanged so several tasks can begin concurrently in one clone and
-returns the task worktree plus typed lifecycle state and actions. Generated runtime paths remain an
-implementation detail under the primary worktree's `.invariant/runtime/` namespace.
+Pre-work selection uses declared claims and semantic planner output. A capability request also
+selects every active record whose `applies_to` intersects `capability:<name>`; a publication rule
+therefore cannot disappear merely because publication changes no source path. Candidate selection
+uses the actual Git diff and overrides omissions in the declaration. Selection returns each reason,
+so an operator can ask why a record applied without asking a model to reconstruct the answer.
 
-The initial durable-meaning boundary defaults to `unresolved`. A harness may provide a grounded
-disposition early, but the CLI does not require a human or agent to predict candidate reach before
-the candidate exists. Final boundary review remains mandatory during `task finish`.
+### 3.3 Normative compiler
 
-`invariant task finish` generates its internal assessment, constructs the prospective candidate,
-and captures applicable mechanical evidence. Routine candidates continue directly. When semantic
-input remains, it returns typed actions with a successful `needs_input` outcome; the host resolves
-them through `task respond`, never by editing task runtime. The last response continues into final
-validation and compare-and-swaps the local integration ref. If verification or landing fails, the
-worktree remains recoverable. When remote
-publication is enabled, it occurs only after local landing; a rejected push leaves that verified
-local landing intact and reports it explicitly.
-
-Semantic acknowledgements are attributable assertions, not proof of reviewer comprehension. The
-CLI can bind them to an exact tree, expose omissions, and preserve who asserted what; it cannot
-distinguish careful reasoning from a rubber stamp.
-
-An unrelated mergeable integration advance may be adopted without restarting semantics. Expanded
-semantic scope, changed governing material, incompatible meaning, or a real conflict returns the
-task to the relevant earlier stage.
-
-The existing staged direct-edit path remains an explicit recovery path for work already performed on
-the integration branch. It does not replace the normal generated-branch lifecycle and still requires
-exact-tree verification and atomic landing.
-
-### 4.2 Human ergonomics
-
-The host translates semantic protocol into behavior-level decisions. Humans are not asked to
-construct paths, domains, reach sets, boundary dispositions, architecture or governance locators,
-checks, or assessment files. Those are agent-authored and mechanically validated integration data.
-
-When human authority is required, the host presents the observation, confidence, practical
-consequence, compatible options, recommendation, and one concrete approval or clarification. After
-a governance audit it groups findings into ready, decision-needed, verifier-needed, and
-evidence-only categories; confirms that the audit is saved; and offers deeper investigation,
-adoption of all ready findings, adoption of selected findings, or deferral. Raw validation failures
-remain available for diagnostics but are not treated as the human interaction design.
-
-Human-translation guidance is package-owned and composed into stage-specific `task guidance`
-output. Invariant supplies the relevant guidance when it invokes an agent; initialization does not
-copy lifecycle rules into persistent `AGENTS.md` or `CLAUDE.md` files.
-
-### 4.3 Local-agent host and advanced harness
-
-The installed `invariant` entry point provides a human host over the deterministic core. It can
-start an already-installed, locally authenticated Codex or Claude Code process and keep the model
-inside the same governed task lifecycle. The core CLI, lifecycle, mechanics, semantics, and protocol
-layers do not import the host, provider SDKs, or provider authentication code.
-
-The public host separates four states:
-
-- a machine connection means a native executable is installed and reports an authenticated local
-  session;
-- the machine default chooses the first harness tried by clones without a local preference;
-- a clone-local preference of `auto`, `codex`, or `claude`, kept under `.invariant/runtime/` and
-  never committed, overrides the machine default for one checkout.
-
-`invariant connect` inspects connections and reports the machine default without model invocation.
-Only the global `invariant connect PROVIDER` and `invariant connect --default PROVIDER` forms
-delegate login to the native CLI when needed. The latter also switches the machine default. The
-local `init --agent PROVIDER` and `set harness PROVIDER` commands record that clone-local
-preference without changing the machine-wide connection or the tracked configuration. Invariant never reads or stores credentials. `auto`
-deterministically prefers the authenticated machine default, then the other supported harness. A
-named provider does not fall back.
-
-The human-facing model operation is `start [PROMPT]`, one persistent conversation that answers
-questions, classifies requested writes, runs the internal managed-change lifecycle, explains status,
-and carries human decisions. `establish` composes it by starting the same conversation with an
-internal `:establish` control turn. Both accept `--using` as a provider override. Human callers never
-invent a task or action ID. Connection inspection never invokes a model, and initialization remains
-deterministic. When `start` or `establish` finds no configuration, guided initialization runs first
-and the original operation then continues.
-
-The distribution retains `invariant-agent` as a separate advanced host-side executable. This bridge
-reads a typed request from the core CLI, starts a provider in the task worktree, and sends the
-structured result back through the protocol. It:
-
-- discovers `codex` and `claude` on `PATH`, accepts explicit `INVARIANT_CODEX` and
-  `INVARIANT_CLAUDE` executable paths, opportunistically discovers the Codex executable bundled in
-  the macOS ChatGPT app, and relies on each executable's existing local authentication and account
-  configuration;
-- exposes `ask --using PROVIDER PROMPT` for an immediate, one-shot, read-only repository answer,
-  with `--dry-run` as an explicit preview;
-- exposes `resolve TASK --using PROVIDER` as an ergonomic advanced surface, infers the action when
-  exactly one is pending, and requires `--action ACTION_ID` only when selection is ambiguous;
-- defaults state-changing resolution and governance operations to a non-mutating preview and
-  requires `--apply` before model invocation or submission;
-- runs a fresh, non-persistent, read-only provider session in the selected repository or the exact
-  managed task worktree;
-- supplies the action's versioned JSON schema to the provider and preserves causal constants such
-  as goal digest, candidate tree, review id, and attribution;
-- records provider session identity, token/cost metadata when supplied, and a response digest in its
-  result without storing credentials or conversation state;
-- stamps `authority` and `review_mode` on every review it submits from how it dispatched the
-  action, recording `independent` only when invoked with `--independent` because the host routed
-  the action away from the candidate's author; the public `change` command normally records its
-  authoring-provider review as `self-attested`, but starts a fresh independent review for every
-  gated transition or contract-defining change; and
-- treats provider output as untrusted input which the existing core command validates before any
-  lifecycle transition.
-
-Codex is invoked through non-interactive `codex exec` with an ephemeral read-only sandbox, ignored
-user configuration and execution rules, disabled hooks and MCP servers, and a schema-bound final
-output. Claude Code is invoked through print mode with restricted mode, plan permissions,
-repository-reading tools only, denied MCP tools, no session persistence, and a JSON schema. Provider
-eligibility, quotas, and billing remain properties of the locally authenticated provider CLI; the
-harness neither proxies nor resells model access.
-
-Resumed Codex turns restate the read-only sandbox through configuration rather than inheriting
-it from the first turn.
-
-The source-write phase is separate. Codex runs ephemerally with `workspace-write`, disabled hooks
-and MCP servers, and no inherited user configuration. Claude Code runs in bare print mode with
-accepted repository edits, an explicit local tool set, denied MCP tools, denied shell access to
-commits, publication, ref movement, worktrees, and the `invariant` executables, and no session
-persistence.
-The task worktree is the process working directory, and the host prompt forbids commits,
-publication, external effects, and Invariant runtime changes. The host—not the provider—creates the
-candidate commit and sends it through core evidence, review, verification, and landing.
-
-The advanced binding owns governance audit generation and resolution of pending typed lifecycle
-actions for the host. Source changes are owned by the public host's distinct write phase, not by
-typed semantic workers. Both layers consume the same deterministic core protocol.
-
-## 5. State and authority
-
-Tracked repository state remains:
+The compiler is a pure function:
 
 ```text
-.invariant/config.yml
-.invariant/records/semantic/<id>.yml
-.invariant/records/domain/<id>.yml
-.invariant/records/contract/<id>.yml
-.invariant/records/constraint/<id>.yml
-.invariant/SOURCES.yml
-.invariant/sources/<material>
-.invariant/audits/<id>.yml
-.invariant/discoveries/<id>.yml
+compile(policy, selection, capability?, recommendation?, candidate?, containment?)
+    -> ObligationSet
 ```
 
-Initialization creates the configuration only. Domain and contract registries are created only when
-accepted records exist; bootstrap does not manufacture empty semantic authority or write provider
-instruction files.
-
-`config.yml` is policy and is owned by the user (protocol §1.1). It reaches the integration branch
-in two ways only. `invariant init` and `invariant set` write it and, when the working tree carries
-no other change, commit it as an attested landing whose review trailers name `user:initialization`
-or `user:policy-<key>`. Any other route — a hand commit, a candidate produced by a task — is a
-policy change that finish never treats as routine: the candidate review must carry a `user:`
-authority or it is refused as `policy_review_required`, and an unattested range that changed the
-policy file forces the same requirement onto the landing that covers it. The public `change` host
-discards provider edits to the policy file before it commits a candidate and reports the discard;
-Claude Code additionally has the file denied at its tool boundary. Enforcement lives at landing and
-in history validation, not in the file system: nothing stops a process from writing the file, but
-nothing it writes there is accepted policy until a user lands it.
-
-A record is retired by a candidate that removes its file. Finish infers the retired reference into
-the candidate's governance, the change is gated, and the landing carries `Invariant-Retired` per
-removed record; the reference resolves in the landing's first parent.
-
-Generated local state is shared by linked worktrees and self-ignored at its root:
-
-```text
-.invariant/runtime/briefs/<task-id>.yml
-.invariant/runtime/tasks/<task-id>/review.md
-.invariant/runtime/tasks/<task-id>/...
-.invariant/runtime/history/tasks/<task-id>/<landed-commit>/...
-.invariant/runtime/verifications/<evidence-id>.*
-.invariant/runtime/history-validation/<target>.yml
-.invariant/runtime/plans/<id>.yml
-.invariant/runtime/leases/<unit>.yml
-.invariant/runtime/processes/<pid>.yml
-.invariant/runtime/worktrees/<task-id>-<nonce>/...
-```
-
-This runtime is outside repository history, but not scattered outside the Invariant namespace.
-Active task state is cleaned on completion; the completed argument archive and reusable verifier
-receipts remain inspectable until an explicit `invariant coordinate runtime clean --apply`.
-
-The standing of each object is:
-
-| Object | Standing | Lifetime |
-|---|---|---|
-| Semantic record and canonical prose | accepted interpretation | repository history |
-| Domain and contract projections | accepted authority | repository history |
-| Source registration and repository-held source material | evidence only | repository history |
-| Audit, discovery | evidence only | repository history |
-| Intent brief and candidate reviews | task-local semantic argument | ignored archive until explicit cleanup |
-| Plan, lease | coordination only | active work |
-| Active receipt | cache integrity only | active task |
-| Git tree and commit | causal implementation fact | repository history |
-| Verification result | reproducible observation for one exact tree | ignored cache/archive until explicit cleanup |
-
-Only accepted governance binds future work. Evidence can motivate governance but cannot become
-authority without explicit adoption.
-
-### 5.1 Grounding sources
-
-A grounding source is attributable evidence attached to an existing semantic scope. The public
-addition grammar has exactly two exclusive pairs:
-
-```text
-invariant source add
-  (--url <absolute-http(s)-url> | --path <path-relative-to-.invariant>)
-  (--scope <domain-or-contract> | --repo)
-```
-
-Paths must be regular files beneath `.invariant/sources/`; traversal, absolute paths, runtime
-paths, and escaping symlinks are rejected. Exact scopes use lowercase `domain:<id>` or
-`contract:<id>` locators. Non-locator scope descriptions are resolved by a read-only agent against
-the accepted domain and contract catalog, never against the source content. The original phrase
-and normalized locator are both retained. `--repo` is repository-wide applicability, not a
-machine-global setting.
-
-The source ID is deterministically derived from its canonical origin. Adding a source writes only
-the source index and, for a path origin, the named source material. It runs as a `no-record` task
-through the ordinary isolated candidate, exact-tree validation, and atomic local landing path. It
-cannot create or modify architecture, domains, contracts, decisions, or constraints. Model prompts
-label registered sources as untrusted evidence; source content is never treated as instructions or
-semantic authority.
-
-One logical Invariant kernel is attached to each Git common directory. Commands resolve the Git
-top-level first and use only `<worktree-root>/.invariant`; they never select the nearest nested
-`.invariant`. Tracked nested Invariant state inside the same Git repository is invalid. Linked
-worktrees share runtime through the primary worktree. A genuine nested Git repository or submodule
-has a distinct Git identity, kernel, verification boundary, and landing lifecycle.
-
-## 6. Configuration
-
-Tracked repository configuration remains small:
+`ObligationSet` contains:
 
 ```yaml
-version: 1
+sources: [policy:publication, record:constraint:no-publish@<digest>]
+selected_context: [semantic:source-ownership]
+denied_capabilities: [remote.publish]
+required_authority: {}
+required_reviews: []
+required_verifiers: [test:tests/test_remote_push.py]
+serialize_on: []
+parallel_limit: null
+contract_edges: []
+containment: {}
+blocks: []
+digest: <sha256>
+```
+
+The compiler applies the protocol precedence rules with no model call. It rejects contradictory
+closed requirements and always includes source locators. A consequence without a source is an
+internal error; a source without an applicable record digest is stale governance.
+
+Every accepted record has intrinsic operational value:
+
+- a semantic record selects canonical prose, attributable review, invalidation, verifiers, and
+  directives;
+- a domain supplies responsibility context and a planning boundary;
+- a contract supplies provider/consumer ordering, mandatory verification, and independent review
+  when its definition or provider implementation changes; and
+- a constraint supplies a verifier, a directive, or both.
+
+This is the implementation distinction from an instruction file. Prose still guides judgment, but
+the compiler—not model memory—decides the closed consequences.
+
+### 3.4 Semantic judgment
+
+Some questions remain irreducibly semantic: whether a requested outcome crosses a responsibility
+boundary, whether two units are meaningfully independent, whether an exact candidate preserves an
+accepted interpretation, and whether a new record should be accepted.
+
+These questions use typed actions. The application composes exact selected context, the semantic
+planner or reviewer returns schema-bound assertions, and deterministic code validates identifiers,
+claims, evidence, authority, and causal bindings. A semantic response can propose a recommendation
+or satisfy a review obligation. It cannot grant a capability or mark a verifier passed.
+
+The configured local provider is an adapter. Provider authentication, quota, and session ids stay
+outside the repository. If no semantic provider is available, planning falls back to one unit and a
+required semantic review becomes `needs_input`; it never becomes an implicit approval.
+
+---
+
+## 4. Mechanics {#mechanics}
+
+### 4.1 Repository identity and capabilities
+
+The application resolves:
+
+- the Git common directory;
+- the primary worktree;
+- repository identity from the initial commit when present, otherwise a stored bootstrap nonce;
+- integration target and exact head; and
+- required Git features before mutation.
+
+Required features are linked worktrees, `merge-tree --write-tree`, `commit-tree`, symbolic-ref and
+upstream inspection, and compare-and-swap `update-ref`. Missing features fail before any ref or
+worktree mutation.
+
+Every public operation accepts an already bound `Repository` object. A repository path is resolved
+only at CLI invocation or MCP server startup; lower layers never change repository based on request
+data.
+
+### 4.2 Git-backed ledger
+
+`LedgerStore` represents one change at `refs/invariant/changes/<change-id>`. A ledger commit tree is:
+
+```text
+snapshot.yml
+events/<sequence>-<event-id>.yml
+```
+
+`snapshot.yml` is the complete reducible state after the event. The event file contains the event
+kind, canonical payload, actor, transport provenance, prior ledger commit, and event digest. The Git
+commit's first parent is the prior ledger commit. Additional parents may anchor work or candidate
+commits that would otherwise become unreachable.
+
+The store writes blobs and trees, creates a commit with `git commit-tree`, then installs it with:
+
+```text
+git update-ref <ledger-ref> <new-ledger-commit> <expected-ledger-commit>
+```
+
+The initial event expects the zero oid. A losing concurrent append reloads and retries only when its
+event remains valid against the new snapshot. Otherwise it returns
+`concurrent_ledger_movement`. Event reduction is deterministic and validates sequence, parent,
+event digest, allowed transition, and every referenced object on read.
+
+Required event kinds are:
+
+```text
+change.opened
+recommendation.requested | recommendation.recorded | recommendation.replaced
+action.opened | action.responded
+decision.recorded
+grant.issued | grant.revoked | grant.consumed
+attempt.created | attempt.submitted | attempt.rejected
+unit.converged
+candidate.constructed | candidate.evidenced | candidate.reviewed
+landing.started | landing.completed | landing.reconciled
+publication.completed | publication.failed
+change.invalidated | work.discarded
+```
+
+Events are append-only. A later event changes current state without altering the event it supersedes.
+
+### 4.3 Work and candidate refs
+
+Each attempt receives:
+
+```text
+refs/invariant/work/<change>/<unit>/<attempt>
+.invariant/runtime/worktrees/<change>-<unit>-<attempt>-<nonce>/
+```
+
+The ref is durable; the worktree is reconstructible. Worktree creation consumes
+`worktree.create`, checks that the unit is in the current admissible frontier, establishes its exact
+base, and records the path only after Git succeeds. The corresponding `worktree.write` grant names
+the same ref and claims.
+
+A submitted attempt must be clean and committed. Submission records its tip and actual changed
+paths. Work outside declared claims rejects the submission but leaves the ref and worktree intact.
+
+The aggregate candidate lives at `refs/invariant/candidates/<change>`. Units converge in a stable
+topological order. Independent siblings use lexical unit id as the tie breaker. The candidate ref is
+updated by compare-and-swap. A contract consumer's attempt base is the candidate tip after its sole
+provider converged.
+
+Convergence uses Git's in-core merge machinery and never checks the candidate into the integration
+worktree. Conflicts return exact unit ids and paths and retain all refs.
+
+### 4.4 Exact-tree verification
+
+Verifier selection is compiled from policy, records, contracts, recommendation checks, and actual
+reach. Each verifier runs against a detached materialization of the exact candidate tree, never the
+mutable worker worktree. Evidence binds:
+
+- candidate tree and captured integration base;
+- verifier locator and resolved command identity;
+- executable identity, working directory, environment fingerprint, and timeout;
+- mechanics version, exit status, output digest, and reusable status.
+
+Logs may be cached under ignored runtime. The ledger records the evidence id and durable metadata.
+Evidence is reusable only when every bound field matches. Volatile runners are never reused.
+
+### 4.5 Landing and remote publication
+
+Landing consumes a single-use `integration.land` token and the exact candidate. It validates the
+token immediately before creating and installing the attested commit. The target update uses
+compare-and-swap against the expected head. Integration checkout synchronization happens only when
+it cannot overwrite tracked edits or untracked paths.
+
+An interrupted operation records `landing.started` before the ref move and
+`landing.completed` after it. Reconciliation inspects the target, the attested commit, and the
+expected transaction; it either completes bookkeeping or reports an exact conflict. It never
+replays implementation or invents a second landing.
+
+Publication is a separate post-landing operation. When tracked policy is `off`, the compiler denies
+`remote.publish`. When `on`, the service resolves the integration branch's existing upstream before
+local landing and later pushes `<landed-oid>:<upstream-ref>`. It never uses an implicit source,
+creates a remote, changes upstream configuration, pushes another ref, force-pushes, or rolls back a
+local landing after rejection.
+
+---
+
+## 5. Lifecycle {#lifecycle}
+
+### 5.1 Change aggregate
+
+The version-two lifecycle replaces the version-one one-task/one-worker assumption. A `Change` owns:
+
+```text
+goal
+integration base
+governance selection
+one work recommendation
+one or more units and attempts
+zero or more concurrent admissible frontiers
+one causally converged candidate
+one final review and evidence set
+at most one local landing
+zero or one bounded publication result
+```
+
+A single-unit change uses exactly the same lifecycle as a parallel change. There is no shortcut that
+writes directly to the integration checkout.
+
+### 5.2 State machine
+
+`ChangeService` reduces the ledger and computes stage rather than trusting a stored stage field.
+Allowed transitions are:
+
+```text
+opened
+  -> recommending
+  -> ready
+  -> executing <-> ready
+  -> converging <-> executing
+  -> evidencing
+  -> awaiting-action <-> evidencing
+  -> ready-to-land
+  -> cleanup-required
+  -> completed
+```
+
+`invalidated` is terminal for new work but does not erase refs. Any transition may return a typed
+block, denial, stale result, or action without changing the preceding valid state.
+
+### 5.3 Actions and reviews
+
+The action store is part of the ledger. An expanded action contains:
+
+```yaml
+id: core:candidate-review:<digest>
+kind: review-semantics
+schema: invariant://v2/actions/review-semantics
+blocking: true
+bindings:
+  change: <id>
+  ledger: <commit>
+  goal: <digest>
+  recommendation: <digest>
+  candidate: <tree>
+  governance: <selection-digest>
+context: {}
+```
+
+The standard kinds are `recommend-work`, `review-semantics`, `review-independent`,
+`accept-governance`, and `supply-authority`. A response repeats every binding. A changed bound value
+makes it stale.
+
+Candidate review records `accepted`, `rejected`, or `uncertain`; summary; semantic disposition;
+authority; mode; defects; and retained discoveries. Only `accepted` can satisfy an obligation.
+`independent` is valid only when the recorded reviewer actor did not author a unit in the candidate.
+
+### 5.4 Handoff and resume
+
+`HandoffService` builds a canonical capsule from ledger state and Git objects. It contains no model
+transcript and no bearer token. `change.resume` checks the supplied ledger head, reloads current
+policy and governance, verifies all refs, revokes orphaned live grants, reconstructs missing
+worktrees on demand, and returns the current admissible frontier or next action.
+
+An old capsule yields `stale_handoff` plus the current ledger head and a safe read operation. It does
+not roll state backward. A target descendant may allow candidate rebuilding; divergence, changed
+governance, or changed contracts triggers new compilation and possibly recommendation replacement.
+
+### 5.5 Retention and cleanup
+
+Completion keeps the change ledger. Work and candidate refs remain until an explicit retention
+operation proves their objects are reachable from the attested result or consumes a `work.discard`
+grant. Invalidated, rejected, conflicting, and unlanded work is never cleaned automatically.
+
+Runtime worktrees and logs may be removed as cache only after their exact ref and durable metadata
+are present. Destructive cleanup names every ref and path; broad recursive targets, unresolved
+variables, and repository-root deletion are prohibited.
+
+---
+
+## 6. Recommendation engine
+
+### 6.1 Inputs and ownership
+
+`RecommendationService` owns the work recommendation. Its inputs are the exact base, goal, selected
+governance context, domains, contracts, requested scope, retained relevant discoveries, host
+capacity, and tracked maximum parallel width.
+
+The semantic planner produces a typed proposal. It does not receive a worker-creation tool. The
+deterministic validator either accepts and normalizes the proposal, returns repair diagnostics for
+at most two semantic retries, or emits a conservative single unit. An invalid proposal never creates
+a work ref or grant.
+
+The harness may ask for a new recommendation or choose fewer workers. It may not supply its own
+plan and label it an Invariant recommendation.
+
+### 6.2 Validation
+
+A recommendation is valid when:
+
+- ids are unique and the unit count is between 1 and 32;
+- every unit has a concrete objective and at least one typed claim;
+- dependencies exist and form a directed acyclic graph;
+- unordered units do not overlap path prefixes or identical interface claims;
+- each changed contract has exactly one provider;
+- every affected contract consumer transitively depends on its provider;
+- consumer bases are marked `after-provider`;
+- governance changes are isolated unless compiled directives say otherwise;
+- `serialize` and `limit-parallelism` obligations are reflected; and
+- every check locator resolves at the base or is explicitly marked candidate-created by its unit.
+
+Path overlap uses normalized repository-relative prefixes, not string containment. `repo:a/b` and
+`repo:a/bc` do not overlap. Interface and contract ids compare exactly.
+
+### 6.3 Conflict graph and frontier
+
+The validator constructs an undirected conflict graph in addition to dependency edges. For the
+currently dependency-ready units it computes the exact largest independent set, bounded by the
+tracked and host capacity. Plans are capped at 32 units; a deterministic bitset branch-and-bound
+implementation is sufficient. Ties prefer the semantic planner's order, then lexical unit id.
+
+The resulting cardinality is `maximum_parallelism`; the chosen set is `recommended_frontier`.
+Live write grants remove conflicting nodes and available capacity. Completing or revoking an
+attempt recomputes the frontier from ledger state.
+
+The number is not a timeless claim about the whole repository. It is the greatest permitted live
+set under this recommendation, its claims, accepted governance, current candidate, and current
+grants. Actual diffs are checked before any unit can converge.
+
+### 6.4 Recommendation replacement
+
+A changed goal, base, selected record digest, contract surface, claim violation, or newly discovered
+overlap invalidates the existing recommendation. Replacement retains prior recommendations and
+records why the newer one governs. Completed unit work is reused only when its actual reach remains
+within a unit in the replacement and its causal base remains valid.
+
+---
+
+## 7. Capability gateway
+
+### 7.1 Request evaluation
+
+`CapabilityService.request` receives a closed `CapabilityRequest`, reduces the latest change ledger,
+loads current governance, compiles obligations, checks containment, and calls the capability-specific
+evaluator. Evaluation order is:
+
+1. validate repository, actor, change, unit, attempt, and resource identity;
+2. reject unknown capabilities and stale causal bindings;
+3. apply policy ceiling and accumulated denial;
+4. check recommendation, frontier, dependency, and conflicting grants;
+5. check authority, review, verifier, and containment obligations;
+6. record a denied, needs-authority, or stale decision; or
+7. append decision and grant events atomically, then return the one-time token.
+
+Every result includes `explain.sources` and `explain.obligations`. Text may summarize those fields;
+clients never need to parse the summary.
+
+### 7.2 Capability-specific rules
+
+| Capability | Additional requirements |
+|---|---|
+| `governance.accept` | candidate tree, policy-authorized actor, user authority for policy changes |
+| `worktree.create` | current recommendation and dependency-ready unit |
+| `worktree.write` | existing attempt, admissible frontier, no conflicting live write grant |
+| `verification.run` | selected verifier and exact candidate tree |
+| `candidate.review` | exact candidate, evidence set, matching review obligation |
+| `candidate.converge` | clean submitted attempt and actual claims within recommendation |
+| `integration.land` | all obligations satisfied; exact candidate; single use |
+| `remote.publish` | completed local landing, tracked opt-in, existing upstream; single use |
+| `change.invalidate` | attributable actor and reason |
+| `work.discard` | explicit authority and exact retained targets; single use |
+
+Ordinary reads do not append to the change ledger. Opening a change, recording Invariant's own
+recommendation, recording a work submission, and requesting or revoking a grant are causally bound
+operations but do not require a grant because they cannot accept meaning, execute a verifier,
+create writable state, converge a candidate, move an integration ref, publish, or discard work.
+
+### 7.3 Revocation and use
+
+The ledger stores the token digest, not the token. Use hashes the supplied token, selects exactly one
+live grant, re-evaluates causal invalidators, records `grant.consumed` before or in the same protected
+transaction as the consequence, and refuses replay when `single_use`.
+
+A goal or recommendation replacement revokes affected work grants. A candidate change revokes
+candidate review, verification, landing, and publication grants. Governance or target movement
+marks affected grants stale; an explicit revocation event is appended on the next mutating resume.
+
+### 7.4 Honest enforcement
+
+The result for every decision contains:
+
+```yaml
+enforcement:
+  posture: advisory
+  provider: uncontained
+  protected_resource: refs/heads/main
+  evidence: []
+```
+
+No presentation layer may replace `advisory` with “blocked,” “prevented,” or “secure.” When a future
+provider returns `managed`, its evidence identity and configuration digest enter the decision and
+landing attestation.
+
+---
+
+## 8. Repository-bound MCP gateway
+
+### 8.1 Process boundary
+
+`invariant-mcp --repository <path>` starts a stdio server bound to one resolved Git common
+directory. It accepts optional host-local principal and containment-provider configuration at
+startup. No tool accepts a repository path, command string, shell fragment, executable, remote,
+credential, or arbitrary environment.
+
+The server calls `InvariantApplication` in-process. It retains no authoritative state in memory;
+each call reloads or validates the relevant ref heads. Restarting the server cannot create a second
+lifecycle or lose a change.
+
+Protocol `denied`, `stale`, `blocked`, and `needs_input` results are successful MCP calls with typed
+content. Exceptions in transport, schema decoding, or internal execution become MCP errors and a
+protocol `failed` envelope when one can be produced.
+
+### 8.2 Tool surface
+
+The version-two MCP server exposes exactly these tools:
+
+| Tool | Mutation | Purpose |
+|---|---|---|
+| `invariant_state_validate` | no | validate policy, records, refs, and attested history |
+| `invariant_governance_context` | no | select records and compile obligations for declared scope |
+| `invariant_change_open` | yes | create the durable change ledger |
+| `invariant_change_recommend` | yes | obtain and record Invariant's work recommendation |
+| `invariant_change_inspect` | no | return reduced state, frontier, actions, grants, and assurance |
+| `invariant_change_handoff` | no | return a canonical token-free handoff capsule |
+| `invariant_change_resume` | yes | causally refresh and continue a handed-off change |
+| `invariant_action_inspect` | no | expand one typed action |
+| `invariant_action_respond` | yes | submit a causally bound response, consuming `candidate.review` or `governance.accept` when required |
+| `invariant_capability_request` | yes | record a decision and possibly return one bearer token |
+| `invariant_capability_inspect` | no | inspect decision or redacted grant metadata |
+| `invariant_capability_revoke` | yes | revoke one live grant |
+| `invariant_work_create` | yes | consume a create grant and materialize an attempt worktree |
+| `invariant_work_submit` | yes | record one clean exact work result and its actual reach |
+| `invariant_candidate_converge` | yes | consume a converge grant and update the aggregate candidate |
+| `invariant_candidate_evidence` | yes | consume verifier grants, capture evidence, and open any required review action |
+| `invariant_integration_land` | yes | consume the exact landing grant and atomically update the target |
+| `invariant_integration_reconcile` | yes | repair interrupted post-ref bookkeeping only |
+| `invariant_publication_publish` | yes | consume a publish grant for the exact landed commit |
+| `invariant_change_invalidate` | yes | stop future work without deletion |
+| `invariant_work_discard` | destructive | consume explicit discard authority for named retained work |
+
+MCP tool annotations describe read-only, destructive, and open-world behavior for host UX. They are
+never consulted as authority.
+
+Bearer tokens are returned only from `invariant_capability_request` and accepted only by the
+specific consequence tool. Read responses always redact token material. Structured schemas reject
+extra fields.
+
+### 8.3 Principal and attribution
+
+The stdio client is one `harness:<instance>` principal configured at startup or generated for that
+server run. Calls name worker actors beneath it, but the transport principal attests who supplied
+those names. The ledger records both. Independent review requires a distinct actor and no authorship
+event for the candidate; a different string from the same author attempt is insufficient.
+
+Remote MCP transport is outside the initial implementation. It cannot be added without an explicit
+authentication and principal-binding design.
+
+---
+
+## 9. CLI and human interaction
+
+The operator CLI exposes the same typed operations without asking humans to handle grant tokens in
+ordinary use. Compound CLI commands request and immediately consume the minimum required grants,
+while JSON mode exposes the underlying decision ids and redacted grant metadata.
+
+The stable human surface is:
+
+```text
+invariant init
+invariant status
+invariant governance explain [--path ...] [--interface ...] [--domain ...]
+invariant change open --goal ...
+invariant change inspect <id>
+invariant change handoff <id> [--output ...]
+invariant change resume <capsule>
+invariant change invalidate <id>
+invariant recover <id>
+invariant set <key> <value>
+invariant source add ...
+invariant-mcp --repository <path>
+```
+
+Provider-backed conversational commands MAY remain as higher-level hosts, but they must call the
+same application service. They are not part of the kernel contract and cannot create worktrees,
+accept governance, or land by editing repository state directly.
+
+Text output leads with the decision and next permitted action. It distinguishes:
+
+- `permitted and managed`;
+- `permitted but advisory`;
+- `needs authority`;
+- `denied by <source>`;
+- `stale; recomputation required`; and
+- `mechanically blocked`.
+
+JSON output is the protocol envelope unchanged. Exit codes follow the protocol.
+
+---
+
+## 10. Configuration and policy
+
+Tracked configuration is deliberately small:
+
+```yaml
+version: 2
 authority: agent
 execution: auto
 integration_branch: auto
-push_remote: off
+publication: off
+parallelism:
+  maximum: auto
 ```
 
-Provider selection is deliberately absent from tracked configuration: which coding agent is
-installed and signed in is a fact about a person and a machine, not about the repository, so a
-clone must never fail because another machine's choice was committed. The host resolves the
-provider from `--using`, then the clone-local preference, then the machine default. `auto`
-prefers the authenticated machine default and then the other supported harness. None of this is
-authentication material, semantic authority, or permission to invoke a model outside an explicit
-model-backed command.
+`authority` is `human` or `agent`. Agent authority permits semantic assertions only where current
+accepted policy delegates them. It never accepts a policy change, authenticates a human, grants an
+unknown capability, bypasses a verifier, or supplies managed containment.
 
-`authority` names who may define repository-wide semantics, resolve conflicts, and approve durable
-requirements:
+`execution` is `auto` or `assisted`. It controls routine pauses, not authorization. `auto` can
+request and consume mechanically available grants; `assisted` presents each state-changing
+consequence before request or use.
 
-- `human` previews discovery capture and resolution without mutation, then sends the semantic
-  proposal to a human for approval;
-- `agent` permits an agent to resolve meaning when the current request and accepted authority are
-  sufficient.
+`integration_branch` is `auto` or an existing local branch. `auto` resolves the primary worktree's
+current branch when the change opens and then stores the exact ref in the ledger.
 
-The agent supplies causal evidence, searched paths, domains, and record structure in both modes.
-The human supplies goals or authority only; after approval, the harness reapplies a human-authority
-transition with `--apply`. Agent authority requires both accepted and proposed configuration to
-remain `agent`: enabling takes effect after integration, while returning to `human` is immediate.
-Reach and authority are recomputed against the exact prospective tree. If that exact check newly
-discovers an open or gated transition, accepted agent authority supplies the internal acknowledgement
-and continues automatically; human authority emits a review action. A public caller is never asked to
-provide the protocol's `allow_open` field or an equivalent flag.
+`publication` is `off` or `on`. Off compiles a denial. On only makes a capability request possible;
+the existing-upstream and exact-commit checks still apply.
 
-`integration_branch` identifies the default local convergence target. `auto` resolves the primary
-lifecycle checkout's current branch when a new task begins; a named value fixes one existing local
-branch as the convergence target. An omitted value is read as `auto` for compatibility.
+`parallelism.maximum` is `auto` or a positive integer. It is a policy ceiling, never a request to
+create that many workers. Host capacity can narrow it per recommendation but cannot widen a numeric
+policy value.
 
-`push_remote` is an independent remote-publication policy:
+Provider preference, machine authentication, bearer tokens, containment provider, registered
+projects, transcripts, and display preferences are host-local and never committed. Changing tracked
+configuration uses a governed candidate. The parent policy evaluates that candidate, and review
+requires `user:` authority.
 
-- `off` leaves every successful landing local;
-- `on` pushes the exact landed commit to the configured integration branch's existing upstream.
+---
 
-Host address, registered folders, conversation themes, transcripts, provider conversation handles,
-and presentation preferences are machine-local personal state. They are stored in the user's
-Invariant workspace, never in tracked repository configuration or `.invariant/runtime/`, and carry
-no semantic authority. A repository clone therefore does not select a port or register itself on
-another person's machine.
+## 11. Application contract
 
-Remote publication requires both the accepted configuration and the verified candidate to say
-`on`. Enabling therefore takes effect only after the enabling configuration reaches the integration
-branch, while disabling takes effect on the disabling candidate itself. Invariant never chooses or
-configures a remote. A missing or unusable upstream blocks before local landing; a remote rejection
-after local landing reports a blocked publication while retaining the local integration commit.
+### 11.1 Service API
 
-`execution` controls how the CLI advances its fixed lifecycle:
+`InvariantApplication` accepts typed request objects and returns the version-two envelope. It owns
+transaction boundaries and delegates to domain services. Transports do not call repositories,
+planners, or mechanics directly.
 
-- `auto` advances every mechanically valid, authorized local transition without a routine pause;
-- `assisted` presents state-changing transitions before applying them and waits for explicit
-  continuation.
-
-A full audit is read-only investigation, so `execution` does not gate it. The completed audit is
-persisted under `.invariant/audits/` with its exact ground and tree before adoption. Adoption keeps
-the two controls separate: `authority` determines who approves the findings, while `execution`
-determines whether the resulting task branch, verification, and landing advance automatically.
-With agent authority, audit through adoption is one autonomous governance pass. That delegation does
-not include repository policy. If the exact establishment candidate changes the policy file, or
-covers an unattested integration range that did, the host retains the agent's record decisions and
-asks the user only for the policy attestation. It does not invoke another agent merely to receive a
-predictable `policy_review_required` rejection. With human authority, the complete proposal requires
-the user's acceptance.
-
-For either user-decision path, the host writes
-`.invariant/runtime/tasks/<task-id>/review.md` and presents its path with a compact conversational
-summary. The Markdown packet contains the configured authority, reason for the decision, direct or
-covered policy paths and commits, every audit finding and its evidence disposition, projected
-records, candidate files, verification status, and exact candidate tree. The user may discuss that
-packet normally; only `:record` accepts the exact candidate and supplies the attributable `user:`
-review authority. Leaving the conversation preserves the pending proposal. A changed candidate
-requires a newly presented packet and another `:record`. The user is never handed task, action,
-worktree, or governance-protocol commands.
-
-If an audit produced under agent authority classifies findings as `needs-authority`, the host sends
-exactly those findings to a fresh, read-only secondary agent before deciding that nothing is ready
-to adopt. That authority review sees the same audit frame and exact tree, cannot add or omit
-findings, and may change only disposition, authority, and record projections. It resolves decisions
-covered by the accepted agent policy and retains `needs-authority` only for an actual human choice,
-external authority, or policy change. Human authority continues to stop for the human; secondary
-agent review never impersonates user authority.
-
-A governance pass is exposed as one resumable session while preserving distinct audit, adoption,
-and verification phases. The first pass establishes durable governance; later passes reconcile it
-with the current committed integration state. The managed worktree is opened before audit
-persistence, eliminating an incidental audit-only commit between `audit save` and task creation.
-Under agent authority, saving the audit automatically selects its ready findings and advances the
-session to adoption. `invariant establish` starts a durable conversation and seeds it with
-`:establish`; the same control can be used later in any `start` conversation to prepare or resume the
-newest compatible unfinished pass. Human status and recovery are explained in that conversation,
-not as a request to run another lifecycle command.
-
-When an unfinished pass exists, the conversation presents its last-saved local timestamp, lifecycle
-stage, last stopping reason, and causal freshness. An unchanged captured head is current; a
-descendant head is identified as potentially stale with the intervening commit count; a changed
-target, mechanics digest, repository identity, branch birth state, or divergent head is stale. The
-user explicitly answers yes to continue or no to create a fresh pass which supersedes the saved one.
-Compatible work defaults to continue and stale work defaults to fresh.
-
-Projection uses the record projections carried by selected findings. When a selected finding
-carries none, `governance project` writes the adoption draft and reports incomplete coverage; the
-establishment command then runs one authoring pass (`invariant-agent governance author`) in which
-the agent completes only the unresolved mappings with complete records or an explicit deferral,
-and the host merges those into the draft and projects again. Audit-authored projections are never
-overridden by that pass. A projection that fails structural validation reports each violation as an
-`INVALID:` record so the human-facing failure can show it.
-
-`governance begin` reserves every domain that exists at the integration head, because a governance
-pass reconciles the whole repository; re-recording an existing domain is therefore inside scope
-rather than a stale receipt. Under human authority a projection failure remains available to the
-same conversation for further discussion or another `:establish`. The exact proposal lists the
-projected records and changed files, and only `:record` accepts it. The verification activity reports
-landing only when the task actually completed;
-otherwise it reports that review is pending. The completion result carries a `RECORDS:` line, and a
-pass that recorded nothing is presented as `Audit recorded`.
-
-Conversational status ends with a situation-specific explanation and next conversational action.
-Failed establishment output keeps the first concrete problem beside the saved-work statement. With agent authority, retry
-returns an older structurally invalid generated projection to investigation before invoking the
-agent again. Newly generated record locators are validated when the audit is saved and participate
-in the harness's bounded semantic correction loop.
-
-Ordinary `test:` verifier locators require no configuration. The verifier resolves execution from
-the exact candidate: Python tests locate the nearest `pyproject.toml`; files that use the standard
-library `unittest` framework run with that framework, while other Python tests use pytest. The
-interpreter running Invariant is used for an unlocked fallback so resolution does not silently drift
-to a different PATH environment. Shell tests in a locked uv
-project execute through `uv run --frozen`; standalone shell tests execute through POSIX `sh`.
-Candidate uv execution discards host-checkout virtual-environment selection so invoking Invariant
-itself through `uv run` cannot redirect or stall the verifier environment.
-Automatic reuse is enabled only for a locked environment and the same exact candidate tree.
-Resolved commands, working directories, timeouts, environment fingerprints, cache decisions, and
-logs are evidence recorded under ignored runtime state, not governance. Named `runner:` locators
-remain an expert escape hatch for a toolchain that cannot be inferred and must opt into reuse.
-Every verifier runs under a time limit: `verification.timeout` (default 300 seconds) applies to
-each inferred locator and to any runner that declares no limit of its own, and a verifier that
-exceeds it fails the candidate rather than holding the landing open.
-
-Before initialization, repository authority, execution, and landing settings are undefined. `start`
-and `establish` run guided initialization when configuration is absent and then continue into the
-requested conversation. Initialization persists `authority: agent`, `execution: auto`,
-`integration_branch: auto`, and `push_remote: off`. The configuration has no adapter registry.
-Automatic execution is the ergonomic default; it does not
-remove briefing, branch isolation, exact-tree verification, or atomic landing. Neither execution mode
-weakens validation or grants external authority.
-
-`invariant init` is the repository bootstrap. Interactive invocation explains each setting and uses
-arrow-key radio selection; only a named integration branch requires free-form typing. `--defaults`
-selects every safe repository default without the policy questionnaire. Initialization attempts the
-named provider, or the machine-default provider followed by the other supported provider for `auto`.
-Each failed native connection is reported as a warning and skipped; it does not fail repository setup
-or prevent the next connection attempt. It creates `.invariant/config.yml` and does not inspect, create,
-or modify provider instruction files. Initialization ends after deterministic setup; establishment
-is entered explicitly or from the conversation. Before writing repository files it proves that
-Git provides the linked-worktree and `merge-tree --write-tree` capabilities used by the lifecycle.
-It reports provider connection state but never changes machine-wide sign-in. Existing unrelated
-agent instructions are outside initialization's scope. Managed task creation also requires the
-initialized configuration to exist in the accepted integration commit, so every linked worktree begins
-with the authority that governs it. A clean setup commit carries the no-record lifecycle attestation and
-becomes the coverage baseline; establishment remains the separate operation that creates durable
-repository records.
-
-If `.invariant/config.yml` already resolves as a complete configuration, text-mode initialization
-warns before connection attempts or policy questions. Keeping the configuration is the safe default
-and makes no changes. Explicit replacement runs the normal setup and replaces the complete settings
-document; `invariant set <key> <value>` is the path for changing one setting. Machine-readable
-initialization never replaces an existing configuration implicitly.
-
-The internal configuration engine validates and updates the tracked file atomically. The public
-`invariant set <key> <value>` command exposes `authority`, `execution`, `integration_branch`, and
-`push_remote`; `harness` and session `mode` remain clone-local preferences. Version `1` is the
-configuration schema marker, not an operational setting. Adapters are not configurable in version 1;
-a future `invariant add adapter` flow may introduce them as an explicit extension.
-
-## 7. Semantic model
-
-### 7.1 Semantic records: an open envelope around prose
-
-Invariant preserves an auditable interpretation, not an interpretation-free fact. The canonical
-Markdown should store the argument: proposition, rationale, evidence considered, assumptions,
-alternatives, consequences, and conditions for revision. The CLI deliberately does not parse those
-sentences into a closed claim taxonomy.
-
-Each `.invariant/records/semantic/<id>.yml` file is one thin mechanical index entry; its filename
-must equal its `id`:
-
-```yaml
-version: 1
-id: processor-source-ownership
-document: architecture:docs/architecture.md#processor-source-ownership
-authority: user:task:import-processor#turn-3
-status: active
-applies_to: [repo:services/document-processor, interface:processor-source]
-revisit_on: [repo:.gitmodules, repo:services/document-processor/.git]
-verifies: [command:checks/ordinary-processor-source.sh]
-supersedes: [processor-external-ownership]
-relations:
-  challenges: [semantic:processor-external-ownership]
-facets:
-  confidence: accepted
-```
-
-Only the fields needed for durable mechanics are fixed:
-
-- `id` provides a stable identity;
-- `document` points to the exact canonical prose section;
-- `authority` explains why the interpretation may govern;
-- `status` and `supersedes` preserve revision rather than overwriting history;
-- `applies_to` retrieves the record from path, interface, or domain context;
-- `revisit_on` reopens review when a dependency or contradiction trigger changes;
-- `verifies` projects portions of the meaning into executable witnesses;
-- `relations` and `facets` are open vocabularies for challenge, support, confidence, local
-  terminology, or future repository-specific concepts.
-
-The index therefore knows where meaning applies and when to revisit it, but not what the prose
-means. A verifier failure challenges the interpretation; it cannot decide whether code, verifier,
-or interpretation should change. Likewise, strong evidence has no authority by itself, while a
-provisional decision may still be authoritative within its stated scope.
-
-`revisit_on: semantic:<id>` forms an explicit dependency edge. Retrieval follows those edges so a
-dependent interpretation is present when its premise is in context. Invalidation propagates only
-when the premise's envelope or canonical prose changes—not whenever ordinary code covered by that
-premise changes. Open `relations` never acquire this behavior implicitly.
-
-When a landing records `semantic:<id>`, its commit also carries `Invariant-Semantic:
-<id>@<sha256>`. The digest covers the normalized envelope and exact canonical Markdown section in
-the candidate tree. Landing-history validation rejects missing, malformed, or stale bindings.
-
-Domain, contract, and constraint records use the same one-record-per-file layout. They are useful
-projections, not a universal ontology. Splitting identity boundaries across files removes the
-shared aggregate-registry write hotspot while keeping the semantic model unchanged.
-
-### 7.2 Domains
-
-A domain is a stable semantic responsibility and retrieval index. It is not a directory, package,
-service, or ownership lock merely because those structures happen to align.
-
-```yaml
-version: 1
-id: ocr.orchestrator
-responsibility: Selects OCR engines and distributes work.
-authority: user:task:ocr-architecture#turn-4
-parent: ocr
-architecture: [architecture:docs/architecture.md#ocr-orchestration]
-contracts: [ocr.engine-protocol.v1]
-```
-
-The CLI validates identifiers, parent references, cycles, contract references, and architecture
-anchors. The semantic caller selects which domains apply to a task.
-
-Internally, the domain document is parsed once into an immutable `DomainIndex`. Each `Domain`
-retains the responsibility prose without interpreting it, while the index owns identity,
-parent traversal, deterministic ordering, and round-trip serialization. Mechanics consumes that
-typed projection instead of independently interpreting domain dictionaries.
-
-### 7.3 Architecture
-
-Anchored Markdown sections hold rationale, responsibility boundaries, critical choices,
-consequences, and revision conditions. The Markdown remains canonical; registry pointers establish
-relevance, not truth.
-
-```markdown
-## OCR engine isolation {#ocr-engine-isolation}
-
-Provider-specific behavior remains inside its engine domain because orchestration must stay
-provider-neutral. Revisit this if engines no longer share lifecycle or replacement semantics.
-```
-
-Architecture compliance requires semantic review against a concrete candidate. The CLI can locate
-affected sections and validate a review acknowledgement, but it cannot perform the review. Every
-governed Markdown locator names an explicit `{#stable-id}` heading ID; generated heading slugs are
-display conveniences and never durable identity.
-
-### 7.4 Contracts
-
-A contract is an accepted executable promise relied on across domains.
-
-```yaml
-version: 1
-id: ocr.engine-protocol.v1
-assertion: Every engine accepts OcrRequest and returns OcrResult.
-authority: user:task:ocr-architecture#turn-4
-between: [ocr.orchestrator, ocr.engine.external]
-surfaces: [interface:OcrEngine, repo:schemas/ocr-engine.json]
-architecture: [architecture:docs/architecture.md#ocr-engine-protocol]
-verifies: [command:scripts/verify-ocr-engine-protocol]
-```
-
-Contracts require identifiable reliance, referenced architecture, and executable verification. The
-semantic assertion is reviewed by an agent or human; executable verifiers test stable observable
-consequences of that assertion against the exact candidate tree. A verifier may be a conformance
-suite, schema compatibility check, boundary integration test, state-machine property, or another
-repository-owned observation. Passing is evidence for the contract, not a mechanical proof of every
-possible interpretation. If a promise has no stable observable consequence, record it as
-architecture or a constraint rather than pretending it is executable. The CLI selects and runs
-declared verifiers; it does not invent contracts or tests.
-
-### 7.5 Durable meaning
-
-The semantic reviewer asks:
-
-> Could a future change be locally reasonable but systemically wrong unless it knew and preserved
-> a decision introduced or changed here?
-
-A positive answer includes stable responsibility, relied-on interfaces or formats, authoritative
-state ownership, persistence, consistency, transaction, failure, recovery, migration, rollout,
-compatibility, or an architectural restriction. Change size and directory shape do not answer the
-question.
-
-The result supplied to verification is one of:
-
-- `no-record` — accepted meaning and durable operational properties remain unchanged;
-- `audit:<id>` — a fresh scoped audit concludes that no adoption is currently required;
-- `recorded` — the change is owned by supplied accepted governance references.
-
-These are semantic assertions with mechanical validation. A reach classification never manufactures
-the assertion.
-
-### 7.6 Reserved intent-brief adapter contract
-
-The implementation retains an experimental task-local intent-brief action contract for future
-extension work. It is not enabled by repository configuration or exposed on the human surface. A
-future `invariant add adapter` command may activate it explicitly. The reserved response is:
-
-```yaml
-version: 1
-adapter: intent_brief
-source_goal_digest: <goal-digest-from-task-begin>
-brief: >-
-  Restore each non-terminal job once when the browser is reopened. Keep chat events scoped to the
-  current browser session and preserve existing recovery behavior for terminal jobs.
-questions:
-  - id: retention-window
-    prompt: Must recovery survive expiry of the existing retention window?
-    answer: No; preserve the existing window.
-```
-
-Questions are optional and may remain only when different answers would materially change the
-candidate or its acceptance. The brief is an expansion of the original goal, not a replacement for
-it and not repository governance. There are no outcome/acceptance/constraint mirrors or inert
-verification labels.
-
-At `candidate.evidenced`, the adapter receives the exact candidate tree, brief digest, goal digest,
-and evidence already captured by core. It returns one `accepted`, `rejected`, or `uncertain` verdict,
-one substantive summary, unresolved `candidate_defects`, and any non-blocking
-`retained_discoveries`. It does not manually restate one result per
-sentence or transcribe evidence the CLI already owns. A changed candidate, goal, brief, or adapter
-implementation invalidates the review.
-
-## 8. CLI contract
-
-The executable is named `invariant`. Its primary human surface is:
+The request families mirror the protocol:
 
 ```text
-LOCAL   invariant init [--defaults] [--agent <auto|codex|claude>]
-GLOBAL  invariant connect [codex|claude] [--default <codex|claude>]
-LOCAL   invariant start [--using <provider>] [--mode <ask|change>] [--session <id> | --theme <theme>] [<prompt>]
-GLOBAL  invariant serve [--port <port>] [--project <folder>]...  # read-only state explorer
-LOCAL   invariant establish [--using <provider>]
-LOCAL   invariant set <key> <value>
-LOCAL   invariant source add ...
+StateRequest
+ContextRequest
+ChangeRequest
+ActionRequest
+CapabilityRequest
+WorkRequest
+CandidateRequest
+IntegrationRequest
+PublicationRequest
 ```
 
-`invariant connect` reports the machine-default harness. `invariant connect --default PROVIDER`
-establishes that native connection and switches the machine default. A clone without a local
-preference follows it; `invariant set harness PROVIDER` records a clone-local override under
-`.invariant/runtime/`, which is self-ignored and never committed.
+Every mutating request carries `expected_ledger` and every ref-changing request also carries the
+expected target or work ref. The application may fill an expected value only inside a compound
+single-process operator command that read it immediately before the mutation.
 
-`invariant start` is the terminal client for durable project sessions and is the ordinary work
-surface. A session has a host-owned id, one project folder, one human theme, a transcript, and an
-optional opaque provider conversation handle. The host id remains stable when a provider handle
-changes. A bare `start` creates a session; `--session` resumes one in the current repository. The
-conversation answers questions and routes requested writes into the managed lifecycle. It never
-writes the repository directly: every change still enters isolated task execution, candidate
-verification, and compare-and-swap landing. `:new`, `:sessions`, and `:switch` navigate the same
-durable sessions exposed by the browser workspace; `:status`, `:settings`, `:set`, and `:source`
-keep inspection and configuration inside the flow.
-
-`invariant establish` composes the same surface rather than creating a second interaction model. It
-starts a session themed “Repository records” and seeds it with `:establish`. With human authority,
-the control turn prepares and displays the exact proposal, normal messages discuss it, and `:record`
-accepts it. With agent authority, the lifecycle completes without a routine decision stop; if a
-policy change still requires the user, the same proposal and `:record` flow is used for that boundary
-only.
-
-Repository bootstrap is interactive, while `invariant init --defaults` skips the policy questionnaire.
-If `start` or `establish` finds no configuration, it runs the same guided initialization and then
-continues into the requested session. On an initially clean repository the host commits bootstrap
-files locally before conversation work; when
-unrelated work is already present it leaves initialization uncommitted and reports that precondition
-before the first establishment or change.
-Repeated text-mode initialization first warns that continuation replaces the complete configuration;
-it proceeds only after an explicit replacement choice.
-
-The protocol engine retains typed task, governance, state, evidence, coordination, and candidate
-operations for the host implementation. They are not part of the `invariant` human command surface
-and are never presented as a recovery procedure. A task ID remains an internal repository-local
-identity connecting a goal, receipt, generated worktree, verification, and landing.
-
-### 8.1 Structured input
-
-Commands with semantic inputs accept a versioned assessment document:
-
-```yaml
-version: 1
-goal_digest: <hash>
-paths: [src/ocr/engine.py]
-interfaces: [OcrEngine]
-domains: [ocr.engine.external]
-boundary:
-  disposition: no-record
-governance: []
-architecture_reviews:
-  - architecture:docs/architecture.md#ocr-engine-isolation
-checks:
-  - test:tests/test_ocr_engine.py
-```
-
-The assessment records the caller's semantic decisions. It is not accepted governance and need not
-be committed. The CLI validates references, completeness, and consistency with the candidate.
-Architecture acknowledgements and open or gated authority are never taken from the assessment
-alone: whenever the candidate affects accepted meaning, landing requires the candidate review
-action to have been accepted for that exact tree, and an assessment supplied without it is
-refused as `semantic_review_required`.
-`task finish` owns assessment preparation. If no semantic judgment remains, it proceeds in the same
-command. Otherwise it returns compact action references plus the exact candidate tree and captured
-evidence IDs. `task action` retrieves affected semantics, inferred governance, the response schema,
-and other action-specific context. `task assessment prepare` exposes the lower-level assessment for
-diagnostics; normal hosts do not edit it.
-
-Reserved adapter inputs do not extend the core assessment schema. The intent-brief final action
-accepts a separate whole-candidate review:
-
-```yaml
-version: 1
-adapter: intent_brief
-source_goal_digest: <goal-digest>
-brief_digest: <brief-digest>
-candidate_tree: <exact-tree-id>
-verdict: accepted
-summary: The exact candidate satisfies the whole intent brief and the collected evidence supports it.
-candidate_defects: []
-retained_discoveries: []
-```
-
-The internal protocol schema exposes both reserved response shapes.
-
-### 8.2 Structured output
-
-Every command supports `--format text|json`, placed before or after the subcommand. Text is for
-direct use; JSON is the application integration contract. JSON is compact by default and never
-duplicates its human rendering; `--verbose` adds that rendering explicitly for diagnostics.
-
-The `invariant`, protocol, and `invariant-agent` surfaces all emit the same envelope, and an
-exit status crosses the harness boundary unchanged: a blocked core result stays exit `1` when
-reported through the host or `invariant-agent`. An unexpected internal failure still
-produces the envelope, with diagnostic code `internal_error` and exit `2`.
-
-JSON uses one envelope:
+### 11.2 Response envelope
 
 ```json
 {
-  "protocol": 1,
-  "command": "task.finish",
+  "protocol": 2,
+  "command": "capability.request",
   "status": "ok",
-  "outcome": "needs_input",
+  "outcome": "denied",
   "result": {
-    "task": {
-      "id": "example",
-      "stage": "awaiting-review",
-      "boundary": "no-record",
-      "actions": [
-        {
-          "id": "core:candidate-review",
-          "adapter": "core",
-          "phase": "candidate.evidenced",
-          "kind": "review_semantics",
-          "blocking": true,
-          "schema_id": "invariant://schemas/actions/review-semantics/v1"
-        }
-      ],
-      "assurance": {
-        "structural": {"status": "passed"},
-        "behavioral": {"status": "not_required"},
-        "semantic": {"status": "pending"}
-      },
-      "completion": {"commit": ""}
-    },
-    "candidate": {"tree": "<tree>", "evidence_ids": ["state:<id>"]}
+    "decision": {
+      "id": "decision:<digest>",
+      "capability": "remote.publish",
+      "enforcement": {"posture": "advisory", "provider": "uncontained"},
+      "explain": {
+        "sources": ["policy:publication"],
+        "obligations": [],
+        "reason": "Tracked publication policy is off."
+      }
+    }
   },
-  "diagnostics": []
+  "diagnostics": [{"code": "capability_denied", "message": "Remote publication is denied."}]
 }
 ```
 
-`outcome` distinguishes completed work, work ready for implementation, input suspension, and
-assisted approval from actual failures. Stable diagnostic codes carry changed governance, stale
-evidence, verification failure, conflict, or concurrent ref movement. Applications must use fields,
-action IDs, and schemas—not parse human prose or inspect runtime files.
-Public lifecycle errors name the retained change, summarize the blocking condition and recovery
-state, and expose one public resume or inspection command. Low-level repair flags such as
-`--reviewed` are protocol inputs produced by candidate-bound review, not user-facing recovery steps.
-Read-only context commands serialize typed domain, reach, affected-record, review, and verifier
-data directly; their JSON is not reconstructed by parsing the text rendering.
-The default task result is delta-oriented: action schemas are expanded by `task action`, while
-captured observations are listed or retrieved by `task evidence`. This keeps the normal protocol
-small without making its supporting material inaccessible.
-
-Process exits remain deliberately small:
-
-- `0` — the requested operation completed successfully;
-- `1` — the operation completed with a valid blocking or negative result;
-- `2` — invocation, state, or internal failure prevented a valid result.
-
-Detailed distinctions belong in structured diagnostics rather than a growing exit-code taxonomy.
-
-### 8.3 Lifecycle hook protocol
-
-The hook surface contains only two blocking semantic suspension points. Mechanical steps are not
-hooks: keeping them in core prevents an adapter from replacing branch isolation, evidence
-collection, verification, or compare-and-swap landing.
-
-| Phase | Ordering guarantee | Context | Allowed result |
-|---|---|---|---|
-| `task.created` | Receipt, target, base, branch name, and work location have been selected; implementation has not begun | task, original goal, goal digest | private state, artifacts, or blocking response actions |
-| `candidate.evidenced` | One exact candidate tree has been constructed and its applicable mechanical observations captured; integration has not moved | task, goal digest, candidate tree, evidence receipts | private state, artifacts, or blocking response actions |
-
-Each persisted action contains a stable ID, owner, phase, kind, human prompt, JSON Schema, blocking
-flag, and candidate-specific context. Normal lifecycle output returns only its stable reference;
-`task action <task> <id>` expands the prompt, schema, and context on demand. `task respond` resolves
-exactly one ID. Adapter response files are transported through the CLI and stored privately; they
-are never accepted governance merely because an adapter produced them.
-
-Hook execution follows these rules:
-
-1. Replaying a phase with unchanged context must return an equivalent pending request or recognize
-   the already accepted artifact.
-2. A response is checked against every available causal binding: goal digest at intake; goal,
-   brief, and candidate digests at final review.
-3. The task cannot implement while a blocking `task.created` action remains. Resolving the last one
-   advances to implementation without a second begin.
-4. The integration ref cannot move while a blocking `candidate.evidenced` action remains. Resolving
-   the last one continues to landing automatically, except for an independent assisted-execution
-   pause.
-5. Changing a candidate while review is pending causes `task finish` to construct new evidence and
-   invalidate the old candidate response. Rejection or uncertainty retains the worktree for repair.
-6. An adapter owns only its private state and action semantics. It cannot choose lifecycle stages,
-   invoke Git transitions, mark mechanical evidence passed, or authorize repository-wide meaning.
-7. Core semantic review uses the same action transport, so hosts need one response API rather than
-   a special assessment-file editing path.
-8. A semantic review separates unresolved `candidate_defects` from non-blocking
-   `retained_discoveries`. `review_mode` is `self-attested` unless a host actually dispatches the
-   action to an independent reviewer; Invariant records this provenance but does not invent it.
-9. Every gated transition and every open change to a contract definition requires either an
-   attributable `user:` review or a fresh review marked `independent`. A failed verifier remains a
-   hard blocker under either authority.
-
-There is intentionally no blocking post-update hook: after compare-and-swap succeeds, an optional
-integration must not retroactively make the local landing ambiguous. Notifications or publication
-beyond the separately configured upstream push belong to the host.
-
-### 8.4 Output discipline
-
-- Standard output contains only the selected result format.
-- Successful lifecycle output is a state delta; full status, actions, and evidence are fetched by
-  their dedicated read APIs.
-- Successful verifier output is retained in ignored local logs and summarized rather than
-  copied into normal responses. Failure responses include the relevant output and log path.
-- Standard error contains invocation or runtime diagnostics that prevented a valid result.
-- Read-only commands never mutate Git, `.invariant`, runtime state, or receipts.
-- State-changing commands identify every intended mutation before applying it and support a dry-run
-  where the result can be computed without mutation.
-- Repeating an idempotent command with unchanged inputs yields an equivalent result.
-
-### 8.5 Repository-bound MCP transport
-
-`invariant-mcp --repository <path>` runs a stdio MCP server bound at startup to the primary
-worktree of exactly one Git common directory. It exposes typed tools for repository status and
-validation, semantic retrieval and reach, managed task progression, resumption, actions, and
-recovery, candidate evidence, parallel-plan validation, and causal lease operations. It accepts no
-per-call repository path and does not expose a generic command or arbitrary Git execution tool.
-
-Every tool invokes the existing typed CLI command contract in a fresh child process and returns its
-versioned JSON envelope unchanged. A protocol `blocked`, `needs_input`, or `awaiting_approval`
-outcome remains a successful MCP exchange so the harness can inspect its action or diagnostics; MCP
-transport failure is distinct from a valid lifecycle refusal. Structured action responses and plans
-are written only to temporary transport files and then validated by the ordinary core schemas.
-
-The MCP server retains no policy, receipt, review, evidence, plan, lease, or Git authority of its
-own. Tool annotations describe read and mutation behavior to a host but are never trusted as
-authorization. Restarting the server therefore reconnects to repository and runtime state rather
-than creating a second lifecycle. The stdio transport opens no listening socket; remote MCP
-transport and its authentication model are outside version one.
-
-### 8.6 Per-user local host
-
-`invariant serve` starts one loopback-only HTTP/1.1 host for the current OS user. Its default port is
-`3000`; `--port` selects another machine-local port for that invocation. The host owns the personal
-workspace and conversations, not repository truth. `invariant init` registers the repository it
-initializes, together with every nested Git repository it finds and initializes beneath it, and
-`start` and `serve --project` register on use; the host never searches the machine for folders.
-`project list` and `project remove` manage the registrations. Observation starts lazily when a
-client opens a registered project.
-
-A session is one transcript whichever surface holds it. `invariant start` marks its session live
-beneath the user's Invariant configuration directory while the console runs, refreshes the mark on
-every turn, and retains the transcript for later inspection. The served workspace reports `live` on
-each session but cannot create a session or take a turn. Presence is a hint about a process on this
-machine, never authority over the transcript.
-
-The browser workspace is a read-only state explorer. Its left pane presents registered projects as
-folders and their themed sessions as nested files. Selecting a folder shows its repository state
-and lifecycle; selecting a session file additionally shows its retained log. Session creation,
-turns, mode changes, project registration, and lifecycle control remain terminal operations.
-
-The stable versioned routes are:
-
-```text
-GET  /                    local project and session workspace
-GET  /host/v1/state       registered projects and durable sessions
-GET  /host/v1/sessions/<id>  one session transcript
-GET  /host/v1/projects/<id>/snapshot  coherent projection of one repository
-GET  /host/v1/projects/<id>/events    changed snapshots for one repository
-GET  /api/v1/snapshot?project=<id>    observer compatibility route
-GET  /api/v1/events?project=<id>      observer compatibility stream
-GET  /healthz             host process health
-```
-
-The event routes use Server-Sent Events because repository observation is one-way: the host emits
-an initial `snapshot` event, emits a new event only when the projected state revision changes, and
-sends comment heartbeats to keep intermediaries from considering an idle connection dead. Clients
-reconnect using ordinary EventSource behavior. HTTP snapshots remain the recovery and non-browser
-compatibility path; SSE is a notification transport, not a second state store.
-
-Each snapshot reports repository and governance validity, active and recently completed tasks,
-task freshness, pending actions, assurance, plans, leases, evidence, and locally observed Invariant
-processes. Long-running public commands write a heartbeat record beneath ignored runtime state while
-they execute and remove it on an orderly exit. A missing process or expired heartbeat is displayed
-as stale presence, never treated as proof that lifecycle work did or did not complete. Receipts, Git
-state, and evidence remain authoritative.
-
-The workspace and APIs are safe to refresh during active work. Snapshot construction is read-only and
-never calls lifecycle continuation, lease renewal, cleanup, or freshness operations that update a
-receipt. A one-off snapshot read never starts an observer: while no event subscriber holds the
-project, the host reuses its last snapshot for as long as the longer of the poll interval and that
-snapshot's own build time, then rebuilds. An observer that is subscribed widens its poll interval to
-its last build time, so an expensive repository is observed at the rate it can afford. Responses use
-no-store caching and restrictive browser security headers. The public host implements only GET and
-HEAD; any write method receives `405 Method Not Allowed`. It validates the loopback Host and accepts
-no repository path from the browser. Loopback reachability by itself grants no repository authority.
-
-## 9. Reach
-
-Reach combines mechanical intersections with semantic domains supplied by the caller.
-
-Mechanical inputs include:
-
-- changed repository paths;
-- changed Markdown sections when hunks resolve precisely;
-- declared contract surfaces;
-- caller-supplied interfaces;
-- caller-supplied semantic domains and their ancestors.
-
-Reach results remain:
-
-- `local` — no accepted binding record intersects;
-- `bounded` — accepted architecture or contracts apply but are not changed;
-- `open` — defining material, executable verification, or additive governance changes;
-- `gated` — accepted governance is removed or rewritten.
-
-Reach is evidence for semantic review and lifecycle choice. It does not dictate branch creation,
-infer `no-record`, or authorize landing.
-
-## 10. Candidate verification and landing
-
-A candidate is identified by exact Git object identity. Initial candidate forms are:
-
-- `commit:<sha>`;
-- `branch:<ref>` resolved and captured at invocation;
-- `staged` from an explicitly identified worktree and index;
-- `merge:<base>:<tip>` constructed without moving either ref.
-
-Verification:
-
-1. constructs and captures the candidate commit and tree;
-2. computes actual changed paths and section reach;
-3. validates tracked Invariant state;
-4. selects and runs affected semantic/contract verifiers and supplied repository checks;
-5. records command identity, working directory, executable/environment fingerprints, timestamps,
-   duration, status, exit code, output digest, and retained log;
-6. presents those observations with the exact candidate to semantic review;
-7. validates the resulting authority, architecture acknowledgements, governance references, and
-   boundary disposition;
-8. reruns volatile checks or reuses only exact-tree evidence whose declared cache policy permits it.
-
-Standalone verification never updates a ref. Within `task finish`, verification is the mandatory
-precondition to the same atomic landing operation.
-
-Landing repeats or consumes verification only when the evidence exactly matches the candidate tree,
-CLI mechanics version, verifier identities, and relevant governance versions. It then:
-
-1. confirms the target still equals the captured head;
-2. resolves an already-configured upstream before mutation when remote publication is enabled;
-3. confirms the target worktree can be synchronized safely;
-4. applies the requested local ref update atomically;
-5. writes a disposable successful-history checkpoint without making landing depend on that cache;
-6. releases explicitly associated leases only after success;
-7. pushes the exact landed commit to that upstream when enabled.
-
-Any conflict, failed check, changed candidate, missing review, stale assessment, or concurrent target
-advance leaves the target unchanged.
-
-The host may use ordinary editing and Git inspection commands inside the generated work context, but
-the managed task reaches the integration target only through atomic landing. Routine changes use the
-same lifecycle with little or no semantic ceremony.
-
-The landing commit records the boundary disposition, accepted governance and architecture
-references, review authority, review mode, the SHA-256 digest of the exact accepted review, and
-`Invariant-Landing-Parent` for its original first parent. Landing-history validation rejects
-incomplete review provenance, stale semantic bindings, incorrect coverage ranges, and commits whose
-recorded original parent no longer matches. It also derives, for every attested landing, the
-governed material its first-parent diff touched (record files, the policy file, the source index,
-and the canonical prose documents of records accepted at either end); a landing that touched any
-of it without complete review provenance, or touched the policy file without a `user:` review
-authority, is invalid state. Copied trailers therefore never turn a hand commit into a landing.
-
-When the integration target moves under a candidate whose review is already accepted, finish
-classifies the movement before it restarts anything. The movement is inert when its first-parent
-diff from the reviewed head touches none of the candidate's paths, no record, policy, or source
-file, and none of the canonical prose the candidate affects, and the candidate branch is unchanged
-since the review. An inert movement rebuilds the candidate on the new head, re-verifies it, and
-lands it with the accepted review, recording the reviewed tree in `Invariant-Review-Tree`. Any other
-movement returns the task to review. The public `change` host retries a finish interrupted by
-concurrent movement instead of exiting. Cherry-picked landing trailers must therefore be removed;
-the next normal landing covers that out-of-band commit. A backport that retains an attestation is a
-new task and review against the backport branch.
-
-After a successful ref update, `.invariant/runtime/history-validation/<target>.yml` may bound the
-next first-parent scan. It is reused only for the same target, mechanics digest, and ancestor head.
-Read-only validation never writes it, and a missing or stale checkpoint falls back to full history.
-
-## 11. Audits and discoveries
-
-An audit is tracked evidence over a declared commit and exact tree. The CLI can capture mechanical
-scope, validate evidence references, and check causal freshness. A semantic reviewer authors its
-findings and dispositions. `evidence audit save` accepts only a version marker and findings,
-combines the audit label with a compact UTC timestamp, records the same event as RFC 3339
-`created_at`, stamps the mode, ground, and tree, validates the complete record, and writes it under
-`.invariant/audits/` before any adoption decision. Governance passes use the neutral label `audit`,
-producing `audit-<UTC timestamp>.yml`. Time is descriptive only; freshness remains Git-causal.
-
-A discovery is a tracked non-authoritative change in repository understanding:
-
-```text
-discovery = observation + causal basis + relevance + disposition
-```
-
-The observation and rationale remain prose. The basis binds evidence or an explicit searched scope
-to a commit and exact tree. Relevance can name domains, paths, tasks, or related records. Disposition
-is `open` or `resolved`; a resolution may point to architecture, a domain, a contract, code,
-documentation, tests, another discovery, follow-up work, or no artifact at all.
-
-This makes missing artifacts, contradictory behavior, implicit dependencies, meaningful absence,
-and incomplete documentation normal discoveries. It does not assume that every discovery should
-end in a contract. The older `pending | promoted | dismissed | superseded | stale` records remain
-readable during migration.
-
-Evidence changes can make an audit or discovery mechanically suspect. Whether changed evidence
-contradicts a finding remains semantic judgment.
-
-Discovery is agent-mediated. The coding agent supplies the observation, evidence, searched scope,
-paths, domains, and related records. Under human authority, capture and resolution first return an
-`authority_required` proposal and leave tracked state unchanged. The host presents only the
-observation and required semantic decision to the human, then repeats the transition with `--apply`
-after approval. Under agent authority, the transition proceeds within the granted scope. Detailed
-evidence fields remain part of the harness protocol, not the human interface.
-
-### 11.1 Repository archaeology and semantic reasoning
-
-Managed guidance includes prose-rich repository archaeology and semantic reasoning. The purpose is
-to reconstruct relevant architecture in repositories where code, tests, schemas, configuration,
-documentation, history, and operational behavior may be incomplete or contradictory. Investigation
-starts from the requested behavior, traces it through ownership, state, interfaces, time, failure,
-and consumers, and expands only while new evidence could change implementation, durable-boundary
-judgment, or verification.
-
-Stable semantic IDs, paths, interfaces, domains, and revisit triggers are retrieval and invalidation
-coordinates. They do not bound the form of semantic reasoning or replace its prose. The semantic
-pass keeps requested meaning, accepted repository meaning, and observed behavior distinct; records
-disagreement rather than silently choosing a source; and treats bounded absence as evidence only
-when the searched scope and exact tree are explicit.
-
-`task guidance` compiles the selected context rather than merely printing locators. It includes:
-
-- the task's prose intent brief, when enabled;
-- selected durable rows and their anchored architecture sections at the captured integration head;
-- the observation, basis, evidence, searched scope, and relevance of open discoveries intersecting
-- the prose guidance applicable to the current stage.
-
-Default guidance is the concise stage core. `--full` adds repository archaeology, the detailed
-semantic reasoning handbook, discovery/coordination material, and protocol reference.
-
-Architecture is read from the captured accepted ground so candidate edits cannot silently rewrite
-the premise used to interpret their own change. Discoveries remain non-authoritative and may evolve
-progressively; including their prose in context does not promote them to governance.
-
-An audit finding may carry complete `records` projections when the evidence-to-record mapping is
-unambiguous. For selected findings, `governance project` materializes those projections and runs
-structural validation. Findings without a complete projection remain `unresolved` in the generated
-adoption draft; the author edits only those mappings to name records, a retained discovery, or an
-explicit deferral. `governance coverage` maps every selected finding to its disposition. The CLI
-projects and validates accepted meaning from the audit; it does not infer missing semantic content.
-
-## 12. Coordination
-
-Coordination is optional and activated only by the host when work is genuinely parallel,
-independently owned, or handoff-sensitive.
-
-The public `change` host performs a read-only classification before implementation. A small or
-tightly coupled request remains one work item. A request becomes a parallel plan only when at least
-two useful work items have disjoint path, interface, and governance claims. The host dispatches all
-ready work items concurrently, up to its worker limit, and orders overlapping or dependent work.
-Every proposed plan is validated before dispatch. Invalid structured output is returned to the
-planner with its concrete diagnostics for at most two repair attempts; failed attempts create no
-leases or workers. `provides` and `relies_on` accept only exact `contract:<id>` locators. Paths,
-schema fragments, code symbols, and tests belong in their corresponding claim fields and cannot be
-smuggled through the contract dependency graph.
-
-An unchanged accepted contract may be consumed by independent work items concurrently. Creating or
-evolving a contract requires exactly one provider work item; affected consumers declare reliance and
-depend on that provider. The provider converges first, and dependent worktrees are created from that
-converged candidate snapshot so frontend and backend consumers cannot continue from an obsolete
-contract. After every work item converges, the aggregate candidate passes the ordinary exact-tree
-review, verification, and atomic landing lifecycle.
-
-Plans describe units, dependencies, path/interface/governance claims, provides/relies relationships,
-and checks. Leases record temporary ownership against an integration ground and causal branch tip.
-
-Before checking a worker's path claims, the host removes only recognized untracked tool caches such
-as Python bytecode and pytest cache entries. Tracked files are never removed, and ordinary untracked
-files still participate in claim enforcement.
-
-The CLI mechanically validates:
-
-- target and ground existence;
-- acyclic dependency order;
-- provider-before-consumer edges;
-- unordered claim overlap;
-- selected governance digests;
-- lease freshness and liveness facts.
-
-When an independent candidate review rejects or is uncertain, its exact-tree response is retained in
-task runtime and its summary and defects are shown to the caller. The public change host may dispatch
-a bounded authoring correction pass using those defects. That pass cannot attest its own work: a
-changed candidate is re-evidenced and sent to a fresh independent reviewer. Exhausted correction
-attempts leave the candidate, rejection, and integration target intact for inspection.
-
-The core CLI does not decide to create workers or maintain conversations. Those are public-host and
-harness concerns governed by the policy above.
-
-Core context and candidate verification must not depend on coordination runtime. Coordination may
-depend on context mechanics, never the reverse.
-
-## 13. Receipts and caching
-
-A receipt is disposable lifecycle state and an integrity cache for repeated semantic work. Every
-managed task creates one during `task begin`. It is never consumed as landing evidence.
-
-A receipt may bind:
-
-- repository identity;
-- brief-dependency mechanics digest;
-- integration target and captured head;
-- exact goal digest as a textual drift detector;
-- selected paths, interfaces, and domains;
-- selected governance and defining-material digests;
-- the current boundary disposition.
-
-The receipt keeps these concerns separate. `governance_snapshot` contains `selected_digest` and
-`integration_digest`, which are freshness baselines only. `change_classification` contains the
-task's `boundary` and optional `posture`; it describes the change without granting authority.
-
-The CLI reports changed dependencies. The semantic caller decides whether changed goal text remains
-compatible with the cached envelope. Successful confirmation may refresh the exact goal digest only
-after every mechanical freshness check succeeds.
-
-The mechanics digest covers only configuration, Git identity, governance selection, material-change,
-serialization, and receipt-compatibility code. Landing, coordination, presentation, and prose
-guidance do not evict the brief cache: they are recomputed or reloaded independently. Receipts do not
-hash skill packages. Skill loading and context compaction belong to the host. Verification evidence
-may be reused only for the exact tree and base, verification mechanics version, runner configuration,
-working directory, executable environment, and verifier identity that produced it; changing the
-candidate always invalidates that evidence. Active receipts and logs live under self-ignored
-`.invariant/runtime/`. On successful landing, the task receipt, evidence, brief, reviews, and a stable
-`summary.yml` are archived under `.invariant/runtime/history/tasks/<task>/<landed-commit>/`. The active
-receipt disappears, but `task status`, `governance status`, and `task evidence` resolve the latest
-completed archive. The summary records initial and final boundary dispositions, governance audit
-and finding coverage, landing commit, candidate tree, and structural, behavioral, and semantic
-assurance separately. Reach, semantic
-reviews, candidate state, prospective-tree construction,
-and compare-and-swap target checks are always recomputed even when an expensive verifier result is
-reused. Volatile runners use `cache: never`.
-
-## 14. Lifecycle profiles
-
-Invariant has one mandatory managed-task lifecycle and two execution profiles.
-
-### 14.1 Automatic execution
-
-With automatic execution, the CLI:
-
-1. opens or refreshes the task receipt;
-2. creates or reuses an isolated linked worktree without moving the integration checkout;
-3. exposes any `task.created` action and then returns control for implementation;
-4. resumes at `task finish`, captures candidate-bound evidence, and exposes any
-   `candidate.evidenced` actions;
-5. advances through final verification and local landing after the last action is resolved;
-6. rebuilds and re-verifies candidates when concurrent landings move the target, keeping an
-   accepted review only across an inert movement (§10); and
-7. stops only for missing semantic authority, failed checks, conflict, movement that invalidates
-   reviewed evidence, persistent movement, or unauthorized external effects.
-
-### 14.2 Assisted execution
-
-With assisted execution, the CLI performs the same stages but presents proposed state-changing
-transitions and waits for `task continue --apply` before branch creation, governance adoption, or
-local ref update.
-
-Both profiles preserve the same receipts, branches, candidate construction, checks, and landing
-guarantees. The distinction is only where the CLI pauses.
-
-### 14.3 Reserved intent-brief adapter
-
-If a future extension enables the bundled adapter, the single task begin creates or reserves normal isolated work
-and returns a `task.created` action. The task enters `briefing` only while material intent input is
-pending; `task respond` advances it without replaying begin. `task finish` then captures evidence
-for the exact candidate and returns a `candidate.evidenced` whole-intent review. A changed tree,
-brief, goal, or adapter implementation invalidates the review.
-
-When disabled, those adapter actions disappear. Core semantic review still uses the same action
-transport when durable meaning is affected. Receipts, generated branches, candidate-bound evidence,
-exact-tree verification, and atomic landing remain mandatory core behavior.
-
-## 15. Skills
-
-Skills remain useful only where model judgment adds value. The selected skill set is thin:
-
-- context interpretation and domain selection;
-- durable-meaning review;
-- scoped evidence interpretation;
-- governance authoring;
-- architecture compliance review.
-
-A skill may instruct an agent to call `invariant`, but it must not duplicate CLI mechanics or
-reimplement the lifecycle. Skills must be independently useful and must not hash or import each
-other as freshness dependencies.
-
-Repository-local semantic prose remains optional reference material. The retained test suite is
-restricted to Git mechanics and may invoke the internal core application to exercise exact-tree and
-landing behavior. Test support is not distributed as the application and cannot be imported by the
-mechanics or lifecycle layers.
-
-## 16. Safety and authority
-
-- Read-only inspection needs no special authority.
-- Explicit CLI mutation affects only targets named by the invocation.
-- Remote publication defaults to off and requires accepted tracked configuration to opt in.
-- The CLI never creates, selects, or changes a remote or upstream.
-- An enabled push targets only the integration branch's existing upstream and names the exact
-  verified commit as its source.
-- Missing upstream configuration blocks before local landing. A remote rejection occurs after local
-  landing and cannot roll that verified commit back.
-- Ref updates use compare-and-swap against a captured old value.
-- Untracked files that would be overwritten block synchronization.
-- Failed verification never advances a ref.
-- `authority: agent` does not authorize external or destructive effects.
-- `execution: auto` does not bypass semantic gates or mechanical checks.
-
-## 17. Implementation architecture
-
-Invariant is a standard `src`-layout Python distribution built with `uv_build`:
+The `result` object is command-specific. Change results include change id, ledger head, stage,
+recommendation digest, admissible frontier, pending actions, redacted grants, candidate tree,
+assurance dimensions, and completion. Every causal id is a full oid or SHA-256, never an abbreviated
+display hash in machine output.
+
+### 11.3 Idempotency
+
+Mutating requests include an `operation_id` chosen by the caller. The ledger records it with the
+request digest. Repeating the same id and digest returns the recorded result; repeating the id with
+different input fails `invalid_invocation`. This covers retries after an unknown transport outcome.
+
+Grant consumption additionally uses the token digest and consequence identity. A completed
+single-use consequence returns its recorded result instead of executing again.
+
+### 11.4 Read discipline
+
+Read operations do not update freshness files, create worktrees, append access events, renew grants,
+or repair ledgers. Validation and inspection may be expensive but remain observational. Cached views
+are acceptable only when their ref heads are included in the cache key and returned result.
+
+---
+
+## 12. Attestation and inspection
+
+`AttestationService` produces deterministic landing trailers from ledger state. The complete
+attestation may exceed practical commit-message size, so trailers contain stable digests and compact
+repeated unit bindings while the retained ledger contains full explanations.
+
+`state.validate` walks first-parent integration history from a valid checkpoint or root and verifies:
+
+- landing parent and candidate identity;
+- change, goal, recommendation, and decision digests;
+- unit result and actor bindings;
+- governance versions and required retirement markers;
+- review and evidence digests;
+- policy authority for governed policy changes; and
+- coverage of out-of-band commits.
+
+A copied or rewritten landing commit fails because its first parent and recomputed tree differ. A
+missing local ledger does not invalidate an otherwise complete portable landing attestation, but it
+reduces available explanatory detail and is reported as `ledger_unavailable`, not as successful
+active handoff.
+
+Inspection is projection, never reconstruction by prose. `change inspect` can answer:
+
+- why the change was split or kept whole;
+- which units may run now and which conflict;
+- what each grant permits and what makes it stale;
+- which accepted records caused each obligation;
+- which exact work and candidate trees exist;
+- who was recorded as author, reviewer, and authority;
+- what remains before landing; and
+- whether enforcement was managed or advisory.
+
+---
+
+## 13. Package architecture
+
+The target package layout is:
 
 ```text
 src/invariant/
-  frontend.py  human command surface and local-provider orchestration
-  mcp_server.py repository-bound stdio transport over the typed command contract
-  protocol.py  stable cross-layer values for stages, outcomes, reach, boundaries, and evidence
-  semantics/   typed envelopes plus free-form stage guidance
-  mechanics/   deterministic repository operations
-  lifecycle/   the resumable task state machine
-  cli/         argument parsing and text/JSON presentation
-  harness/     optional outer-process bindings to locally authenticated coding agents
+  protocol.py                 closed enums, ids, request and result values
+  application.py              one transaction-oriented application service
+  governance/
+    records.py                version-two record values and validation
+    locators.py               exact-tree locator resolution
+    selection.py              declared and actual governance reach
+    compiler.py               deterministic obligation compilation
+    authority.py              attributable authority validation
+  ledger/
+    events.py                 append-only event values and reducer
+    store.py                  Git commit-tree and update-ref persistence
+    handoff.py                capsule creation, validation, export, import
+  planning/
+    model.py                  recommendations, units, claims, edges
+    recommend.py              semantic proposal orchestration and fallback
+    validate.py               deterministic validation and conflict graph
+    frontier.py               exact bounded admissible-frontier calculation
+  gateway/
+    capabilities.py           closed capability rules
+    decisions.py              evaluation and explanations
+    grants.py                 token issue, hash, use, revoke, staleness
+    containment.py            posture-provider interface
+  mechanics/
+    git.py                    capability detection and exact object operations
+    worktrees.py              isolated attempt materialization
+    candidate.py              causal aggregate convergence
+    verification.py           exact-tree evidence
+    landing.py                attested commit and compare-and-swap landing
+    publication.py            exact upstream publication
+  lifecycle/
+    changes.py                change state machine over ledger events
+    actions.py                typed semantic and authority suspension
+    recovery.py               resume, reconcile, invalidate, cleanup
+  adapters/
+    semantic_planner.py       bounded model-backed recommendation proposal
+    semantic_review.py        exact-context review proposal
+  mcp_server.py               repository-bound typed MCP transport
+  cli/                        operator parsing and presentation
 ```
 
-Dependency direction is CLI → lifecycle → mechanics and semantics. Mechanics never imports
-lifecycle, skill packages, or a host application. Semantics describes meaning but does not mutate
-Git. `protocol.py` contains data types only—no policy, I/O, or repository operations—so layers can
-exchange discriminated values without importing each other. Compatibility shell paths translate
-arguments into package calls and contain no policy.
+Dependency direction is:
 
-The distribution is `invariant-cli`; its console entry points are `invariant`, the advanced
-`invariant-agent` host executable, and the repository-bound `invariant-mcp` server. `invariant`
-exposes only the seven human commands and implements model-backed operations outside the core
-dependency layers. The typed core CLI is an internal application module used by the host, MCP
-transport, and tests. Any richer harness adapter must call the same command contract rather than
-duplicate it.
+```text
+CLI / MCP
+    -> application
+        -> lifecycle / gateway / planning
+            -> governance
+            -> mechanics
+                -> protocol values
+```
 
-Tracked governance remains version 1 unless an actual model change requires another version. The
-version-one protocol uses only the Invariant namespace and does not translate earlier names.
+Adapters depend on typed context and schemas and return proposals to the application. Governance and
+mechanics never import adapters, MCP, CLI, presentation, skills, or provider SDKs. Mechanics never
+decides semantic authority. Planning never creates workers. The gateway never runs arbitrary tools.
 
-## 18. Version-one acceptance criteria
+The distribution remains `invariant-cli` with `invariant` and `invariant-mcp` console entries.
+`invariant-agent` may remain an internal adapter executable while provider isolation needs a process
+boundary; it is not a second authority surface.
 
-The first CLI release is complete when:
+---
 
-- one installed `invariant` executable replaces direct package-relative script invocation;
-- machine connection, repository provider selection, and instruction-file setup remain separate;
-- a human can ask, establish repository records, and land a managed change from a durable
-  conversation without supplying task or action IDs;
-- `invariant task begin` creates the receipt and isolated generated worktree without moving the
-  integration checkout;
-- `invariant task finish` recomputes reach, verifies the exact prospective tree, and atomically lands
-  it;
-- automatic and assisted execution preserve the same lifecycle and differ only in routine pauses;
-- every read-only command supports stable JSON output;
-- Git capability, worktree, exact-tree, concurrent landing, and remote-publication mechanics pass
-  through the internal core application;
-- no context or verification command depends on a loaded skill;
-- context mechanics do not depend on coordination runtime;
-- semantic selections enter through explicit arguments or a versioned assessment document;
-- canonical prose remains first-class while the semantic index supplies only identity, authority,
-  applicability, revisit, verifier, relation, and supersession coordinates;
-- lifecycle hooks return typed actions and never create a second task lifecycle;
-- candidate reviews consume CLI-captured evidence instead of manually transcribing it;
-- discoveries represent observations, basis, relevance, and broad resolutions without requiring a
-  contract;
-- exact-tree verification can run without updating a ref;
-- atomic local landing remains available as an explicit command;
-- routine managed work passes through receipts, generated branches, and atomic landing without
-  unnecessary semantic or confirmation ceremony;
-- a Codex task can use the CLI through shell execution without a custom Codex integration;
-- an MCP host can use the same repository-bound semantics, lifecycle, evidence, and coordination
-  operations without receiving an arbitrary command or per-call repository escape hatch;
-- the optional harness can resolve the same schema-bound read-only action through either a locally
-  authenticated Codex or Claude Code process without introducing a core-to-harness dependency;
-- another application can consume the same behavior through JSON without parsing prose;
-- remote publication remains off by default and can target only the configured integration branch's
-  existing upstream after verified local landing.
+## 14. Failure and recovery rules
 
-The governing design rule is:
+Failures are classified before presentation:
 
-> Semantics supplies meaning, mechanics proves repository facts, and lifecycle decides when to act.
+- **denied:** governance intentionally prohibits the capability;
+- **needs authority:** a named attributable response is missing;
+- **stale:** the request was valid for an older causal state;
+- **blocked:** a repository fact such as conflict, dirty checkout, failed verifier, or missing Git
+  capability prevents progress;
+- **failed:** malformed input, corrupt durable state, transport failure, or internal error prevents a
+  valid result.
+
+No failure deletes work. Recovery may:
+
+- reload and reduce the ledger;
+- recreate a missing worktree from its work ref;
+- rerun exact-tree evidence;
+- replace a stale recommendation while retaining valid unit results;
+- reissue a capability after revalidation;
+- finish ledger bookkeeping for an already landed attested commit; or
+- request explicit authority for invalidation or discard.
+
+Recovery may not mark a check passed, accept a semantic review, broaden claims, change actor
+provenance, or move a ref merely to make state consistent.
+
+---
+
+## 15. Verification strategy
+
+Repository tests remain restricted to Git mechanics. The version-two retained suite covers:
+
+- Git capability detection before mutation;
+- ledger and work refs surviving process and runtime loss;
+- compare-and-swap ledger appends under concurrency;
+- isolated parallel worktrees and exact attempt bases;
+- contract-provider candidate ancestry;
+- actual-diff claim enforcement as a Git reach property;
+- exact candidate construction and evidence binding;
+- atomic single landing under concurrent finish calls;
+- recovery after the integration ref moved but ledger completion did not;
+- dirty checkout and untracked collision preservation; and
+- exact bounded remote publication with local landing retained after rejection.
+
+Do not add tests for prose, prompt wording, presentation, semantic policy choices, private helpers,
+MCP annotations, or documentation parity. Those are reviewed through typed schemas, static checks,
+and implementation inspection. Git tests exercise the application service rather than shelling
+through a presentation layer.
+
+Build verification includes package import, wheel/sdist contents, `invariant --help`,
+`invariant-mcp --help`, protocol-schema generation, `uv lock --check`, and `git diff --check`.
+
+---
+
+## 16. Version-two acceptance criteria
+
+The implementation is complete when:
+
+- protocol responses report the literal version `2` and no version-one state loader remains;
+- accepted records compile into source-attributed obligations through the closed directive
+  vocabulary;
+- every record kind has the intrinsic selection, planning, ordering, verification, review, or
+  capability effects specified here;
+- active changes, recommendations, actions, decisions, grants, work tips, and candidates survive
+  deletion of `.invariant/runtime` and MCP restart;
+- `change handoff` is sufficient for another harness to resume from the current Git-backed ledger;
+- Invariant returns one unit for cohesive work and records a validated maximum admissible frontier
+  for genuinely separable work;
+- the harness can serialize or run the recommended frontier but cannot obtain simultaneous managed
+  write grants outside it;
+- contract providers converge before affected consumers receive attempt worktrees;
+- actual unit diffs are checked against claims before convergence;
+- every privileged operation consumes the correct causally current grant;
+- decisions distinguish authorization from managed or advisory enforcement;
+- MCP exposes only the repository-bound typed tools in §8.2 and calls the application in-process;
+- no tool accepts a repository escape hatch, raw command, Git arguments, remote, or credential;
+- one exact aggregate candidate receives the complete evidence and semantic review required by
+  actual reach;
+- local landing is a single compare-and-swap update and happens at most once;
+- landing history durably attributes goal, recommendation, unit results and actors, decisions,
+  governance, evidence, review, and parent;
+- remote publication remains off by default and can publish only the exact landed commit to the
+  existing upstream;
+- failed, rejected, invalidated, stale, or conflicting work remains reachable until explicit
+  authorized discard; and
+- only the Git-mechanics tests described in §15 remain in the maintained suite.
+
+The implementation should be judged by the handoff it can defend:
+
+> Given only the repository, its Invariant refs, and an exact handoff capsule, can a different
+> harness explain what is allowed, resume the permitted work, and return one correct, exact,
+> durably attributable result without trusting the previous model's memory?
