@@ -39,10 +39,13 @@ and record set in an isolated worktree. It may create semantic, domain, contract
 records, but it must not create a record merely to fill a category.
 
 Invariant resolves every locator, validates the candidate record grammar and closed directives,
-captures exact-tree evidence, and presents the resulting candidate. The candidate remains pending
-until the user types `:accept`; neither the drafting agent nor a delegated resolver can establish
-governance. If the current records already describe the repository, the coordinator reports that
-there is no change to accept.
+and captures exact-tree evidence. When resolution is delegated to `secondary-agent`, Invariant
+opens a fresh independent provider run with an action-bound capability; an accepted resolution
+lands the baseline without asking the user to perform a protocol step. When resolution is `user`,
+Invariant shows a compact plain-language decision brief. `:details` reveals every proposed record,
+material rule, grounding source, and exact Git identity; `:accept` accepts that candidate. If the
+current records already describe the repository, the coordinator reports that there is no change
+to resolve.
 
 ## See project state
 
@@ -96,14 +99,15 @@ The session controls are:
 | `:settings` | Show tracked policy and clone-local preferences. |
 | `:set KEY VALUE` | Apply the same one-setting operation as `invariant set`. |
 | `:establish [focus]` | Draft or reconcile the repository governance baseline. |
-| `:accept [CHANGE]` | Accept one exact pending governance candidate with direct user authority. |
+| `:details [CHANGE]` | Inspect every part of a pending human governance decision. |
+| `:accept [CHANGE]` | Accept an exact candidate when resolution is assigned to the user. |
 | `:exit` | Leave while preserving the session. |
 
 Conversation turns are read-only while the provider interprets the message. When a change is
 requested, the host uses the original user message as intent, opens a durable change, obtains an
 isolated worktree for the provider principal, commits the provider's candidate, runs compiled
-verification, obtains a separate review when required, and lands atomically. If the candidate
-changes governance, it remains pending until `:accept`.
+verification, obtains a separate review when required, and lands atomically. Record changes are
+resolved by the configured user or secondary agent; policy changes always remain user-owned.
 
 ## Change one setting
 

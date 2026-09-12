@@ -680,15 +680,20 @@ control intent. Its read-only coordination turn determines whether the accepted 
 current. Otherwise an isolated execution turn drafts a minimal full audit and evidence-backed
 semantic, domain, contract, or constraint records. Candidate loading resolves every closed locator
 and validates the complete record graph. The candidate then follows exact-tree evidence and
-landing gates and remains at `accept-governance` until direct `user:cli` acceptance. “Baseline” is
-the resulting record set; “establish” is the operation.
+landing gates. With `authority.resolution.delegation: secondary-agent`, the host starts a fresh
+provider run under a principal distinct from the drafting attempt, supplies the exact action-bound
+candidate, and lands only after that resolver accepts it. With `user`, the candidate remains at
+`accept-governance` and the host presents a short decision brief; `:details` reveals the records,
+rules, grounding, and Git identity before `:accept`. “Baseline” is the resulting record set;
+“establish” is the operation.
 
 `start` creates or resumes one durable project session. `:new`, `:sessions`, and `:switch` navigate
 sessions; `:agent` switches the provider for one session; `:status`, `:settings`, and `:set` expose
 the same local host operations; `:establish` runs the governance-baseline operation with an optional
-focus; `:accept` supplies direct user authority for one exact pending governance candidate; and
-`:exit` releases live presence without deleting the transcript. Provider
-handles and transcripts live in the per-user workspace and never become semantic evidence.
+focus; `:details` expands one pending human governance decision; `:accept` supplies direct user
+authority when policy assigns resolution to the user; and `:exit` releases live presence without
+deleting the transcript. Provider handles and transcripts live in the per-user workspace and never
+become semantic evidence.
 
 An audit introduced by the current attested governance landing is fresh for that landing. The next
 first-parent commit makes it stale unless a later audit grounds the new state.
@@ -697,7 +702,8 @@ The conversational coordinator is read-only. When it classifies a user message a
 opens a durable change from the user's original message, obtains scoped worktree capabilities for a
 provider-specific principal, runs the provider in the isolated worktree, commits the result itself,
 verifies the exact candidate, obtains a distinct secondary review when compiled governance requires
-one, and lands only through `integration.land`. Governance candidates pause for `:accept`.
+one, and lands only through `integration.land`. Record candidates use the parent policy's configured
+resolver; policy candidates always require direct user acceptance.
 
 `set harness` and `set mode` update clone-local host preferences. Every tracked setting is a
 deterministic one-file governance candidate evaluated under the parent policy, directly accepted by

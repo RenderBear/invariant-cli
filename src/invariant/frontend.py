@@ -452,7 +452,8 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                             "COMMAND: :settings · show current settings",
                             "COMMAND: :set KEY VALUE · apply one setting",
                             "COMMAND: :establish [focus] · draft a governance baseline",
-                            "COMMAND: :accept [CHANGE] · accept an exact governance candidate",
+                            "COMMAND: :details [CHANGE] · inspect a pending governance proposal",
+                            "COMMAND: :accept [CHANGE] · accept when resolution is human",
                             "COMMAND: :exit · preserve the session and leave",
                         ],
                     )
@@ -571,17 +572,48 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                     )
                     _show("change", result.lines)
                     continue
+                if command == "details":
+                    change_id = raw_value or str(selected.get("pending_change") or "")
+                    if not change_id:
+                        _session_error(
+                            UsageError("Invariant: no pending change; use :details CHANGE")
+                        )
+                        continue
+                    try:
+                        result = surface.pending_details(repo, change_id)
+                    except InvariantError as error:
+                        _session_error(error)
+                        continue
+                    print(style.decision("Governance candidate details", result.lines))
+                    continue
                 _show("status", [f"INVALID: unknown session command ':{command}'"])
                 continue
 
             workspace.append_message(active_id, "user", transcript_message)
+            change_result: surface.SurfaceResult | None = None
             try:
                 turn_mode = "change" if establishing else mode
+                decision_context = ""
+                pending_change = str(selected.get("pending_change") or "")
+                if pending_change and not establishing:
+                    try:
+                        pending_details = surface.pending_details(repo, pending_change)
+                    except InvariantError:
+                        workspace.update_session(
+                            active_id, pending_change="", pending_action=""
+                        )
+                    else:
+                        decision_context = "\n".join(pending_details.lines)
                 with style.turn(provider.value) as activity:
                     reply = invoke_session(
                         provider,
                         repo,
-                        conversation.prompt(repo, turn_mode, message),
+                        conversation.prompt(
+                            repo,
+                            turn_mode,
+                            message,
+                            decision_context=decision_context,
+                        ),
                         conversation.schema(turn_mode),
                         session_id=str(private.get("provider_session_id") or "") or None,
                         timeout=args.timeout,
@@ -621,8 +653,7 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                             ),
                             timeout=args.timeout,
                         )
-                    details = "\n".join(result.lines)
-                    answer = "\n\n".join(filter(None, [answer, result.data.get("message", ""), details]))
+                    change_result = result
                     if result.data.get("pending"):
                         workspace.update_session(
                             active_id,
@@ -633,8 +664,37 @@ def _start(args: argparse.Namespace) -> dict[str, Any]:
                         workspace.update_session(
                             active_id, pending_change="", pending_action=""
                         )
-                workspace.append_message(active_id, "assistant", answer)
+                    governance = result.data.get("governance")
+                    details = "\n".join(result.lines)
+                    if governance is not None:
+                        answer = (
+                            "The governance proposal is ready for your decision."
+                            if result.data.get("pending")
+                            else "The governance baseline was independently resolved and landed."
+                        )
+                    else:
+                        answer = "\n\n".join(
+                            filter(None, [answer, result.data.get("message", "")])
+                        )
+                    if not result.data.get("pending"):
+                        answer = "\n\n".join(filter(None, [answer, details]))
+                transcript_answer = answer
+                if change_result is not None and change_result.data.get("pending"):
+                    transcript_answer = "\n\n".join(
+                        filter(None, [answer, "\n".join(change_result.lines)])
+                    )
+                workspace.append_message(active_id, "assistant", transcript_answer)
                 print(style.agent_message(provider.value, answer, heading=not activity.rendered))
+                if change_result is not None and change_result.data.get("pending"):
+                    print(
+                        style.decision(
+                            str(
+                                change_result.data.get("decision_title")
+                                or "Decision required"
+                            ),
+                            change_result.lines,
+                        )
+                    )
                 if style.interactive():
                     print(style.turn_separator())
             except AgentInvocationError as error:

@@ -7,6 +7,8 @@ from pathlib import Path
 import re
 from typing import Any, Mapping
 
+import yaml
+
 from invariant.errors import Blocked, InvariantError, RemotePushFailed
 from invariant.gateway import CapabilityService
 from invariant.ledger import Ledger, LedgerStore
@@ -42,6 +44,48 @@ def governed_worktree_changes(repo: Path) -> list[str]:
     """Return mutable governance paths that differ from accepted HEAD."""
 
     return [path for path in git.changed_paths(repo) if _is_governance_path(path)]
+
+
+def _accepted_governance_action(
+    action: Mapping[str, Any],
+    state: Mapping[str, Any],
+    *,
+    policy_change: bool = False,
+) -> bool:
+    if (
+        action.get("kind") != ActionKind.ACCEPT_GOVERNANCE.value
+        or action.get("status") != "responded"
+        or action.get("response", {}).get("resolution") != "accepted"
+    ):
+        return False
+    response = action.get("response", {})
+    actor = str(response.get("actor") or "")
+    principal = str(response.get("principal") or "")
+    if is_direct_user_authority(actor, principal):
+        return True
+    if (
+        policy_change
+        or action.get("resolver") != "secondary-agent"
+        or not actor.startswith("agent:")
+    ):
+        return False
+    authors = {item.get("actor") for item in state.get("attempts", {}).values()}
+    principals = {
+        item.get("principal") for item in state.get("attempts", {}).values()
+    }
+    return actor not in authors and principal not in principals
+
+
+def _authority_action(action: Mapping[str, Any], state: Mapping[str, Any]) -> bool:
+    if _accepted_governance_action(action, state):
+        return True
+    response = action.get("response", {})
+    return (
+        action.get("kind") == ActionKind.SUPPLY_INTENT.value
+        and action.get("status") == "responded"
+        and response.get("resolution") == "accepted"
+        and is_direct_user_authority(response.get("actor"), response.get("principal"))
+    )
 
 
 def _portable_governance_attestation(repo: Path, commit: str) -> bool:
@@ -89,6 +133,8 @@ def _portable_governance_attestation(repo: Path, commit: str) -> bool:
     units = git.trailers(repo, commit, "Invariant-Unit")
     authorities = git.trailers(repo, commit, "Invariant-Authority")
     valid_units = True
+    author_actors: set[str] = set()
+    author_principals: set[str] = set()
     for value in units:
         parts = value.split(" ")
         if len(parts) != 4 or not re.fullmatch(r"[0-9a-f]{40,64}", parts[1]):
@@ -101,6 +147,26 @@ def _portable_governance_attestation(repo: Path, commit: str) -> bool:
         except InvariantError:
             valid_units = False
             break
+        author_actors.add(parts[2])
+        author_principals.add(parts[3])
+    policy_change = ".invariant/config.yml" in git.changed_paths(
+        repo, landing_parent, commit
+    )
+    delegation = "user"
+    if not policy_change:
+        policy_result = git.run(
+            ["show", f"{landing_parent}:.invariant/config.yml"],
+            cwd=repo,
+            check=False,
+        )
+        if not policy_result.returncode:
+            try:
+                policy_document = yaml.safe_load(policy_result.stdout)
+                delegation = str(
+                    policy_document["authority"]["resolution"]["delegation"]
+                )
+            except (KeyError, TypeError, yaml.YAMLError):
+                delegation = "user"
     valid_authorities = True
     for value in authorities:
         parts = value.split(" ")
@@ -114,7 +180,15 @@ def _portable_governance_attestation(repo: Path, commit: str) -> bool:
         except InvariantError:
             valid_authorities = False
             break
-        if not is_direct_user_authority(parts[2], parts[3]):
+        direct_user = is_direct_user_authority(parts[2], parts[3])
+        delegated = (
+            not policy_change
+            and delegation == "secondary-agent"
+            and parts[2].startswith("agent:")
+            and parts[2] not in author_actors
+            and parts[3] not in author_principals
+        )
+        if not direct_user and not delegated:
             valid_authorities = False
             break
     return bool(decisions and units and authorities) and valid_units and valid_authorities and all(
@@ -182,13 +256,14 @@ def validate_governance_history(
         state = states.get(changes[0]) if len(changes) == 1 else None
         if state is not None:
             landing = state.get("landing") or {}
+            policy_change = ".invariant/config.yml" in git.changed_paths(
+                repo, str(state.get("base")), commit
+            )
             accepted = any(
-                action.get("kind") == ActionKind.ACCEPT_GOVERNANCE.value
-                and action.get("status") == "responded"
-                and action.get("response", {}).get("resolution") == "accepted"
-                and is_direct_user_authority(
-                    action.get("response", {}).get("actor"),
-                    action.get("response", {}).get("principal"),
+                _accepted_governance_action(
+                    action,
+                    state,
+                    policy_change=policy_change,
                 )
                 for action in state.get("actions", {}).values()
             )
@@ -393,14 +468,7 @@ class IntegrationService:
         trailers.append(f"Invariant-Decision: {landing_decision}")
         for action_id, action in sorted(state.get("actions", {}).items()):
             response = action.get("response", {})
-            if (
-                action.get("kind")
-                in {ActionKind.ACCEPT_GOVERNANCE.value, ActionKind.SUPPLY_INTENT.value}
-                and action.get("status") == "responded"
-                and is_direct_user_authority(
-                    response.get("actor"), response.get("principal")
-                )
-            ):
+            if _authority_action(action, state):
                 trailers.append(
                     f"Invariant-Authority: {action_id} {response['event']} "
                     f"{response['actor']} {response['principal']}"
@@ -485,13 +553,7 @@ def validate_landing_attestation(repo: Path, state: Mapping[str, Any]) -> None:
         f"{action_id} {action['response']['event']} "
         f"{action['response']['actor']} {action['response']['principal']}"
         for action_id, action in state.get("actions", {}).items()
-        if action.get("kind")
-        in {ActionKind.ACCEPT_GOVERNANCE.value, ActionKind.SUPPLY_INTENT.value}
-        and action.get("status") == "responded"
-        and is_direct_user_authority(
-            action.get("response", {}).get("actor"),
-            action.get("response", {}).get("principal"),
-        )
+        if _authority_action(action, state)
     )
     if sorted(git.trailers(repo, commit, "Invariant-Authority")) != expected_authorities:
         failures.append("Invariant-Authority")

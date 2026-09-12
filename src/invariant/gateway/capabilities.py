@@ -343,11 +343,32 @@ class CapabilityService:
             if not action or action.get("status") != "pending":
                 return DecisionState.STALE, "the bound action is not pending"
             kind = action.get("kind")
-            if kind in {
-                ActionKind.ACCEPT_GOVERNANCE.value,
-                ActionKind.SUPPLY_INTENT.value,
-            } and not is_direct_user_authority(actor, self.store.principal):
+            direct_user = is_direct_user_authority(actor, self.store.principal)
+            if (
+                kind == ActionKind.SUPPLY_INTENT.value
+                and not direct_user
+            ):
                 return DecisionState.NEEDS_AUTHORITY, "fresh user intent is required"
+            if kind == ActionKind.ACCEPT_GOVERNANCE.value and not direct_user:
+                if (
+                    action.get("resolver") != "secondary-agent"
+                    or not actor.startswith("agent:")
+                ):
+                    return (
+                        DecisionState.NEEDS_AUTHORITY,
+                        "governance acceptance requires its configured resolver",
+                    )
+                authors = {
+                    item.get("actor") for item in state.get("attempts", {}).values()
+                }
+                principals = {
+                    item.get("principal") for item in state.get("attempts", {}).values()
+                }
+                if actor in authors or self.store.principal in principals:
+                    return (
+                        DecisionState.NEEDS_AUTHORITY,
+                        "governance acceptance requires a distinct secondary agent",
+                    )
             if actor.startswith("agent:") and resolution_delegation != "secondary-agent":
                 return (
                     DecisionState.NEEDS_AUTHORITY,

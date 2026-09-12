@@ -65,8 +65,11 @@ def compile_obligations(
     if parallel is not None:
         sources.add("policy:parallelism.maximum")
 
-    if scope and _changes_governance(scope, selection):
-        resolution[CapabilityName.INTEGRATION_LAND.value] = "user"
+    governance_resolver = (
+        _governance_resolver(config, scope, selection) if scope else None
+    )
+    if governance_resolver:
+        resolution[CapabilityName.INTEGRATION_LAND.value] = governance_resolver
         sources.add("protocol:governance-acceptance")
 
     strength = {"any-attributable": 0, "secondary-agent": 1, "user": 2}
@@ -134,14 +137,19 @@ def compile_obligations(
     )
 
 
-def _changes_governance(scope: Scope, selection: GovernanceSelection) -> bool:
+def _governance_resolver(
+    config: Config,
+    scope: Scope,
+    selection: GovernanceSelection,
+) -> str | None:
     paths = tuple(path.removeprefix("repo:") for path in scope.paths)
+    if ".invariant/config.yml" in paths:
+        return "user"
     if any(
-        path == ".invariant/config.yml"
-        or path.startswith(".invariant/records/")
+        path == ".invariant/records" or path.startswith(".invariant/records/")
         for path in paths
     ):
-        return True
+        return config.authority.resolution.delegation
     canonical: set[str] = set()
     for record in selection.records:
         values = [*record.strings("architecture")]
@@ -158,10 +166,11 @@ def _changes_governance(scope: Scope, selection: GovernanceSelection) -> bool:
             path, separator, _ = value.rpartition("#")
             if separator:
                 canonical.add(path.removeprefix("repo:").strip("/"))
-    return any(
+    changes_canonical_meaning = any(
         path == governed
         or path.startswith(governed + "/")
         or governed.startswith(path + "/")
         for path in paths
         for governed in canonical
     )
+    return config.authority.resolution.delegation if changes_canonical_meaning else None

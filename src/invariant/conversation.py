@@ -35,8 +35,10 @@ def establishment_intent(focus: str = "") -> str:
         "audit-<UTC timestamp> id and filename, an ISO-8601 created_at value, the current HEAD as "
         "ground, the current HEAD tree as tree, mode full, and evidence-backed findings. Use "
         "disposition adoptable only for findings projected into this same candidate. Governance "
-        "acceptance belongs to the user; this request authorizes drafting the exact candidate, "
-        "not accepting or landing it."
+        "acceptance follows the current resolution policy; this request authorizes drafting the "
+        "exact candidate, not accepting or landing it. Keep all user-facing summaries short and "
+        "plain-language. Do not reproduce record YAML, hashes, locators, verification logs, or "
+        "this drafting prompt in the response."
         + emphasis
     )
 
@@ -105,8 +107,8 @@ def prompt(
         instruction = (
             "A durable-record proposal is awaiting the user's authority. Discuss and explain "
             "that proposal using the supplied decision context. Choose action=answer: discussion "
-            "must not alter or accept the proposal. Only the user's :accept control action accepts "
-            "the exact candidate."
+            "must not alter or accept the proposal. The user's :accept control action accepts the "
+            "exact candidate."
         )
     return (
         "You are working through an Invariant repository session. Inspect the repository when "

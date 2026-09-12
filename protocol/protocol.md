@@ -152,7 +152,10 @@ principal from every contributing attempt. Direct user authority additionally re
 `user:` locator to equal the authenticated transport principal.
 
 Repository policy is user-owned. An agent MAY propose policy but MUST NOT accept a policy change.
-The policy from the integration parent governs the candidate that changes it.
+The policy from the integration parent governs the candidate that changes it. Creating, changing,
+or removing a governance record is instead a bound semantic resolution: the parent policy's
+resolution delegation determines whether a user or an independent secondary agent may accept the
+exact candidate.
 
 ---
 
@@ -412,12 +415,20 @@ defines what Invariant does.
 
 Sources, audits, and discoveries can motivate governance but cannot create it. Establishment keeps
 observation, proposal, authority, and acceptance distinct. An agent MAY draft records and
-directives. Acceptance requires the authority allowed by current policy, and policy changes always
-require a `user:` authority.
+directives. Adding, changing, or removing records is a semantic resolution governed by the
+integration parent's `authority.resolution.delegation`. When delegation is `secondary-agent`, a
+fresh agent actor and transport principal, distinct from every candidate author, MAY accept the
+candidate by consuming an action-bound `intent.resolve` capability. When delegation is `user`, the
+candidate remains pending for direct user authority. Policy changes always require a `user:`
+authority and cannot be delegated.
 
-Before acceptance, Invariant presents the exact candidate, new or changed directives, their
-compiled consequences, and the authority that would govern. Acceptance is bound to that candidate
-tree. A later edit requires new acceptance.
+Before acceptance, Invariant MUST make the exact candidate, new or changed directives, their
+compiled consequences, and the authority that would govern inspectable. A human decision surface
+SHOULD lead with a concise plain-language account of what would become accepted, its material
+effects, and any cautions; raw records, provenance, locators, and object identities remain available
+on demand rather than replacing that account. A secondary-agent resolution request receives the
+same exact material in typed form. Acceptance is bound to that candidate tree. A later edit requires
+new acceptance.
 
 ### 3.7 Validation
 
@@ -819,7 +830,7 @@ The landing commit is the portable result. It carries:
 | `Invariant-Plan` | recommendation id and digest |
 | `Invariant-Unit` | repeated unit id, result tree, attributed actor, and transport principal |
 | `Invariant-Decision` | each privileged decision digest consumed by landing |
-| `Invariant-Authority` | direct user action id, event digest, asserted user, and transport principal |
+| `Invariant-Authority` | accepted governance or supplied-intent action id, event digest, asserted authority, and transport principal |
 | `Invariant-Governance` | each selected record id and digest |
 | `Invariant-Evidence` | exact candidate evidence-set digest |
 | `Invariant-Review` | review digest, mode, authority, and transport principal when required |

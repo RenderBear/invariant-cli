@@ -42,14 +42,21 @@ the repository in your local Invariant workspace.
 
 `establish` opens a durable governance-baseline session. The connected agent inspects the
 repository and drafts only evidence-backed semantic, domain, contract, and constraint records plus
-the audit that motivated them. Invariant validates the exact candidate and then stops:
+the audit that motivated them. Invariant validates the exact candidate. With the default
+`secondary-agent` resolution policy, a fresh independent agent reviews and accepts the baseline;
+the drafting agent cannot accept its own work.
+
+If setup assigned resolution to you, Invariant shows a short decision brief instead of record YAML
+and protocol internals:
 
 ```text
-(change) › :accept
+6 records will define how Invariant understands and governs this repository.
+…
+Type :accept to establish it.
+Type :details to inspect every record, rule, source, and the Git identity.
 ```
 
-Only that direct user action establishes the proposed records. The agent can draft the baseline;
-it cannot accept its own governance.
+Policy changes remain direct user decisions in either mode.
 
 ```console
 $ invariant status
@@ -96,7 +103,8 @@ Inside the conversation:
 :settings          inspect policy and local preferences
 :set KEY VALUE     change one setting
 :establish [focus] draft or reconcile the governance baseline
-:accept [CHANGE]   accept an exact pending governance candidate
+:details [CHANGE]  inspect a pending human governance decision
+:accept [CHANGE]   accept when resolution is assigned to you
 :exit              leave without losing the session
 ```
 

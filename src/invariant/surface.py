@@ -42,17 +42,92 @@ def _governance_preview(repo: Path, state: dict[str, Any]) -> dict[str, Any] | N
     changed: list[str] = []
     removed: list[str] = []
     affected = []
+    records: list[dict[str, str]] = []
+    directive_changes: list[dict[str, Any]] = []
+
+    def describe(record: Any) -> str:
+        if record.kind == "domain":
+            return str(record.data["responsibility"])
+        if record.kind in {"contract", "constraint"}:
+            return str(record.data["assertion"])
+        status = str(record.data.get("status") or "active")
+        return f"Treats {record.data['document']} as {status} canonical meaning."
+
+    def add_directives(record: Any, change: str) -> None:
+        directive_changes.extend(
+            {
+                "record": f"{record.kind}:{record.identifier}",
+                "change": change,
+                **directive.as_dict(),
+            }
+            for directive in record.directives
+        )
+
     for key, record in sorted(after_by_id.items()):
         prior = before_by_id.get(key)
         if prior is None:
             added.append(f"{record.kind}:{record.identifier}")
             affected.append(record)
+            records.append(
+                {
+                    "change": "added",
+                    "kind": record.kind,
+                    "id": record.identifier,
+                    "summary": describe(record),
+                    "path": record.path,
+                    "authority": record.authority,
+                }
+            )
+            add_directives(record, "added")
         elif prior.digest != record.digest:
             changed.append(f"{record.kind}:{record.identifier}")
             affected.append(record)
+            records.append(
+                {
+                    "change": "changed",
+                    "kind": record.kind,
+                    "id": record.identifier,
+                    "summary": describe(record),
+                    "path": record.path,
+                    "authority": record.authority,
+                }
+            )
+            prior_directives = {
+                item.identifier: item.as_dict() for item in prior.directives
+            }
+            current_directives = {
+                item.identifier: item.as_dict() for item in record.directives
+            }
+            for identifier in sorted(set(prior_directives) | set(current_directives)):
+                before_directive = prior_directives.get(identifier)
+                after_directive = current_directives.get(identifier)
+                if before_directive == after_directive:
+                    continue
+                directive_changes.append(
+                    {
+                        "record": f"{record.kind}:{record.identifier}",
+                        "change": (
+                            "added"
+                            if before_directive is None
+                            else "removed" if after_directive is None else "changed"
+                        ),
+                        **(after_directive or before_directive or {}),
+                    }
+                )
     for key, record in sorted(before_by_id.items()):
         if key not in after_by_id:
             removed.append(f"{record.kind}:{record.identifier}")
+            records.append(
+                {
+                    "change": "removed",
+                    "kind": record.kind,
+                    "id": record.identifier,
+                    "summary": describe(record),
+                    "path": record.path,
+                    "authority": record.authority,
+                }
+            )
+            add_directives(record, "removed")
 
     selection = GovernanceSelection.create(
         affected,
@@ -69,28 +144,99 @@ def _governance_preview(repo: Path, state: dict[str, Any]) -> dict[str, Any] | N
         "added": added,
         "changed": changed,
         "removed": removed,
+        "records": records,
         "record_sources": [record.reference for record in affected],
-        "authorities": sorted({record.authority for record in affected}),
-        "directives": [
-            {
-                "record": f"{record.kind}:{record.identifier}",
-                **directive.as_dict(),
-            }
-            for record in affected
-            for directive in record.directives
-        ],
+        "authorities": sorted({record["authority"] for record in records}),
+        "directives": directive_changes,
         "consequences": obligations,
     }
 
 
-def _preview_lines(preview: dict[str, Any] | None) -> tuple[str, ...]:
+def _directive_effect(directive: dict[str, Any]) -> str:
+    kind = str(directive.get("kind") or "")
+    if kind == "deny-capability":
+        return f"Blocks {directive['capability']}."
+    if kind == "require-resolution":
+        return f"Requires {directive['resolver']} resolution before {directive['capability']}."
+    if kind == "require-review":
+        return f"Requires {directive['mode']} review."
+    if kind == "require-verifier":
+        return f"Requires the check {directive['locator']}."
+    if kind == "serialize":
+        return f"Prevents concurrent work across {', '.join(directive['on'])}."
+    if kind == "limit-parallelism":
+        return f"Limits parallel work to {directive['maximum']} units."
+    if kind == "require-containment":
+        return f"Requires managed containment for {directive['capability']}."
+    return kind
+
+
+def _decision_lines(preview: dict[str, Any]) -> tuple[str, ...]:
+    records = list(preview["records"])
+    kind_names = {
+        "semantic": ("design meaning", "design meanings"),
+        "domain": ("ownership area", "ownership areas"),
+        "contract": ("interface contract", "interface contracts"),
+        "constraint": ("rule", "rules"),
+    }
+    counts: dict[str, int] = {}
+    for record in records:
+        counts[record["kind"]] = counts.get(record["kind"], 0) + 1
+    composition = " · ".join(
+        f"{count} {kind_names.get(kind, (kind, kind + 's'))[count != 1]}"
+        for kind, count in sorted(counts.items())
+    )
+    noun = "record" if len(records) == 1 else "records"
+    lines = [
+        f"{len(records)} {noun} will define how Invariant understands and governs "
+        f"this repository ({composition}).",
+        "",
+    ]
+    for record in records[:6]:
+        kind_name = kind_names.get(
+            record["kind"], (record["kind"], record["kind"] + "s")
+        )[0]
+        lines.append(
+            f"{record['change'].capitalize()} {kind_name} “{record['id']}” — "
+            f"{record['summary']}"
+        )
+    if len(records) > 6:
+        lines.append(f"And {len(records) - 6} more records; :details shows every one.")
+
+    directives = list(preview["directives"])
+    if directives:
+        lines.extend(["", "Material effects:"])
+        lines.extend(
+            f"• {item['change'].capitalize()} rule: {_directive_effect(item)}"
+            for item in directives[:4]
+        )
+        if len(directives) > 4:
+            lines.append(f"• Plus {len(directives) - 4} more; :details shows every rule.")
+    verifier_count = len(
+        preview["consequences"].get("required_verifiers", [])
+    )
+    lines.extend(
+        [
+            "",
+            "All record links and candidate structure are valid."
+            + (
+                f" The baseline would require {verifier_count} repository checks "
+                "on affected future changes."
+                if verifier_count
+                else ""
+            ),
+            "Accepting is bound to this exact candidate; later edits require a new decision.",
+            "",
+            "Type :accept to establish it.",
+            "Type :details to inspect every record, rule, source, and the Git identity.",
+        ]
+    )
+    return tuple(lines)
+
+
+def _preview_detail_lines(preview: dict[str, Any] | None) -> tuple[str, ...]:
     if preview is None:
         return ()
-    records = [
-        *(f"+{value}" for value in preview["added"]),
-        *(f"~{value}" for value in preview["changed"]),
-        *(f"-{value}" for value in preview["removed"]),
-    ]
     consequences = preview["consequences"]
     record_sources = set(preview["record_sources"])
     effects: list[str] = []
@@ -114,12 +260,23 @@ def _preview_lines(preview: dict[str, Any] | None) -> tuple[str, ...]:
         for directive in preview["directives"]
     ):
         effects.append(f"parallelism ≤ {consequences['parallel_limit']}")
-    return (
-        f"RECORDS: {', '.join(records) or 'none'}",
-        f"DIRECTIVES: {len(preview['directives'])}",
-        f"CONSEQUENCES: {', '.join(effects) or 'context only'}",
-        f"AUTHORITY: {', '.join(preview['authorities']) or 'removed records only'}",
+    lines = [f"CANDIDATE: {preview['candidate']}"]
+    lines.extend(
+        f"RECORD: {item['change']} {item['kind']}:{item['id']} in {item['path']} — "
+        f"{item['summary']}"
+        for item in preview["records"]
     )
+    lines.extend(
+        f"RULE: {item['change']} in {item['record']} — {_directive_effect(item)}"
+        for item in preview["directives"]
+    )
+    lines.extend(
+        [
+            f"CONSEQUENCES: {', '.join(effects) or 'context only'}",
+            f"GROUNDING: {', '.join(preview['authorities']) or 'removed records only'}",
+        ]
+    )
+    return tuple(lines)
 
 
 def settings(repo: Path) -> SurfaceResult:
@@ -500,15 +657,44 @@ def execute_agent_change(
         operation_id=f"{operation}-request-land",
     )
     action = requested.result.get("action")
+    resolution: dict[str, Any] | None = None
+    if (
+        isinstance(action, dict)
+        and action.get("kind") == "accept-governance"
+        and action.get("resolver") == "secondary-agent"
+    ):
+        resolution = _resolve_governance(
+            repo,
+            provider,
+            worktree,
+            change_id,
+            action,
+            preview,
+            f"{operation}-governance-resolution",
+            timeout=timeout,
+        )
+        requested = landing.capability_request(
+            change_id,
+            capability="integration.land",
+            actor=HARNESS_PRINCIPAL,
+            resource=candidate["tree"],
+            operation_id=f"{operation}-request-land-resolved",
+        )
+        action = requested.result.get("action")
     if isinstance(action, dict):
+        if preview is not None:
+            decision_lines = _decision_lines(preview)
+            decision_title = "Governance baseline ready"
+        else:
+            decision_lines = (
+                "This candidate changes accepted repository policy.",
+                "The policy change requires your direct authority and is bound to one Git tree.",
+                "",
+                "Type :accept to accept and land it.",
+            )
+            decision_title = "Policy decision required"
         return SurfaceResult(
-            (
-                f"CHANGE: {change_id}",
-                f"CANDIDATE: {candidate['tree']}",
-                *_preview_lines(preview),
-                "STATUS: needs your decision",
-                f"REQUEST: :accept {change_id}",
-            ),
+            decision_lines,
             {
                 "change": change_id,
                 "candidate": candidate["tree"],
@@ -516,6 +702,7 @@ def execute_agent_change(
                 "governance": preview,
                 "pending": True,
                 "message": execution.message,
+                "decision_title": decision_title,
             },
         )
     token = requested.result.get("token")
@@ -534,19 +721,33 @@ def execute_agent_change(
     completed = landing.store.load(change_id).state
     commit = str(completed["landing"]["commit"])
     _cleanup(user, change_id, completed, operation)
-    return SurfaceResult(
-        (
+    if preview is not None:
+        record_count = len(preview["records"])
+        lines = (
+            f"CHANGE: {change_id}",
+            f"BASELINE: {record_count} governance records accepted",
+            "RESOLUTION: secondary agent",
+            f"REVIEW: {resolution['summary'] if resolution else 'accepted'}",
+            f"COMMIT: {commit}",
+            "STATUS: landed",
+        )
+    else:
+        lines = (
             f"CHANGE: {change_id}",
             f"FILES: {', '.join(changed)}",
             f"COMMIT: {commit}",
             "STATUS: landed",
-        ),
+        )
+    return SurfaceResult(
+        lines,
         {
             "change": change_id,
             "paths": changed,
             "commit": commit,
             "pending": False,
             "message": execution.message,
+            "governance": preview,
+            "resolution": resolution,
         },
     )
 
@@ -615,6 +816,129 @@ def _resolve_review(
             code="review_not_accepted",
             data={"change": change_id, "review": response},
         )
+
+
+def _resolve_governance(
+    repo: Path,
+    provider: AgentProvider,
+    worktree: Path,
+    change_id: str,
+    action: dict[str, Any],
+    preview: dict[str, Any] | None,
+    operation: str,
+    *,
+    timeout: int,
+) -> dict[str, Any]:
+    """Obtain one independent, action-bound semantic resolution."""
+
+    resolver = f"agent:{provider.value}/resolution-{uuid.uuid4().hex[:12]}"
+    application = InvariantApplication.bind(repo, principal=resolver)
+    token = _grant(
+        application,
+        change_id,
+        "intent.resolve",
+        str(action["id"]),
+        operation_id=f"{operation}-grant",
+    )
+    resolved = invoke(
+        provider,
+        worktree,
+        (
+            "Act as the independent semantic resolver for this exact governance candidate. "
+            "You did not author it. Inspect the candidate records, their repository evidence, "
+            "the current accepted policy, and the code and design material they describe. Do "
+            "not modify the worktree. Accept only if the proposed records are minimal, accurate, "
+            "evidence-backed, internally consistent, and their closed rules are appropriate. "
+            "Reject if a material issue remains. Give a concise plain-language summary for the "
+            "repository user; do not reproduce YAML, locators, hashes, or the drafting prompt.\n\n"
+            f"Bound proposal:\n{canonical_json(preview or {})}"
+        ),
+        {
+            "$schema": "https://json-schema.org/draft/2020-12/schema",
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["resolution", "summary", "concerns"],
+            "properties": {
+                "resolution": {
+                    "type": "string",
+                    "enum": ["accepted", "rejected"],
+                },
+                "summary": {"type": "string", "minLength": 1},
+                "concerns": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+            },
+        },
+        timeout=timeout,
+    )
+    response = {
+        "bindings": action["bindings"],
+        "resolution": resolved.response.get("resolution"),
+        "summary": resolved.response.get("summary"),
+        "defects": resolved.response.get("concerns", []),
+    }
+    application.action_respond(
+        change_id,
+        str(action["id"]),
+        response=response,
+        actor=resolver,
+        token=token,
+        operation_id=f"{operation}-respond",
+    )
+    if response["resolution"] != "accepted":
+        raise InvariantError(
+            "Invariant: the independent resolver rejected the governance candidate",
+            code="governance_not_accepted",
+            data={"change": change_id, "resolution": response},
+        )
+    return response
+
+
+def pending_details(repo: Path, change_id: str) -> SurfaceResult:
+    """Return the inspectable detail behind one pending human decision."""
+
+    application = InvariantApplication.bind(repo, principal=USER_PRINCIPAL)
+    state = application.store.load(change_id).state
+    action = next(
+        (
+            value
+            for value in state.get("actions", {}).values()
+            if value.get("status") == "pending"
+            and value.get("kind") in {"accept-governance", "supply-intent"}
+        ),
+        None,
+    )
+    if not isinstance(action, dict):
+        raise InvariantError(
+            f"Invariant: change '{change_id}' has no pending human decision",
+            code="invalid_invocation",
+        )
+    preview = _governance_preview(repo, state)
+    lines = _preview_detail_lines(preview)
+    worktrees = [
+        str(value.get("worktree"))
+        for value in state.get("attempts", {}).values()
+        if value.get("worktree")
+    ]
+    if lines and worktrees:
+        lines = (*lines, f"WORKTREE: {worktrees[-1]}")
+    if not lines:
+        candidate = state.get("candidate") or {}
+        lines = (
+            f"CANDIDATE: {candidate.get('tree', '—')}",
+            f"INTENT: {state.get('intent', {}).get('statement', '—')}",
+            "AUTHORITY: direct user",
+        )
+    return SurfaceResult(
+        lines,
+        {
+            "change": change_id,
+            "action": action,
+            "governance": preview,
+            "pending": True,
+        },
+    )
 
 
 def accept_pending(repo: Path, change_id: str) -> SurfaceResult:

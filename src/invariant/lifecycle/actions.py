@@ -80,8 +80,36 @@ class ActionService:
             and policy.authority.intent.permits(actor)
             and token is None
         )
-        if kind in {ActionKind.ACCEPT_GOVERNANCE, ActionKind.SUPPLY_INTENT} and not direct_user_intent:
-            raise InvariantError("Invariant: this action requires direct user intent", code="authority_required")
+        if kind is ActionKind.SUPPLY_INTENT and not direct_user_intent:
+            raise InvariantError(
+                "Invariant: this action requires direct user intent",
+                code="authority_required",
+            )
+        if kind is ActionKind.ACCEPT_GOVERNANCE and not direct_user_intent:
+            if action.get("resolver") != "secondary-agent" or not actor.startswith("agent:"):
+                raise InvariantError(
+                    "Invariant: governance acceptance requires its configured resolver",
+                    code="authority_required",
+                )
+            authors = {
+                attempt.get("actor") for attempt in state.get("attempts", {}).values()
+            }
+            author_principals = {
+                attempt.get("principal")
+                for attempt in state.get("attempts", {}).values()
+            }
+            if actor in authors or self.store.principal in author_principals:
+                raise InvariantError(
+                    "Invariant: a governance author cannot accept its own candidate",
+                    code="independent_review_required",
+                )
+            if response.get("resolution") == "accepted" and not str(
+                response.get("summary") or ""
+            ).strip():
+                raise InvariantError(
+                    "Invariant: delegated governance acceptance requires a summary",
+                    code="invalid_invocation",
+                )
         review_values: tuple[ReviewVerdict, ReviewMode, str] | None = None
         if kind in {ActionKind.REVIEW_SEMANTICS, ActionKind.REVIEW_INDEPENDENT}:
             try:
