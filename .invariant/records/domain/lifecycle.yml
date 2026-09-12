@@ -1,4 +1,4 @@
-version: 2
+version: 1
 id: lifecycle
 responsibility: Owns resumable task progression through isolated work, prospective-tree construction,
   verification, atomic landing, and archival completion.

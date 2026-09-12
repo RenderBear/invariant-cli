@@ -13,6 +13,7 @@ from invariant.mechanics.documents import ConfigLoader
 from invariant.protocol import (
     CapabilityName,
     DirectiveKind,
+    PROTOCOL_VERSION,
     digest,
     require_authority_locator,
     require_id,
@@ -80,7 +81,7 @@ class Directive:
                     code="unknown_capability",
                 ) from exc
         if kind is DirectiveKind.REQUIRE_RESOLUTION and values["resolver"] not in {
-            "user", "agent", "any-attributable"
+            "user", "secondary-agent", "any-attributable"
         }:
             raise InvariantError(f"Invariant: {label}.resolver is invalid", code="invalid_directive")
         if kind is DirectiveKind.REQUIRE_REVIEW and values["mode"] not in {
@@ -179,8 +180,11 @@ class GovernanceStore:
         return governance
 
     def _parse(self, kind: str, path: str, raw: object, ref: str | None) -> Record:
-        if not isinstance(raw, dict) or raw.get("version") != 2:
-            raise InvariantError(f"Invariant: {path} must declare version: 2", code="invalid_state")
+        if not isinstance(raw, dict) or raw.get("version") != PROTOCOL_VERSION:
+            raise InvariantError(
+                f"Invariant: {path} must declare version: {PROTOCOL_VERSION}",
+                code="invalid_state",
+            )
         common = {"version", "id", "authority"}
         kind_fields = {
             "semantic": {

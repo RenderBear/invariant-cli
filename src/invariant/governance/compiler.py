@@ -69,7 +69,7 @@ def compile_obligations(
         resolution[CapabilityName.INTEGRATION_LAND.value] = "user"
         sources.add("protocol:governance-acceptance")
 
-    strength = {"any-attributable": 0, "agent": 1, "user": 2}
+    strength = {"any-attributable": 0, "secondary-agent": 1, "user": 2}
     for record in selection.records:
         verifiers.update(record.strings("verifies"))
         if record.strings("verifies"):

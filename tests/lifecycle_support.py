@@ -1,4 +1,4 @@
-"""Helpers for exercising protocol-two Git mechanics."""
+"""Helpers for exercising protocol-v1 Git mechanics."""
 
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ def repository(path: Path, *, commits: int = 1, planner: Planner | None = None) 
     git.run(["add", "-A"], cwd=path)
     git.run(["commit", "-qm", "seed"], cwd=path)
     InvariantApplication.initialize(path)
-    git.run(["add", "-A"], cwd=path)
-    git.run(["commit", "-qm", "invariant setup"], cwd=path)
     for index in range(commits - 1):
         git.run(["commit", "-q", "--allow-empty", "-m", f"history {index}"], cwd=path)
     return InvariantApplication.bind(path, planner=planner)

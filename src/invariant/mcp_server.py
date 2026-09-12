@@ -1,4 +1,4 @@
-"""Repository-bound in-process MCP gateway for protocol version two."""
+"""Repository-bound in-process MCP gateway for protocol v1."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from mcp.types import ToolAnnotations
 from invariant import __version__
 from invariant.application import InvariantApplication, OperationResult
 from invariant.errors import InvariantError
-from invariant.protocol import Outcome
+from invariant.protocol import Outcome, PROTOCOL_VERSION
 
 
 Envelope = dict[str, Any]
@@ -45,7 +45,7 @@ def _operation(value: str | None) -> str:
 def _error(command: str, error: InvariantError) -> Envelope:
     outcome = Outcome.BLOCKED if error.exit_code == 1 else Outcome.FAILED
     return {
-        "protocol": 2,
+        "protocol": PROTOCOL_VERSION,
         "command": command,
         "status": "blocked" if error.exit_code == 1 else "error",
         "outcome": outcome.value,
@@ -81,7 +81,7 @@ def create_server(
 
     @server.tool(title="Validate governed state", annotations=READ_ONLY)
     def invariant_state_validate() -> Envelope:
-        """Validate version-two policy, records, ledgers, refs, and attestations."""
+        """Validate policy, records, ledgers, refs, and attestations."""
         return call("state.validate", app.state_validate)
 
     @server.tool(title="Compile governance context", annotations=READ_ONLY)

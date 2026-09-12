@@ -1,12 +1,11 @@
 # Invariant — implementation design of record
 
-This document specifies the reference implementation of [protocol version 2](../protocol/protocol.md).
+This document specifies the reference implementation of [protocol version 1](../protocol/protocol.md).
 The protocol defines the implementation-independent contract; this file defines the Python package,
 Git representation, compiler, recommendation engine, capability gateway, MCP tools, CLI, and local
 execution mechanics. Where they disagree, the protocol governs and this document is wrong.
 
-The implementation is protocol version two. It replaces obsolete schemas, runtime receipts,
-commands, and tools directly and has no compatibility readers or migrations.
+The implementation and all tracked state use protocol version 1.
 
 Invariant implements a protocol that builds the governance layer for complex agentic work:
 
@@ -94,7 +93,7 @@ The application evaluates three different properties for consequential operation
 3. **Containment:** for execution capabilities, the actor has no alternative path around the
    gateway for this consequence.
 
-Authorization is implemented in version two. Containment is reported per execution capability and may be
+Authorization is implemented by the current gateway. Containment is reported per execution capability and may be
 `advisory` until a concrete containment provider proves otherwise. The UI and structured output must
 never collapse those properties into one “safe” flag.
 
@@ -121,7 +120,7 @@ live grants and requests new ones.
 
 ### 3.1 Record model
 
-Version-two records are immutable typed values loaded from one exact Git tree. The package defines:
+Records are immutable typed values loaded from one exact Git tree. The package defines:
 
 ```text
 SemanticRecord
@@ -142,16 +141,14 @@ heading carrying an explicit `{#stable-anchor}`. The digest serializer normalize
 preserves ordered prose where order matters, reads exact canonical sections from the selected tree,
 and hashes the resulting UTF-8 bytes.
 
-The version-two schema changes are direct:
+The v1 schema is direct:
 
-- semantic records add `directives`, and `applies_to` may name `capability:<name>`;
-- domains add `scope` and `interfaces` as planning and selection coordinates;
-- contracts retain mandatory `between`, `surfaces`, `architecture`, and `verifies`;
-- constraints add `directives` and require at least one directive or verifier;
-- bare domain ids in `applies_to` become typed `domain:<id>` locators; and
-- every tracked configuration and record uses `version: 2`.
-
-No version-one record is accepted by the version-two loader.
+- semantic records carry `directives`, and `applies_to` may name `capability:<name>`;
+- domains carry `scope` and `interfaces` as planning and selection coordinates;
+- contracts define mandatory `between`, `surfaces`, `architecture`, and `verifies`;
+- constraints carry `directives` and require at least one directive or verifier;
+- `applies_to` uses typed locators such as `domain:<id>`; and
+- every tracked configuration and record uses `version: 1`.
 
 ### 3.2 Selection
 
@@ -358,7 +355,7 @@ local landing after rejection.
 
 ### 5.1 Change aggregate
 
-The version-two lifecycle replaces the version-one one-task/one-worker assumption. A `Change` owns:
+A `Change` owns one or more work units rather than assuming one task maps to one worker:
 
 ```text
 supplied intent and supplier
@@ -404,7 +401,7 @@ The action store is part of the ledger. An expanded action contains:
 ```yaml
 id: core:candidate-review:<digest>
 kind: review-semantics
-schema: invariant://v2/actions/review-semantics
+schema: invariant://v1/actions/review-semantics
 blocking: true
 bindings:
   change: <id>
@@ -603,7 +600,7 @@ protocol `failed` envelope when one can be produced.
 
 ### 8.2 Tool surface
 
-The version-two MCP server exposes exactly these tools:
+The MCP server exposes exactly these tools:
 
 | Tool | Mutation | Purpose |
 |---|---|---|
@@ -699,12 +696,12 @@ Tracked configuration is deliberately small and makes authority structurally dis
 execution:
 
 ```yaml
-version: 2
+version: 1
 authority:
   intent:
     suppliers: [user]
   resolution:
-    delegation: agent
+    delegation: secondary-agent
 execution:
   transitions: auto
 integration_branch: auto
@@ -713,12 +710,12 @@ parallelism:
   maximum: auto
 ```
 
-`authority.intent.suppliers` is a non-empty subset of `user` and `policy`; it declares which
-attributable sources may originate change intent. Accepted records remain standing repository
-intent regardless of this list. `authority.resolution.delegation` is `agent` or `user`. `agent`
-allows the kernel to issue `intent.resolve` for eligible semantic actions to a named model actor;
-`user` requires new `user:` intent. Neither setting is an execution permission. Policy changes
-always require direct user intent.
+`authority.intent.suppliers` declares which attributable sources may originate change intent; v1
+defaults to the user. Accepted records remain standing repository meaning regardless of this list.
+`authority.resolution.delegation` is `secondary-agent` or `user`. `secondary-agent` allows the
+kernel to issue `intent.resolve` for one eligible semantic action to a named model actor; `user`
+requires new `user:` intent. Neither setting is an execution permission. Policy changes always
+require direct user intent.
 
 `execution.transitions` is `auto` or `assisted`. It is a host preference for compound operator
 surfaces, not authorization and not an instruction to the kernel. The low-level CLI and MCP
@@ -745,7 +742,7 @@ requires `user:` authority.
 
 ### 11.1 Service API
 
-`InvariantApplication` accepts typed request objects and returns the version-two envelope. It owns
+`InvariantApplication` accepts typed request objects and returns the v1 envelope. It owns
 transaction boundaries and delegates to domain services. Transports do not call repositories,
 planners, or mechanics directly.
 
@@ -771,7 +768,7 @@ single-process operator command that read it immediately before the mutation.
 
 ```json
 {
-  "protocol": 2,
+  "protocol": 1,
   "command": "capability.request",
   "status": "ok",
   "outcome": "denied",
@@ -856,7 +853,7 @@ src/invariant/
   protocol.py                 closed enums, ids, request and result values
   application.py              one transaction-oriented application service
   governance/
-    records.py                version-two record values and validation
+    records.py                v1 record values and validation
     locators.py               exact-tree locator resolution
     selection.py              declared and actual governance reach
     compiler.py               deterministic obligation compilation
@@ -943,7 +940,7 @@ provenance, or move a ref merely to make state consistent.
 
 ## 15. Verification strategy
 
-Repository tests remain restricted to Git mechanics. The version-two retained suite covers:
+Repository tests remain restricted to Git mechanics. The retained suite covers:
 
 - Git capability detection before mutation;
 - ledger and work refs surviving process and runtime loss;
@@ -967,11 +964,11 @@ Build verification includes package import, wheel/sdist contents, `invariant --h
 
 ---
 
-## 16. Version-two acceptance criteria
+## 16. Acceptance criteria
 
 The implementation is complete when:
 
-- protocol responses report the literal version `2` and no version-one state loader remains;
+- protocol responses report the literal version `1`;
 - accepted records compile into source-attributed obligations through the closed directive
   vocabulary;
 - every record kind has the intrinsic selection, planning, ordering, verification, review, or

@@ -6,7 +6,14 @@ from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from invariant.errors import InvariantError
-from invariant.protocol import EventKind, canonical_json, digest, require_authority_locator, require_id
+from invariant.protocol import (
+    EventKind,
+    PROTOCOL_VERSION,
+    canonical_json,
+    digest,
+    require_authority_locator,
+    require_id,
+)
 
 
 @dataclass(frozen=True)
@@ -39,7 +46,7 @@ class Event:
             {"kind": kind.value, "actor": actor, "payload": payload}
         )
         body = {
-            "version": 2,
+            "version": PROTOCOL_VERSION,
             "sequence": sequence,
             "operation_id": operation_id,
             "request_digest": request_digest,
@@ -50,7 +57,7 @@ class Event:
             "payload": payload,
         }
         return cls(
-            2,
+            PROTOCOL_VERSION,
             sequence,
             operation_id,
             request_digest,
@@ -70,8 +77,8 @@ class Event:
             "version", "sequence", "operation_id", "request_digest", "kind", "actor",
             "prior", "occurred_at", "payload", "digest",
         }
-        if value.get("version") != 2 or set(value) != allowed:
-            raise InvariantError("Invariant: invalid version-two ledger event", code="corrupt_ledger")
+        if value.get("version") != PROTOCOL_VERSION or set(value) != allowed:
+            raise InvariantError("Invariant: invalid ledger event version", code="corrupt_ledger")
         try:
             kind = EventKind(value["kind"])
             require_id(value["operation_id"], "operation id")
@@ -93,7 +100,7 @@ class Event:
         if expected_request != value["request_digest"]:
             raise InvariantError("Invariant: ledger request digest mismatch", code="corrupt_ledger")
         return cls(
-            2, sequence, value["operation_id"], value["request_digest"], kind,
+            PROTOCOL_VERSION, sequence, value["operation_id"], value["request_digest"], kind,
             value["actor"], value["prior"], value["occurred_at"], payload, value["digest"],
         )
 
@@ -126,7 +133,7 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         if previous:
             raise InvariantError("Invariant: duplicate change.opened event", code="corrupt_ledger")
         state = {
-            "version": 2,
+            "version": PROTOCOL_VERSION,
             "change": event.payload["change"],
             "intent": event.payload["intent"],
             "repository": event.payload["repository"],

@@ -1,4 +1,4 @@
-version: 2
+version: 1
 id: exact-atomic-landing
 assertion: Candidate review, verification evidence, and landing bind to an exact Git tree, and the integration
   ref moves atomically by compare-and-swap or remains unchanged.

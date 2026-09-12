@@ -1,8 +1,4 @@
-"""Protocol-two tracked policy.
-
-Authority is deliberately nested and separate from execution. Version-one
-documents are rejected; this repository does not carry compatibility readers.
-"""
+"""Tracked protocol-v1 policy with authority separate from execution."""
 
 from __future__ import annotations
 
@@ -16,6 +12,7 @@ import yaml
 from invariant.errors import Blocked, InvariantError
 from invariant.mechanics import git
 from invariant.mechanics.documents import dump_config_yaml, load_config_yaml, parse_config_yaml
+from invariant.protocol import PROTOCOL_VERSION
 
 
 CONFIG_PATH = Path(".invariant/config.yml")
@@ -39,7 +36,7 @@ class IntentAuthority:
 
 @dataclass(frozen=True)
 class ResolutionAuthority:
-    delegation: str = "agent"
+    delegation: str = "secondary-agent"
 
 
 @dataclass(frozen=True)
@@ -120,9 +117,9 @@ def _from_raw(
     fallback_branch: str,
     fallback_source: str,
 ) -> Config:
-    if not isinstance(raw, dict) or raw.get("version") != 2:
+    if not isinstance(raw, dict) or raw.get("version") != PROTOCOL_VERSION:
         raise InvariantError(
-            "Invariant: .invariant/config.yml must declare version: 2",
+            f"Invariant: .invariant/config.yml must declare version: {PROTOCOL_VERSION}",
             code="invalid_policy",
         )
     allowed = {
@@ -161,10 +158,10 @@ def _from_raw(
         "authority.resolution",
         {"delegation"},
     )
-    delegation = resolution_raw.get("delegation", "agent")
-    if delegation not in {"agent", "user"}:
+    delegation = resolution_raw.get("delegation", "secondary-agent")
+    if delegation not in {"secondary-agent", "user"}:
         raise InvariantError(
-            "Invariant: authority.resolution.delegation must be agent or user",
+            "Invariant: authority.resolution.delegation must be secondary-agent or user",
             code="invalid_policy",
         )
     authority = AuthorityPolicy(intent, ResolutionAuthority(delegation))
@@ -280,14 +277,14 @@ def resolve_at(repo: Path, ref: str, integration_branch: str) -> Config:
 def default_document(
     *,
     intent_suppliers: tuple[str, ...] = ("user",),
-    resolution_delegation: str = "agent",
+    resolution_delegation: str = "secondary-agent",
     execution_transitions: str = "auto",
     integration_branch: str = "auto",
     publication: str = "off",
     parallelism_maximum: str | int = "auto",
 ) -> dict[str, Any]:
     return {
-        "version": 2,
+        "version": PROTOCOL_VERSION,
         "authority": {
             "intent": {"suppliers": list(intent_suppliers)},
             "resolution": {"delegation": resolution_delegation},
@@ -375,7 +372,7 @@ def set_value(repo: Path, key: str, value: str) -> list[str]:
 
 def lines(value: Config) -> list[str]:
     return [
-        "version: 2",
+        f"version: {PROTOCOL_VERSION}",
         f"authority.intent.suppliers: {','.join(value.authority.intent.suppliers)}",
         f"authority.resolution.delegation: {value.authority.resolution.delegation}",
         f"execution.transitions: {value.execution.transitions}",

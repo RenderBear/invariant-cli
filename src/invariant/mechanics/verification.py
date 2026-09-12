@@ -173,7 +173,7 @@ class VerificationService:
                         ActionKind.REVIEW_INDEPENDENT.value
                         if mode == "independent" else ActionKind.REVIEW_SEMANTICS.value
                     ),
-                    "schema": f"invariant://v2/actions/review-{mode}",
+                    "schema": f"invariant://v1/actions/review-{mode}",
                     "blocking": True,
                     "for_capability": CapabilityName.INTEGRATION_LAND.value,
                     "bindings": {

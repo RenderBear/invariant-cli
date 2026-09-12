@@ -665,7 +665,7 @@
 
       <aside class="callout">
         <span class="label">Delegated resolution</span>
-        <p>A model receives no standing “agent authority.” When policy permits delegation, the kernel may issue <code>intent.resolve</code> for one action, actor, intent digest, response schema, and causal state. The validated response consumes that capability. Policy changes and wider intent always return to direct <code>user:</code> supply.</p>
+        <p>A secondary agent receives no standing authority. When policy permits delegation, the kernel may issue <code>intent.resolve</code> for one action, actor, intent digest, response schema, and causal state. The validated response consumes that capability. Policy changes and wider intent always return to direct <code>user:</code> supply.</p>
         <p>Execution capabilities are a separate class. A resolution token cannot create a worktree or land a commit; an execution token cannot answer a semantic action.</p>
       </aside>
 
@@ -675,7 +675,7 @@
       <div class="cards">
         <article class="card">
           <h4>Record envelope</h4>
-          <pre><code>version: 2
+          <pre><code>version: 1
 id: processor-source-ownership
 document: architecture:docs/architecture.md#source-ownership
 status: active

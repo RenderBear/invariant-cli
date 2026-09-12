@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from invariant.errors import InvariantError
-from invariant.protocol import digest, require_id
+from invariant.protocol import PROTOCOL_VERSION, digest, require_id
 
 
 @dataclass(frozen=True)
@@ -135,7 +135,7 @@ class Recommendation:
         governance: Sequence[str],
     ) -> "Recommendation":
         body = {
-            "version": 2,
+            "version": PROTOCOL_VERSION,
             "id": identifier,
             "change": change,
             "base": base,
@@ -155,7 +155,7 @@ class Recommendation:
 
     def as_dict(self) -> dict[str, Any]:
         return {
-            "version": 2,
+            "version": PROTOCOL_VERSION,
             "id": self.identifier,
             "change": self.change,
             "base": self.base,

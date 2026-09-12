@@ -5,7 +5,7 @@ from typing import Any, Mapping
 from invariant.errors import Blocked, InvariantError
 from invariant.ledger.store import LedgerStore
 from invariant.mechanics import git
-from invariant.protocol import canonical_json, digest
+from invariant.protocol import PROTOCOL_VERSION, canonical_json, digest
 
 
 def create(store: LedgerStore, change_id: str) -> dict[str, Any]:
@@ -31,7 +31,7 @@ def create(store: LedgerStore, change_id: str) -> dict[str, Any]:
         *([candidate["commit"]] if candidate else []),
     }
     capsule = {
-        "version": 2,
+        "version": PROTOCOL_VERSION,
         "repository": store.repository.identity,
         "change": change_id,
         "ledger": ledger.head,
@@ -75,7 +75,7 @@ def create(store: LedgerStore, change_id: str) -> dict[str, Any]:
 
 
 def validate(store: LedgerStore, capsule: Mapping[str, Any]) -> dict[str, Any]:
-    if not isinstance(capsule, dict) or capsule.get("version") != 2:
+    if not isinstance(capsule, dict) or capsule.get("version") != PROTOCOL_VERSION:
         raise InvariantError("Invariant: invalid handoff capsule", code="invalid_invocation")
     supplied = dict(capsule)
     supplied_digest = supplied.pop("digest", None)

@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "invariant-cli"
-version = "0.2.0"
+version = "0.1.0"
 description = "A semantic kernel and Git-grounded lifecycle for governed agentic work"
 readme = "README.md"
 requires-python = ">=3.11"

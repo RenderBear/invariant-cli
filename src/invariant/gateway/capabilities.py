@@ -340,8 +340,11 @@ class CapabilityService:
             kind = action.get("kind")
             if kind in {ActionKind.ACCEPT_GOVERNANCE.value, ActionKind.SUPPLY_INTENT.value} and not actor.startswith("user:"):
                 return DecisionState.NEEDS_AUTHORITY, "fresh user intent is required"
-            if actor.startswith("agent:") and resolution_delegation != "agent":
-                return DecisionState.NEEDS_AUTHORITY, "policy does not delegate resolution to an agent"
+            if actor.startswith("agent:") and resolution_delegation != "secondary-agent":
+                return (
+                    DecisionState.NEEDS_AUTHORITY,
+                    "policy does not delegate resolution to a secondary agent",
+                )
         elif name is CapabilityName.WORKTREE_CREATE:
             if not unit or unit not in self._frontier(state):
                 return DecisionState.STALE, "the unit is outside the current admissible frontier"
@@ -382,7 +385,9 @@ class CapabilityService:
             if action.get("for_capability") == capability.value and action.get("status") == "responded" and accepted:
                 if actor.startswith("user:"):
                     return True
-                if resolver == "any-attributable" or actor.startswith(resolver + ":"):
+                if resolver == "any-attributable" or (
+                    resolver == "secondary-agent" and actor.startswith("agent:")
+                ):
                     return True
         return False
 
@@ -425,7 +430,7 @@ class CapabilityService:
         action = {
             "id": action_id,
             "kind": kind,
-            "schema": f"invariant://v2/actions/{kind}",
+            "schema": f"invariant://v1/actions/{kind}",
             "blocking": True,
             "for_capability": capability.value,
             "resolver": resolver,

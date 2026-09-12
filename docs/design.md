@@ -84,12 +84,12 @@ READY: change.recommend
 ```
 
 Errors put the human message on standard error and retain stable diagnostics in JSON mode. Human
-copy may change; protocol fields, outcomes, and diagnostic codes do not change within version 2.
+copy may change; protocol fields, outcomes, and diagnostic codes do not change within version 1.
 
 Machine output is one compact JSON object on standard output:
 
 ```json
-{"protocol":2,"command":"capability.request","status":"ok","outcome":"denied","result":{},"diagnostics":[]}
+{"protocol":1,"command":"capability.request","status":"ok","outcome":"denied","result":{},"diagnostics":[]}
 ```
 
 Do not add spinners, dashboards, questionnaires, conversational roles, or inferred next commands to

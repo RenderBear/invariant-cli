@@ -1,88 +1,48 @@
 # Invariant
 
-Invariant is a protocol for governing agentic work:
+Govern the meaning. Parallelize the work. Land exact Git state.
 
-```text
-governance layer = semantic kernel + Git-grounded lifecycle
+![Intent comes from the user. Resolution stays with the user or is narrowly delegated to a secondary agent. Normative contracts, ADRs, and specs form the semantic kernel. Execution fans out as parallel work inside a Git-grounded lifecycle.](.github/assets/kernel.svg)
+
+Invariant turns a repository change into a visible work graph. The user supplies intent; the
+semantic kernel finds the contracts, ADRs, and specs that govern it; execution can fan out across
+independent units; and Git records the candidate, evidence, decisions, and landing.
+
+| Layer | Owner or ground |
+|---|---|
+| **Intent** | User |
+| **Resolution** | User, or a secondary agent holding one scoped `intent.resolve` capability |
+| **Semantic kernel** | Normative contracts, ADRs, and specs accepted in the repository |
+| **Lifecycle** | Git objects, refs, trees, evidence, and atomic ref movement |
+| **Execution** | Parallel work within the kernel's current admissible graph |
+
+## See the repository come online
+
+```console
+$ invariant init
+INVARIANT  repository initialized
+│
+├─ intent       user
+├─ resolution   secondary-agent
+├─ execution    parallel work · auto transitions
+├─ lifecycle    Git-grounded
+└─ policy       .invariant/config.yml @ 8b1f3b924d0a
 ```
 
-The semantic kernel turns accepted repository meaning into closed consequences. The lifecycle binds
-those consequences to exact Git objects, isolated work, evidence, and atomic integration. Harnesses
-still choose models and run workers; Invariant decides what can be resolved or executed, on which
-resource, and why.
+`init` creates **and commits** `.invariant/config.yml` as one isolated policy commit. You do not run
+`git add`. Invariant blocks before writing if the repository has existing tracked edits; unrelated
+untracked files are left alone.
 
-![An agent harness owns worker execution. Invariant combines a semantic kernel with a Git-grounded lifecycle, between supplied intent and exact Git consequences.](.github/assets/kernel.svg)
-
-## The boundary that matters
-
-Most agent systems blur two independent questions:
-
-1. Can this actor do something?
-2. May this actor decide what the result should mean?
-
-Invariant keeps them separate.
-
-- **Execution capabilities** permit one operational consequence such as creating a worktree,
-  running a verifier, converging a candidate, landing, or publishing.
-- **Authority** begins with attributable **intent supply**. When accepted intent does not determine
-  an answer, Invariant may issue one action-bound **resolution capability**.
-- `intent.resolve` can be passed to a model for that exact question when policy delegates it. It
-  supplies no shell, filesystem, ref, network, or publication access.
-- Being able to execute never creates authority. Supplying intent never implies execution access.
-
-That split lets a harness remain powerful without making its model's transcript the source of
-repository truth.
-
-## What the protocol grounds
-
-Every change is one durable Git transaction:
-
-```text
-supplied intent
-  -> accepted governance + compiled obligations
-  -> Invariant recommendation + admissible frontier
-  -> isolated attempts under scoped execution grants
-  -> one causally converged candidate
-  -> exact-tree evidence + scoped resolution when required
-  -> single-use landing grant
-  -> compare-and-swap local integration
-  -> optional, separately granted publication
-```
-
-The change ledger lives at `refs/invariant/changes/<change>`. Attempt and aggregate candidate refs
-keep work reachable after runtime deletion or process loss. Bearer tokens are returned once; only
-their SHA-256 digests enter the ledger. A handoff capsule contains causal Git identities and no
-model transcript or grant token.
-
-Invariant reports authorization and containment independently. The current containment provider is
-honestly `advisory`: the managed path enforces its grants, but Invariant does not claim a worker
-cannot bypass it unless a future host proves that boundary.
-
-## Quick start
-
-Install from the repository:
-
-```bash
-uv tool install git+https://github.com/RenderBear/invariant-cli.git
-```
-
-Initialize an existing Git repository:
-
-```bash
-invariant init --defaults
-git add .invariant/config.yml
-git commit -m "Initialize Invariant"
-```
-
-The tracked policy makes authority and execution visibly distinct:
+The policy is tracked because authority must follow the repository—not the laptop, process, model,
+or transcript that happens to be driving it:
 
 ```yaml
-version: 2
+version: 1
 authority:
   intent:
     suppliers: [user]
   resolution:
-    delegation: agent
+    delegation: secondary-agent
 execution:
   transitions: auto
 integration_branch: auto
@@ -91,27 +51,43 @@ parallelism:
   maximum: auto
 ```
 
-Inspect it:
+## A change is a Git graph
 
-```bash
-invariant status
-invariant governance explain --path src/payments
+```mermaid
+flowchart LR
+    I["User intent"] --> K["Semantic kernel<br/>contracts · ADRs · specs"]
+    K --> R["Work recommendation"]
+    R --> A["Unit A"]
+    R --> B["Unit B"]
+    R --> C["Unit C"]
+    A --> X["Exact candidate tree"]
+    B --> X
+    C --> X
+    X --> E["Evidence + resolution"]
+    E --> L["Atomic local landing"]
+
+    G1[("change ledger")] -. grounds .-> R
+    G2[("attempt refs")] -. retain .-> A
+    G2 -. retain .-> B
+    G2 -. retain .-> C
+    G3[("candidate ref")] -. binds .-> X
 ```
 
-## Harness integration
+The kernel chooses a maximum safe frontier from declared and observed reach. A harness may run that
+frontier concurrently, but it cannot inject an arbitrary plan. Attempts remain on Git refs, converge
+into one exact tree, and land with compare-and-swap against the accepted base.
 
-Start a local stdio MCP gateway bound to one repository:
+## Try a change
+
+Install from the repository and initialize an existing Git project:
 
 ```bash
-invariant-mcp --repository /absolute/path/to/repository
+uv tool install git+https://github.com/RenderBear/invariant-cli.git
+cd your-project
+invariant init
 ```
 
-The server constructs one `InvariantApplication` in-process. It exposes typed state, governance,
-change, action, capability, work, candidate, landing, and publication operations. No tool accepts a
-repository escape hatch, shell command, Git arguments, remote, credential, or arbitrary
-environment.
-
-A minimal operator flow looks like:
+Open intent and ask the kernel for the work graph:
 
 ```bash
 invariant change open checkout-copy \
@@ -123,54 +99,57 @@ invariant change recommend checkout-copy
 invariant change inspect checkout-copy
 ```
 
-The harness then requests the exact capabilities returned by the current state, performs work only
-inside the created attempt worktree, submits a clean commit, converges it into the aggregate
-candidate, captures compiled evidence, resolves any typed action, and requests a single-use landing
-grant.
+At any point, inspect the repository instead of reconstructing state from a conversation:
 
-## Accepted governance
+```bash
+invariant status
+invariant governance explain --path web/checkout/button.tsx
+invariant change handoff checkout-copy
+```
 
-Tracked records are Git-versioned protocol-two values:
+## Connect an agent harness
+
+```bash
+invariant-mcp --repository /absolute/path/to/repository
+```
+
+The repository-bound MCP gateway exposes typed operations for governance, recommendations, actions,
+scoped capabilities, isolated work, convergence, evidence, landing, and publication. It does not
+offer a generic shell or accept arbitrary Git arguments, paths outside the repository, remotes, or
+credentials.
+
+Execution capabilities cause one bounded effect. Resolution capabilities answer one bound semantic
+question. A secondary agent may receive `intent.resolve`; that never gives it filesystem, shell,
+ref, network, or publication access.
+
+## What Git remembers
 
 ```text
 .invariant/
-├── config.yml
+├── config.yml                 authority and execution policy
 ├── records/
-│   ├── semantic/
-│   ├── domain/
-│   ├── contract/
-│   └── constraint/
+│   ├── semantic/              normative specs and ADR links
+│   ├── domain/                ownership and dependency boundaries
+│   ├── contract/              cross-domain promises
+│   └── constraint/            closed operational consequences
 ├── SOURCES.yml
 ├── sources/
 ├── audits/
 └── discoveries/
+
+refs/invariant/changes/*       durable change ledgers
+refs/invariant/work/*          retained isolated attempts
+refs/invariant/candidates/*    exact aggregate candidates
 ```
 
-Prose stays expressive. Only typed fields have protocol effects: context selection, capability
-denial, required resolution, review, verification, serialization, parallel limits, containment,
-ordering, invalidation, and landing blocks. This is the governing rule:
-
-> Open semantics, closed consequences.
-
-## Guarantees
-
-On its governed path, Invariant provides:
-
-- versioned and source-attributed semantic compilation;
-- a bounded work frontier owned by the kernel, not injected by the harness;
-- durable change, decision, grant, attempt, candidate, and action state in Git;
-- actual-diff enforcement against unit claims;
-- exact-tree evidence and review bindings;
-- atomic compare-and-swap local landing with portable `Invariant-*` trailers; and
-- publication off by default and bounded to the exact landing and existing upstream.
-
-Invariant does not execute implementation workers, provide a generic shell, infer permission from
-prose, authenticate identities a transport merely asserts, or claim containment it cannot prove.
+Runtime directories, bearer tokens, transcripts, model choice, machine identity, containment
+providers, and credentials remain host-local. Publication is off by default and, when enabled,
+requires its own capability for the exact landed commit and existing upstream.
 
 ## Read further
 
+- [CLI and MCP basics](docs/cli-basics.md)
+- [Implementation design](docs/SPEC.md)
 - [Protocol overview](protocol/README.md)
 - [Normative protocol](protocol/protocol.md)
-- [Implementation design](docs/SPEC.md)
-- [CLI and MCP basics](docs/cli-basics.md)
 - [Human model](protocol/model.html)

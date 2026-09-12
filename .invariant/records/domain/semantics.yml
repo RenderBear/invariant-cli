@@ -1,4 +1,4 @@
-version: 2
+version: 1
 id: semantics
 responsibility: Interprets requested outcomes, selects relevant semantic scope, authors accepted governance,
   and reviews candidate meaning without mutating Git.

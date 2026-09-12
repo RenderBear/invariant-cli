@@ -40,7 +40,7 @@ class ChangeService:
         base = git.resolve(self.repository.root, f"refs/heads/{target}")
         if not base:
             raise Blocked(
-                "Invariant: version two requires a committed integration base",
+                "Invariant: initialization requires a committed integration base",
                 code="not_initialized",
             )
         policy = self.repository.policy_at(base, target)

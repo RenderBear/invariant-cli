@@ -203,7 +203,7 @@ def test_landing_attestation_binds_intent_plan_units_and_parent(tmp_path: Path) 
     implement(worktree, "src/attested.txt", "attested\n")
     finish(app, "attested", attempt)
     message = git.run(["show", "-s", "--format=%B", "main"], cwd=app.repository.root).stdout
-    assert "Invariant-Protocol: 2" in message
+    assert "Invariant-Protocol: 1" in message
     assert "Invariant-Intent: " in message
     assert "Invariant-Plan: " in message
     assert "Invariant-Unit: change " in message

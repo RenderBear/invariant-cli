@@ -1,4 +1,4 @@
-version: 2
+version: 1
 id: required-git-capabilities
 assertion: Required exact-candidate and linked-worktree Git capabilities must be proven available before
   lifecycle mutation.

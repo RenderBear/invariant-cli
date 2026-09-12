@@ -1,4 +1,4 @@
-version: 2
+version: 1
 id: bounded-remote-publication
 assertion: Remote publication requires explicit accepted policy, targets only the configured integration
   branch's existing upstream, pushes the exact landed commit, and cannot undo a successful local landing

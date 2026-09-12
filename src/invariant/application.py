@@ -7,7 +7,7 @@ import secrets
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from invariant.errors import InvariantError
+from invariant.errors import Blocked, InvariantError
 from invariant.gateway import CapabilityService
 from invariant.governance import GovernanceStore, compile_obligations, select
 from invariant.ledger import Ledger, LedgerStore
@@ -22,7 +22,7 @@ from invariant.mechanics.landing import (
 from invariant.mechanics.verification import VerificationService
 from invariant.mechanics.work import CandidateService, WorkService
 from invariant.planning import RecommendationService
-from invariant.protocol import CapabilityName, Outcome, Scope
+from invariant.protocol import CapabilityName, Outcome, PROTOCOL_VERSION, Scope
 from invariant.repository import Repository
 
 
@@ -33,7 +33,7 @@ class OperationResult:
 
     def envelope(self, command: str) -> dict[str, Any]:
         return {
-            "protocol": 2,
+            "protocol": PROTOCOL_VERSION,
             "command": command,
             "status": "ok",
             "outcome": self.outcome.value,
@@ -77,14 +77,41 @@ class InvariantApplication:
                 code="nested_invariant",
                 data={"paths": nested},
             )
+        policy_path = repo / config.CONFIG_PATH
+        if policy_path.exists() and not overwrite:
+            raise InvariantError(
+                f"Invariant: {config.CONFIG_PATH.as_posix()} already exists",
+                code="config_exists",
+            )
+        if not git.tracked_worktree_clean(repo):
+            raise Blocked(
+                "Invariant: initialization requires a clean tracked worktree",
+                code="dirty_initialization",
+                data={"paths": git.changed_paths(repo)},
+                lines=[
+                    "STATUS: tracked changes are not included in initialization",
+                    "NEXT: commit or stash them, then run invariant init again",
+                ],
+            )
         if git.resolve(repo, "HEAD") is None:
             nonce = git.common_dir(repo) / "invariant-bootstrap"
             if not nonce.exists():
                 nonce.write_text(secrets.token_hex(32) + "\n", encoding="utf-8")
         lines = config.initialize(repo, overwrite=overwrite, **values)
+        git.run(["add", "--", config.CONFIG_PATH.as_posix()], cwd=repo)
+        subject = "Update Invariant policy" if overwrite else "Initialize Invariant"
+        git.run(
+            ["commit", "-q", "-m", subject, "--", config.CONFIG_PATH.as_posix()],
+            cwd=repo,
+        )
+        commit = git.resolve(repo, "HEAD")
         return OperationResult(
             Outcome.COMPLETED,
-            {"policy": config.lines(config.resolve(repo)), "messages": lines},
+            {
+                "policy": config.lines(config.resolve(repo)),
+                "messages": [*lines, f"COMMIT: {commit}"],
+                "commit": commit,
+            },
         )
 
     def state_validate(self) -> OperationResult:

@@ -41,5 +41,4 @@ Evidence never becomes authority merely because it was retrieved or produced by 
 access never becomes authority because an actor can call a tool. Intent supply never becomes
 execution access because its supplier can decide.
 
-JSON envelopes carry literal protocol version `2`. There is no negotiation or version-one
-compatibility reader.
+JSON envelopes carry literal protocol version `1`. There is no version negotiation.

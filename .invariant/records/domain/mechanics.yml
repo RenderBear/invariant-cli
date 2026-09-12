@@ -1,4 +1,4 @@
-version: 2
+version: 1
 id: mechanics
 responsibility: Owns deterministic repository facts, tracked-state validation, exact candidate construction,
   verification evidence, and guarded Git operations.

@@ -1,4 +1,4 @@
-"""Closed protocol-two values shared by every Invariant surface.
+"""Closed protocol-v1 values shared by every Invariant surface.
 
 Open prose is deliberately absent from the capability vocabulary. The types in
 this module are the mechanical boundary between supplied intent, semantic
@@ -17,7 +17,7 @@ from typing import Any, Mapping, Sequence
 from invariant.errors import UsageError
 
 
-PROTOCOL_VERSION = 2
+PROTOCOL_VERSION = 1
 FULL_DIGEST = re.compile(r"[0-9a-f]{64}")
 OBJECT_ID = re.compile(r"[0-9a-f]{40,64}")
 STABLE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")

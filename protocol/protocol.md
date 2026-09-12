@@ -1,6 +1,6 @@
 # Invariant protocol
 
-**Version 2.** This document defines the implementation-independent contract for Invariant, a
+**Version 1.** This document defines the implementation-independent contract for Invariant, a
 protocol for constructing a governance layer around complex agentic work. One logical Invariant
 kernel governs one Git common directory and every harness, agent, and worker that asks to change it.
 
@@ -283,7 +283,7 @@ record, verifier, or dependency is invalid governance and blocks capability issu
 ### 3.2 Semantic records
 
 ```yaml
-version: 2
+version: 1
 id: processor-source-ownership
 document: architecture:docs/architecture.md#processor-source-ownership
 authority: user:architecture-review
@@ -322,7 +322,7 @@ the relationship by supersession; there is no in-place erasure of accepted meani
 ### 3.3 Domains
 
 ```yaml
-version: 2
+version: 1
 id: ocr.orchestrator
 responsibility: Selects OCR engines and distributes work.
 authority: user:ocr-architecture
@@ -342,7 +342,7 @@ alone forbid parallelism.
 ### 3.4 Contracts
 
 ```yaml
-version: 2
+version: 1
 id: ocr.engine-protocol.v1
 assertion: Every engine accepts OcrRequest and returns OcrResult.
 authority: user:ocr-architecture
@@ -367,7 +367,7 @@ model remembering the assertion.
 ### 3.5 Constraints
 
 ```yaml
-version: 2
+version: 1
 id: bounded-remote-publication
 assertion: Repository work is not published by agents.
 authority: user:repository-policy
@@ -440,8 +440,9 @@ Each directive has a stable `id` unique within its record and exactly one shape:
 | `limit-parallelism` | `maximum` | caps simultaneous write grants for the selected scope |
 | `require-containment` | `capability`, `enforcement` | refuses the capability unless the reported posture is met |
 
-`resolver` is `user`, `agent`, or `any-attributable`; `enforcement` is `managed`; `maximum` is a
-positive integer. Unknown values are invalid, not ignored.
+`resolver` is `user`, `secondary-agent`, or `any-attributable`; `enforcement` is `managed`;
+`maximum` is a positive integer. A `secondary-agent` resolver is represented by an attributable
+`agent:` actor holding the action-bound capability. Unknown values are invalid, not ignored.
 
 ### 4.3 Precedence and composition
 
@@ -575,7 +576,7 @@ governance, domains, contracts, paths, interfaces, configured capacity, and any 
 It returns a **work recommendation** with:
 
 ```yaml
-version: 2
+version: 1
 id: <recommendation-id>
 change: <change-id>
 base: <commit>
@@ -785,7 +786,7 @@ The landing commit is the portable result. It carries:
 
 | Trailer | Value |
 |---|---|
-| `Invariant-Protocol` | literal protocol version `2` |
+| `Invariant-Protocol` | literal protocol version `1` |
 | `Invariant-Change` | change id |
 | `Invariant-Intent` | intent digest and supplier |
 | `Invariant-Plan` | recommendation id and digest |
@@ -818,7 +819,7 @@ Every operation returns one typed envelope:
 
 ```json
 {
-  "protocol": 2,
+  "protocol": 1,
   "command": "change.recommend",
   "status": "ok",
   "outcome": "ready",
@@ -897,7 +898,7 @@ At minimum, conforming implementations use these codes:
 | Publication | `remote_publication_denied`, `remote_upstream_missing`, `remote_upstream_invalid`, `remote_push_failed` |
 | Invocation | `invalid_invocation`, `invalid_protocol_output`, `internal_error` |
 
-Messages are for humans and may change. Codes and typed details are stable within protocol version 2.
+Messages are for humans and may change. Codes and typed details are stable within protocol version 1.
 
 ---
 

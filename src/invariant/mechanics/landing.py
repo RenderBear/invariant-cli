@@ -11,7 +11,7 @@ from invariant.gateway import CapabilityService
 from invariant.ledger import Ledger, LedgerStore
 from invariant.mechanics import git
 from invariant.mechanics.locks import file_lock
-from invariant.protocol import CapabilityName, EventKind, digest
+from invariant.protocol import CapabilityName, EventKind, PROTOCOL_VERSION, digest
 
 
 @dataclass(frozen=True)
@@ -168,7 +168,7 @@ class IntegrationService:
             raise InvariantError("Invariant: landing subject must be one line", code="invalid_invocation")
         recommendation = state["recommendation"]
         trailers = [
-            f"Invariant-Protocol: 2",
+            f"Invariant-Protocol: {PROTOCOL_VERSION}",
             f"Invariant-Change: {state['change']}",
             f"Invariant-Intent: {state['intent']['digest']} {state['intent']['supplier']}",
             f"Invariant-Plan: {recommendation['id']}@{recommendation['digest']}",
@@ -210,7 +210,7 @@ def validate_landing_attestation(repo: Path, state: Mapping[str, Any]) -> None:
         failures.append("candidate tree")
 
     expected_single = {
-        "Invariant-Protocol": "2",
+        "Invariant-Protocol": str(PROTOCOL_VERSION),
         "Invariant-Change": str(state["change"]),
         "Invariant-Intent": (
             f"{state['intent']['digest']} {state['intent']['supplier']}"

@@ -6,18 +6,19 @@ surface. Both call the same in-process `InvariantApplication`; Git-backed state 
 ## Initialize and inspect
 
 ```bash
-invariant init --defaults
+invariant init
 invariant status
 invariant governance explain --path src/payments
 ```
 
-Initialization writes version-two policy only. Commit it before opening a change.
+Initialization writes v1 policy and commits it as an isolated Git change before opening a governed
+change. Existing tracked edits block initialization; unrelated untracked files are not included.
 
 The tracked settings are:
 
 ```bash
 invariant set authority.intent.suppliers user
-invariant set authority.resolution.delegation agent
+invariant set authority.resolution.delegation secondary-agent
 invariant set execution.transitions auto
 invariant set integration_branch main
 invariant set publication off
@@ -97,7 +98,7 @@ Every result has:
 
 ```json
 {
-  "protocol": 2,
+  "protocol": 1,
   "command": "change.inspect",
   "status": "ok",
   "outcome": "completed",
