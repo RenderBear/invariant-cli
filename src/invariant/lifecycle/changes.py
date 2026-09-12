@@ -10,6 +10,7 @@ from invariant.ledger import Ledger, LedgerStore
 from invariant.ledger import handoff
 from invariant.mechanics import git
 from invariant.planning import RecommendationService
+from invariant.planning import context as planning_context
 from invariant.protocol import (
     ActionKind,
     CapabilityName,
@@ -71,6 +72,11 @@ class ChangeService:
                 "Invariant: user intent must match the transport principal",
                 code="authority_required",
             )
+        if not scope.claims or "repo:." in scope.paths:
+            raise InvariantError(
+                "Invariant: a change opens with a bounded reach estimate; the repository root is not one",
+                code="unbounded_scope",
+            )
         governance = GovernanceStore(self.repository.primary_worktree).load(base)
         selection = select(governance, scope)
         obligations = compile_obligations(policy, selection, scope)
@@ -95,12 +101,41 @@ class ChangeService:
             anchors=[base],
         )
 
+    def plan_context(self, change_id: str) -> dict[str, Any]:
+        """The planning context Invariant selected for one change at its base."""
+
+        state = self.store.load(change_id).state
+        scope_raw = state["scope"]
+        scope = Scope.create(
+            paths=scope_raw["paths"], interfaces=scope_raw["interfaces"],
+            domains=scope_raw["domains"], contracts=scope_raw["contracts"],
+        )
+        governance = GovernanceStore(self.repository.primary_worktree).load(state["base"])
+        selection = select(governance, scope)
+        policy = self.repository.policy_at(state["base"], state["target"]["branch"])
+        obligations = compile_obligations(policy, selection, scope)
+        return {
+            "change": change_id,
+            "base": state["base"],
+            "intent": state["intent"],
+            "scope": scope.as_dict(),
+            "policy_limit": policy.parallelism.limit(),
+            **planning_context.build(
+                self.repository.primary_worktree,
+                ref=state["base"],
+                selection=selection,
+                obligations=obligations,
+                scope=scope.as_dict(),
+            ),
+        }
+
     def recommend(
         self,
         change_id: str,
         *,
         operation_id: str,
         host_capacity: int | None = None,
+        proposal: Mapping[str, Any] | None = None,
     ) -> Ledger:
         ledger = self.store.load(change_id)
         if ledger.state.get("recommendation"):
@@ -125,7 +160,14 @@ class ChangeService:
             requested.state["base"], requested.state["target"]["branch"]
         )
         obligations = compile_obligations(policy, selection, scope)
-        recommendation = self.recommendations.recommend(
+        planning = planning_context.build(
+            self.repository.primary_worktree,
+            ref=requested.state["base"],
+            selection=selection,
+            obligations=obligations,
+            scope=scope.as_dict(),
+        )
+        result = self.recommendations.recommend(
             change=change_id,
             base=requested.state["base"],
             intent=requested.state["intent"],
@@ -134,15 +176,56 @@ class ChangeService:
             obligations=obligations,
             policy_limit=policy.parallelism.limit(host_capacity),
             host_capacity=host_capacity,
+            planning=planning,
+            proposal=proposal,
         )
+        current = requested
+        if result.rejection is not None:
+            current = self.store.append(
+                change_id,
+                operation_id=f"{operation_id}.rejected",
+                kind=EventKind.RECOMMENDATION_REJECTED,
+                actor="kernel:repository/planning",
+                payload={
+                    "diagnostic": {
+                        "code": result.rejection.code,
+                        "message": result.rejection.message,
+                    },
+                    "proposal": dict(result.rejection.proposal)
+                    if isinstance(result.rejection.proposal, Mapping)
+                    else {"value": str(result.rejection.proposal)},
+                },
+                expected_head=current.head,
+            )
         return self.store.append(
             change_id,
             operation_id=operation_id,
             kind=EventKind.RECOMMENDATION_RECORDED,
             actor="kernel:repository/planning",
-            payload={"recommendation": recommendation.as_dict()},
-            expected_head=requested.head,
+            payload={"recommendation": result.recommendation.as_dict()},
+            expected_head=current.head,
         )
+
+    def archive(self, change_id: str, *, operation_id: str) -> str:
+        """Archive one completed change ledger; the ref moves, nothing is deleted."""
+
+        ledger = self.store.load(change_id)
+        if ledger.state.get("archived"):
+            return self.repository.archive_ref(change_id)
+        if ledger.state.get("stage") not in {"completed", "invalidated"}:
+            raise Blocked(
+                "Invariant: only a completed or invalidated change can be archived",
+                code="invalid_invocation",
+            )
+        self.store.append(
+            change_id,
+            operation_id=operation_id,
+            kind=EventKind.CHANGE_ARCHIVED,
+            actor="kernel:repository/ledger",
+            payload={"ref": self.repository.archive_ref(change_id)},
+            expected_head=ledger.head,
+        )
+        return self.store.archive(change_id)
 
     def inspect(self, change_id: str) -> dict[str, Any]:
         ledger = self.store.load(change_id)

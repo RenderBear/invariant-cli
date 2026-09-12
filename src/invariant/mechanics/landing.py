@@ -369,6 +369,62 @@ class IntegrationService:
                 anchors=[landing_commit],
             )
 
+    def recompute(self, change_id: str, *, token: str, operation_id: str) -> Ledger:
+        """Merge the retained candidate onto the moved target; a new candidate, no evidence."""
+
+        existing = self.store.load(change_id)
+        replay = existing.event_for(operation_id)
+        if replay:
+            if replay.kind is EventKind.CANDIDATE_RECOMPUTED:
+                return existing
+            raise InvariantError(
+                "Invariant: operation id was reused with different recompute input",
+                code="invalid_invocation",
+            )
+        state = existing.state
+        candidate = state.get("candidate")
+        if not candidate:
+            raise InvariantError("Invariant: no exact candidate exists", code="missing_object")
+        target = git.resolve(self.repository.root, state["target"]["ref"])
+        if not target or target == state["base"]:
+            raise Blocked("Invariant: the integration target has not moved", code="stale_grant")
+        use = self.capabilities.use(
+            change_id,
+            token=token,
+            capability=CapabilityName.CANDIDATE_CONVERGE,
+            resource=f"recompute:{target}",
+            operation_id=operation_id,
+        )
+        tree = git.merge_tree(self.repository.root, target, candidate["commit"])
+        combined = git.commit_tree(
+            self.repository.root,
+            tree,
+            f"Invariant candidate: {change_id} recomputed onto {target}\n",
+            parents=[target, candidate["commit"]],
+        )
+        candidate_ref = f"refs/invariant/candidates/{change_id}"
+        if not git.update_ref(self.repository.root, candidate_ref, combined, candidate["commit"]):
+            raise Blocked("Invariant: candidate advanced concurrently", code="concurrent_ref_movement")
+        consumed = self.capabilities.consume(use, operation_id=f"{operation_id}.consume")
+        value = {
+            "ref": candidate_ref,
+            "commit": combined,
+            "tree": git.tree_of(self.repository.root, combined),
+            "base": target,
+            "paths": git.changed_paths(self.repository.root, target, combined),
+            "units": list(candidate.get("units", [])),
+            "recomputed_from": candidate["commit"],
+        }
+        return self.store.append(
+            change_id,
+            operation_id=operation_id,
+            kind=EventKind.CANDIDATE_RECOMPUTED,
+            actor="kernel:repository/candidate",
+            payload={"base": target, "previous_base": state["base"], "candidate": value},
+            expected_head=consumed.head,
+            anchors=[combined],
+        )
+
     def reconcile(self, change_id: str, *, operation_id: str) -> Ledger:
         ledger = self.store.load(change_id)
         landing = ledger.state.get("landing")

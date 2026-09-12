@@ -187,13 +187,40 @@ def record_authorities(repo: Path, ref: str | None) -> dict[str, str]:
     return authorities
 
 
+_CACHE: dict[tuple[str, str], Governance] = {}
+_CACHE_LIMIT = 64
+
+
 class GovernanceStore:
     def __init__(self, repo: Path) -> None:
         self.repo = repo
+        self._tree: dict[str, str] | None = None
+        self._texts: dict[str, str] = {}
 
     def load(self, ref: str | None = None) -> Governance:
+        """Load and validate the record set at one exact tree; loads at a commit are cached by oid."""
+
+        key: tuple[str, str] | None = None
+        if ref:
+            oid = git.resolve(self.repo, ref)
+            if oid:
+                key = (str(git.common_dir(self.repo)), oid)
+                cached = _CACHE.get(key)
+                if cached is not None:
+                    return cached
+                ref = oid
+        governance = self._load(ref)
+        if key is not None:
+            if len(_CACHE) >= _CACHE_LIMIT:
+                _CACHE.pop(next(iter(_CACHE)))
+            _CACHE[key] = governance
+        return governance
+
+    def _load(self, ref: str | None) -> Governance:
         prefix = ".invariant/records"
         authorities = record_authorities(self.repo, ref)
+        self._tree = None
+        self._texts = {}
         if ref:
             files = git.tree_text_files(self.repo, ref, prefix)
         else:
@@ -483,10 +510,26 @@ class GovernanceStore:
             code="unresolved_locator",
         )
 
+    def _tree_index(self, ref: str) -> dict[str, str]:
+        if self._tree is None:
+            index: dict[str, str] = {}
+            for row in git.run(["ls-tree", "-r", ref], cwd=self.repo).stdout.splitlines():
+                meta, _, path = row.partition("\t")
+                parts = meta.split()
+                if len(parts) == 3 and path:
+                    index[path] = parts[1]
+            self._tree = index
+        return self._tree
+
     def _path_exists(self, path: str, ref: str | None, *, file_only: bool) -> bool:
         if ref:
-            result = git.run(["cat-file", "-t", f"{ref}:{path}"], cwd=self.repo, check=False)
-            return result.returncode == 0 and (not file_only or result.stdout == "blob")
+            index = self._tree_index(ref)
+            if path in index:
+                return not file_only or index[path] == "blob"
+            if file_only:
+                return False
+            prefix = path.rstrip("/") + "/"
+            return any(item.startswith(prefix) for item in index)
         tracked = git.run(["ls-files", "--cached", "--", path], cwd=self.repo).stdout.splitlines()
         if file_only:
             return path in tracked and (self.repo / path).is_file()
@@ -509,13 +552,16 @@ class GovernanceStore:
                 code="unresolved_locator",
             )
         if ref:
-            result = git.run(["show", f"{ref}:{path}"], cwd=self.repo, check=False)
-            if result.returncode:
-                raise InvariantError(
-                    f"Invariant: architecture path does not resolve '{locator}'",
-                    code="unresolved_locator",
-                )
-            text = result.stdout
+            text_key = f"{ref}:{path}"
+            if text_key not in self._texts:
+                result = git.run(["show", text_key], cwd=self.repo, check=False)
+                if result.returncode:
+                    raise InvariantError(
+                        f"Invariant: architecture path does not resolve '{locator}'",
+                        code="unresolved_locator",
+                    )
+                self._texts[text_key] = result.stdout
+            text = self._texts[text_key]
         else:
             source = self.repo / path
             if not source.is_file():

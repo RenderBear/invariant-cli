@@ -24,17 +24,19 @@ class Ledger:
     change_id: str
     head: str
     state: Mapping[str, Any]
-    events: tuple[Event, ...]
+    _loader: Any = None
 
     def operation(self, operation_id: str) -> Mapping[str, Any] | None:
         operations = self.state.get("operations", {})
         return operations.get(operation_id) if isinstance(operations, dict) else None
 
     def event_for(self, operation_id: str) -> Event | None:
-        return next(
-            (event for event in self.events if event.operation_id == operation_id),
-            None,
-        )
+        """Read the one event an operation id recorded, by its sequence, without replaying."""
+
+        recorded = self.operation(operation_id)
+        if not recorded or self._loader is None:
+            return None
+        return self._loader(int(recorded["sequence"]))
 
 
 class LedgerStore:
@@ -64,8 +66,56 @@ class LedgerStore:
         return git.resolve(self.repository.root, self.ref(change_id))
 
     def load(self, change_id: str) -> Ledger:
+        """Load the head snapshot; the full chain is verified by ``verify``."""
+
         ref = self.ref(change_id)
         head = git.resolve(self.repository.root, ref)
+        if not head:
+            archived = git.resolve(self.repository.root, self.repository.archive_ref(change_id))
+            if archived:
+                return self._load_head(change_id, archived)
+            raise InvariantError(
+                f"Invariant: change '{change_id}' does not exist", code="missing_change"
+            )
+        return self._load_head(change_id, head)
+
+    def _load_head(self, change_id: str, head: str) -> Ledger:
+        objects = git.cat_files(
+            self.repository.root,
+            [f"{head}:event.json", f"{head}:event.sha256", f"{head}:snapshot.json"],
+        )
+        event = Event.parse(self._decode_json(objects[f"{head}:event.json"], head, "event.json"))
+        if objects[f"{head}:event.sha256"].decode("utf-8").strip() != event.digest:
+            raise InvariantError("Invariant: corrupt ledger event checksum", code="corrupt_ledger")
+        state = self._decode_json(objects[f"{head}:snapshot.json"], head, "snapshot.json")
+        if (
+            not isinstance(state, dict)
+            or state.get("change") != change_id
+            or state.get("sequence") != event.sequence
+            or state.get("last_event") != event.digest
+        ):
+            raise InvariantError("Invariant: corrupt ledger snapshot", code="corrupt_ledger")
+
+        def loader(sequence: int) -> Event | None:
+            distance = event.sequence - sequence
+            if distance < 0:
+                return None
+            raw = git.run(
+                ["show", f"{head}~{distance}:event.json"], cwd=self.repository.root, check=False
+            )
+            if raw.returncode:
+                return None
+            return Event.parse(json.loads(raw.stdout))
+
+        return Ledger(change_id, head, state, loader)
+
+    def verify(self, change_id: str) -> Ledger:
+        """Replay and verify the whole chain: first parents, sequences, digests, and snapshots."""
+
+        ref = self.ref(change_id)
+        head = git.resolve(self.repository.root, ref) or git.resolve(
+            self.repository.root, self.repository.archive_ref(change_id)
+        )
         if not head:
             raise InvariantError(
                 f"Invariant: change '{change_id}' does not exist", code="missing_change"
@@ -102,7 +152,7 @@ class LedgerStore:
             prior = commit
         if not isinstance(state, dict) or state.get("change") != change_id:
             raise InvariantError("Invariant: ledger change identity mismatch", code="corrupt_ledger")
-        return Ledger(change_id, head, state, tuple(events))
+        return self._load_head(change_id, head)
 
     def append(
         self,
@@ -143,7 +193,7 @@ class LedgerStore:
                     )
                 return ledger
         event = Event.create(
-            sequence=(len(ledger.events) + 1 if ledger else 1),
+            sequence=(int(ledger.state["sequence"]) + 1 if ledger else 1),
             operation_id=operation_id,
             kind=kind,
             actor=actor,
@@ -188,6 +238,22 @@ class LedgerStore:
                 data={"expected": current_head, "actual": self.head(change_id)},
             )
         return self.load(change_id)
+
+    def archive(self, change_id: str) -> str:
+        """Move a completed change's ledger ref to the archive namespace; nothing is deleted."""
+
+        ref = self.ref(change_id)
+        head = git.resolve(self.repository.root, ref)
+        if not head:
+            raise InvariantError(
+                f"Invariant: change '{change_id}' is not an active ledger", code="missing_change"
+            )
+        archive_ref = self.repository.archive_ref(change_id)
+        if not git.update_ref(self.repository.root, archive_ref, head, None):
+            raise Blocked("Invariant: archive ref already exists", code="concurrent_ref_movement")
+        if not git.delete_ref(self.repository.root, ref, head):
+            raise Blocked("Invariant: ledger moved during archival", code="concurrent_ledger_movement")
+        return archive_ref
 
     def _json_file(self, commit: str, name: str) -> Any:
         result = git.run(["show", f"{commit}:{name}"], cwd=self.repository.root, check=False)

@@ -70,6 +70,7 @@ class CapabilityService:
         unit: str | None = None,
         attempt: str | None = None,
         reason: str | None = None,
+        attempts_left: int = 8,
     ) -> CapabilityResult:
         try:
             name = capability if isinstance(capability, CapabilityName) else CapabilityName(capability)
@@ -191,14 +192,25 @@ class CapabilityService:
             **decision_body,
             "digest": decision_digest,
         }
-        recorded = self.store.append(
-            change_id,
-            operation_id=operation_id,
-            kind=EventKind.DECISION_RECORDED,
-            actor="kernel:repository/capability",
-            payload={"decision": decision},
-            expected_head=ledger.head,
-        )
+        try:
+            recorded = self.store.append(
+                change_id,
+                operation_id=operation_id,
+                kind=EventKind.DECISION_RECORDED,
+                actor="kernel:repository/capability",
+                payload={"decision": decision},
+                expected_head=ledger.head,
+            )
+        except Blocked as exc:
+            # Another writer advanced the ledger between evaluation and record. Re-evaluate
+            # against the new head rather than returning a decision bound to a stale one.
+            if exc.code != "concurrent_ledger_movement" or attempts_left <= 0:
+                raise
+            return self.request(
+                change_id, capability=name, actor=actor, resource=resource,
+                operation_id=operation_id, expected_ledger=expected_ledger, unit=unit,
+                attempt=attempt, reason=reason, attempts_left=attempts_left - 1,
+            )
         if state is not DecisionState.GRANTED:
             outcome = {
                 DecisionState.DENIED: Outcome.DENIED,
@@ -236,14 +248,23 @@ class CapabilityService:
         }
         grant_digest = digest(grant_body)
         grant = {"id": f"grant-{grant_digest[:20]}", **grant_body, "digest": grant_digest}
-        issued = self.store.append(
-            change_id,
-            operation_id=f"{operation_id}.grant",
-            kind=EventKind.GRANT_ISSUED,
-            actor="kernel:repository/capability",
-            payload={"grant": grant},
-            expected_head=recorded.head,
-        )
+        for retry in range(8):
+            try:
+                issued = self.store.append(
+                    change_id,
+                    operation_id=f"{operation_id}.grant",
+                    kind=EventKind.GRANT_ISSUED,
+                    actor="kernel:repository/capability",
+                    payload={"grant": grant},
+                    expected_head=recorded.head,
+                )
+                break
+            except Blocked as exc:
+                # The decision is recorded; only the grant append raced. Append it onto the
+                # current head so the token this call returns is never lost to a replay.
+                if exc.code != "concurrent_ledger_movement" or retry == 7:
+                    raise
+                recorded = self.store.load(change_id)
         public = {key: value for key, value in issued.state["grants"][grant["id"]].items() if key != "token_digest"}
         return CapabilityResult(Outcome.READY, decision, public, token)
 
@@ -380,9 +401,16 @@ class CapabilityService:
             if not state.get("candidate"):
                 return DecisionState.STALE, "there is no exact candidate"
         elif name is CapabilityName.CANDIDATE_CONVERGE:
-            candidate = state.get("attempts", {}).get(attempt or "")
-            if not candidate or candidate.get("status") != "submitted":
-                return DecisionState.STALE, "the attempt is not submitted"
+            if resource.startswith("recompute:"):
+                target = git.resolve(self.repository.root, state["target"]["ref"])
+                if not state.get("candidate"):
+                    return DecisionState.STALE, "there is no candidate to recompute"
+                if target == state["base"] or resource != f"recompute:{target}":
+                    return DecisionState.STALE, "the target has not moved to the named parent"
+            else:
+                candidate = state.get("attempts", {}).get(attempt or "")
+                if not candidate or candidate.get("status") != "submitted":
+                    return DecisionState.STALE, "the attempt is not submitted"
         elif name is CapabilityName.INTEGRATION_LAND:
             if state.get("stage") != "ready-to-land" or not state.get("candidate"):
                 return DecisionState.STALE, "candidate obligations are not satisfied"
@@ -499,9 +527,17 @@ class CapabilityService:
             if grant.get("capability") == CapabilityName.WORKTREE_WRITE.value and grant.get("status") == "live"
         }
         units = recommendation.get("units", [])
+        # A submitted attempt is complete for frontier purposes: neither ready nor holding a slot.
+        submitted = {
+            attempt.get("unit") for attempt in state.get("attempts", {}).values()
+            if attempt.get("status") == "submitted"
+        }
         ready = [
             unit["id"] for unit in units
-            if unit["id"] not in done and unit["id"] not in live and set(unit.get("depends_on", [])) <= done
+            if unit["id"] not in done
+            and unit["id"] not in live
+            and unit["id"] not in submitted
+            and set(unit.get("depends_on", [])) <= done
         ]
         conflicts = {tuple(sorted(pair)) for pair in recommendation.get("conflicts", [])}
         result: list[str] = []

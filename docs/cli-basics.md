@@ -108,6 +108,12 @@ The session controls are:
 | `:accept [CHANGE]` | Answer every remaining item and land the exact candidate. |
 | `:exit` | Leave while preserving the session. |
 
+Every change opens with a reach estimate the coordinator names: the files or areas the work will
+touch. A reply that names none is refused rather than widened to the whole repository. The provider
+then plans the work shape over Invariant's selected context, one unit unless the intent splits into
+independent units, and each unit runs as its own provider process in its own worktree with the
+accepted records that govern it in front of it.
+
 Conversation turns are read-only while the provider interprets the message. When a change is
 requested, the host uses the original user message as intent, opens a durable change, obtains an
 isolated worktree for the provider principal, commits the provider's candidate, runs compiled

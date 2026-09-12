@@ -155,15 +155,29 @@ class InvariantApplication:
             cwd=self.repository.root,
             check=False,
         ).stdout.splitlines()
+        validated_dir = self.repository.primary_worktree / ".invariant/runtime/validated"
         for ref in refs:
             change_id = ref.removeprefix("refs/invariant/changes/")
-            ledger = self.store.load(change_id)
+            marker = validated_dir / change_id
+            head = git.resolve(self.repository.root, ref)
+            if marker.is_file() and marker.read_text(encoding="utf-8").strip() == head:
+                # Already verified at this exact ledger head; the chain is immutable below it.
+                ledger = self.store.load(change_id)
+            else:
+                ledger = self.store.verify(change_id)
+                if ledger.state.get("stage") == "completed":
+                    validate_landing_attestation(self.repository.root, ledger.state)
+                    validated_dir.mkdir(parents=True, exist_ok=True)
+                    marker.write_text(ledger.head + "\n", encoding="utf-8")
             states[change_id] = ledger.state
-            if ledger.state.get("stage") == "completed":
-                validate_landing_attestation(self.repository.root, ledger.state)
             changes.append(
                 {"id": change_id, "ledger": ledger.head, "stage": str(ledger.state["stage"])}
             )
+        archived = git.run(
+            ["for-each-ref", "--format=%(refname)", "refs/invariant/archive"],
+            cwd=self.repository.root,
+            check=False,
+        ).stdout.splitlines()
         validate_governance_history(self.repository.root, target_head, states)
         return OperationResult(
             Outcome.COMPLETED,
@@ -186,6 +200,7 @@ class InvariantApplication:
                     "digest": governance.digest,
                 },
                 "changes": changes,
+                "archived": len(archived),
             },
         )
 
@@ -253,13 +268,19 @@ class InvariantApplication:
         return self._ledger_result(ledger, Outcome.READY)
 
     def change_recommend(
-        self, change_id: str, *, operation_id: str, host_capacity: int | None = None
+        self,
+        change_id: str,
+        *,
+        operation_id: str,
+        host_capacity: int | None = None,
+        proposal: Mapping[str, Any] | None = None,
     ) -> OperationResult:
         return self._ledger_result(
             self.changes.recommend(
                 change_id,
                 operation_id=operation_id,
                 host_capacity=host_capacity,
+                proposal=proposal,
             ),
             Outcome.READY,
         )
@@ -272,6 +293,22 @@ class InvariantApplication:
     def change_pending(self, change_id: str) -> OperationResult:
         return OperationResult(
             Outcome.COMPLETED, {"pending": self.changes.pending(change_id)}
+        )
+
+    def context_plan(self, change_id: str) -> OperationResult:
+        return OperationResult(
+            Outcome.COMPLETED, {"planning": self.changes.plan_context(change_id)}
+        )
+
+    def change_archive(self, change_id: str, *, operation_id: str) -> OperationResult:
+        return OperationResult(
+            Outcome.COMPLETED,
+            {"change": change_id, "ref": self.changes.archive(change_id, operation_id=operation_id)},
+        )
+
+    def integration_recompute(self, change_id: str, **values: Any) -> OperationResult:
+        return self._ledger_result(
+            self.integration.recompute(change_id, **values), Outcome.READY
         )
 
     def change_handoff(self, change_id: str) -> OperationResult:

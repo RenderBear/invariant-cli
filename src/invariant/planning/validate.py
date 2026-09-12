@@ -13,7 +13,13 @@ def _claim_overlap(left: str, right: str) -> bool:
     return left == right and left.startswith(("interface:", "contract:"))
 
 
-def validate(units: Sequence[Unit]) -> tuple[tuple[str, str], ...]:
+def _reaches(unit: Unit, locators: Sequence[str]) -> bool:
+    return any(_claim_overlap(claim, locator) for claim in unit.claims for locator in locators)
+
+
+def validate(
+    units: Sequence[Unit], serialize_on: Sequence[str] = ()
+) -> tuple[tuple[str, str], ...]:
     if not 1 <= len(units) <= 32:
         raise InvariantError("Invariant: recommendation requires 1 to 32 units", code="invalid_recommendation")
     by_id = {unit.identifier: unit for unit in units}
@@ -71,5 +77,8 @@ def validate(units: Sequence[Unit]) -> tuple[tuple[str, str], ...]:
                         f"Invariant: units '{left.identifier}' and '{right.identifier}' overlap without ordering",
                         code="overlapping_claims",
                     )
+                conflicts.add(tuple(sorted((left.identifier, right.identifier))))
+            elif serialize_on and _reaches(left, serialize_on) and _reaches(right, serialize_on):
+                # A serialize directive: both units reach the serialized set, so they may not be live together.
                 conflicts.add(tuple(sorted((left.identifier, right.identifier))))
     return tuple(sorted(conflicts))

@@ -194,6 +194,17 @@ def reduce_event(previous: Mapping[str, Any] | None, event: Event) -> dict[str, 
         state["stage"] = "ready"
     elif event.kind is EventKind.RECOMMENDATION_REQUESTED:
         state["stage"] = "recommending"
+    elif event.kind is EventKind.RECOMMENDATION_REJECTED:
+        rejections = state.setdefault("recommendation_rejections", [])
+        rejections.append(deepcopy(event.payload))
+    elif event.kind is EventKind.CANDIDATE_RECOMPUTED:
+        state["base"] = event.payload["base"]
+        state["candidate"] = deepcopy(event.payload["candidate"])
+        state["evidence"] = []
+        state["reviews"] = []
+        state["stage"] = "evidencing"
+    elif event.kind is EventKind.CHANGE_ARCHIVED:
+        state["archived"] = deepcopy(event.payload)
     elif event.kind is EventKind.ACTION_OPENED:
         action = deepcopy(event.payload["action"])
         action["status"] = "pending"

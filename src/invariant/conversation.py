@@ -122,9 +122,10 @@ def prompt(
             else ""
         )
         + (
-            "\nWhen action=change, paths must contain the smallest repository-relative "
-            "file or directory claims needed for the work. When action=answer, paths must "
-            "be empty.\n"
+            "\nWhen action=change, paths is the reach estimate: at least one repository-relative "
+            "file or directory that the work will touch, covering every area it changes. It must "
+            "never be '.' or the repository root, and it should be as small as the work allows. "
+            "When action=answer, paths must be empty.\n"
             if mode == "change" and not decision_context
             else ""
         )

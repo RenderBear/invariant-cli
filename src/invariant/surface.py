@@ -2,19 +2,26 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
+import json
 from pathlib import Path
+import shutil
+import tempfile
+import threading
 import uuid
-from typing import Any
+from typing import Any, Iterator
 
 from invariant.application import InvariantApplication
-from invariant.errors import InvariantError
+from invariant.errors import Blocked, InvariantError
 from invariant.gateway.resolution import REVIEW_KINDS
 from invariant.governance import GovernanceSelection, GovernanceStore, compile_obligations
 from invariant.harness import preferences
 from invariant.harness.identity import authenticate_user, refusal_lines
-from invariant.harness.providers import AgentProvider, invoke, invoke_change
+from invariant.harness.providers import AgentInvocationError, AgentProvider, invoke, invoke_change
 from invariant.mechanics import config, git
+from invariant.planning.context import guidance_lines
 from invariant.protocol import Outcome, canonical_json
 
 
@@ -22,12 +29,83 @@ USER_PRINCIPAL = "user:cli"
 HARNESS_PRINCIPAL = "harness:cli"
 
 
-def _user(repo: Path) -> InvariantApplication:
+def _user(repo: Path, planner: Any = None) -> InvariantApplication:
     """Bind direct user authority; only an authenticated interactive host may hold it."""
 
     return InvariantApplication.bind(
-        repo, principal=USER_PRINCIPAL, authentication=authenticate_user(repo)
+        repo,
+        principal=USER_PRINCIPAL,
+        authentication=authenticate_user(repo),
+        planner=planner,
     )
+
+
+_PLAN_SCHEMA = {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["rationale", "units"],
+    "properties": {
+        "rationale": {"type": "string"},
+        "units": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["id", "objective", "claims", "provides", "relies_on", "depends_on", "checks"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "objective": {"type": "string"},
+                    "claims": {"type": "array", "items": {"type": "string"}},
+                    "provides": {"type": "array", "items": {"type": "string"}},
+                    "relies_on": {"type": "array", "items": {"type": "string"}},
+                    "depends_on": {"type": "array", "items": {"type": "string"}},
+                    "checks": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+    },
+}
+
+
+def _planner(repo: Path, provider: AgentProvider, timeout: int):
+    """A read-only provider run that answers the planning question with typed units."""
+
+    def plan(context: dict[str, Any]) -> dict[str, Any] | None:
+        planning = context.get("planning", {})
+        prompt = (
+            "You are Invariant's semantic planner. Using only the supplied planning context and a "
+            "read-only look at the repository, decide the work shape for one change. Return one unit "
+            "over the declared reach unless the intent genuinely splits into mutually exclusive, "
+            "contractually independent units: disjoint repo: path claims, exactly one provider per "
+            "changed contract with every consumer depending on it, and no serialized locator reached "
+            "by two units. Claims use repo:<path>, interface:<name>, domain:<id>, or contract:<id>. "
+            "Unit ids are short stable identifiers. Do not modify anything.\n\n"
+            f"Intent:\n{context['intent']['statement']}\n\n"
+            f"Declared reach: {json.dumps(context['scope'])}\n"
+            f"Policy parallel limit: {context.get('host_capacity') or 'auto'}\n\n"
+            f"Planning context:\n{canonical_json(planning)}\n"
+        )
+        try:
+            return invoke(provider, repo, prompt, _PLAN_SCHEMA, timeout=timeout).response
+        except AgentInvocationError:
+            return None
+
+    return plan
+
+
+@contextmanager
+def _candidate_checkout(repo: Path, commit: str) -> Iterator[Path]:
+    """A disposable detached checkout of the exact candidate for read-only review runs."""
+
+    root = Path(tempfile.mkdtemp(prefix="invariant-review-"))
+    checkout = root / "tree"
+    git.run(["worktree", "add", "--quiet", "--detach", str(checkout), commit], cwd=repo)
+    try:
+        yield checkout
+    finally:
+        git.run(["worktree", "remove", "--force", str(checkout)], cwd=repo, check=False)
+        shutil.rmtree(root, ignore_errors=True)
 
 
 def _harness(repo: Path) -> InvariantApplication:
@@ -517,6 +595,9 @@ def _cleanup(
         token=token,
         operation_id=f"{operation}-cleanup",
     )
+    _harness(application.repository.primary_worktree).change_archive(
+        change_id, operation_id=f"{operation}-archive"
+    )
 
 
 def execute_agent_change(
@@ -534,8 +615,13 @@ def execute_agent_change(
     change_id = f"session-{session_id.removeprefix('s-')}-{suffix}"
     attempt_id = f"work-{suffix}"
     operation = f"chat-{suffix}"
-    claims = paths or ["."]
-    user = _user(repo)
+    if not paths:
+        raise InvariantError(
+            "Invariant: the coordinator supplied no reach estimate; say which files or areas change",
+            code="unbounded_scope",
+        )
+    claims = list(paths)
+    user = _user(repo, planner=_planner(repo, provider, timeout))
     user.change_open(
         change_id,
         intent=intent,
@@ -544,156 +630,199 @@ def execute_agent_change(
         operation_id=f"{operation}-open",
     )
     user.change_recommend(change_id, operation_id=f"{operation}-recommend")
+    planning = user.context_plan(change_id).result["planning"]
+    guidance = guidance_lines(planning)
+    recommendation = user.store.load(change_id).state["recommendation"]
+    units = {unit["id"]: unit for unit in recommendation["units"]}
 
     author = f"agent:{provider.value}/{session_id}"
     worker = InvariantApplication.bind(repo, principal=author)
-    create_token = _grant(
-        worker,
-        change_id,
-        "worktree.create",
-        f"change/{attempt_id}",
-        operation_id=f"{operation}-grant-create",
-        unit="change",
-        attempt=attempt_id,
-    )
-    created = worker.work_create(
-        change_id,
-        unit_id="change",
-        attempt_id=attempt_id,
-        actor=author,
-        token=create_token,
-        operation_id=f"{operation}-create",
-    )
-    _grant(
-        worker,
-        change_id,
-        "worktree.write",
-        attempt_id,
-        operation_id=f"{operation}-grant-write",
-        unit="change",
-        attempt=attempt_id,
-    )
-    worktree = Path(str(created.result["attempt"]["worktree"]))
-    starting_tip = git.resolve(worktree, "HEAD")
-    execution = invoke_change(
-        provider,
-        worktree,
-        (
-            "Implement the following user-supplied intent in this isolated Invariant "
-            "worktree. Do not commit, move refs, publish, or edit .invariant/runtime. "
-            "Stay within these claims: "
-            f"{', '.join(claims)}.\n\nIntent:\n{intent.strip()}"
-        ),
-        timeout=timeout,
-    )
-    if git.resolve(worktree, "HEAD") != starting_tip:
-        raise InvariantError(
-            "Invariant: the execution agent moved its worktree ref",
-            code="unauthorized_ref_movement",
-            data={"change": change_id},
+    kernel_lock = threading.Lock()
+    changed: list[str] = []
+    messages: list[str] = []
+
+    def run_unit(unit_id: str) -> str:
+        unit = units[unit_id]
+        attempt_id = f"{unit_id}-{suffix}"
+        with kernel_lock:
+            create_token = _grant(
+                worker,
+                change_id,
+                "worktree.create",
+                f"{unit_id}/{attempt_id}",
+                operation_id=f"{operation}-grant-create-{unit_id}",
+                unit=unit_id,
+                attempt=attempt_id,
+            )
+            created = worker.work_create(
+                change_id,
+                unit_id=unit_id,
+                attempt_id=attempt_id,
+                actor=author,
+                token=create_token,
+                operation_id=f"{operation}-create-{unit_id}",
+            )
+            _grant(
+                worker,
+                change_id,
+                "worktree.write",
+                attempt_id,
+                operation_id=f"{operation}-grant-write-{unit_id}",
+                unit=unit_id,
+                attempt=attempt_id,
+            )
+        worktree = Path(str(created.result["attempt"]["worktree"]))
+        starting_tip = git.resolve(worktree, "HEAD")
+        execution = invoke_change(
+            provider,
+            worktree,
+            (
+                "Implement one unit of a user-supplied intent in this isolated Invariant "
+                "worktree. Do not commit, move refs, publish, or edit .invariant/runtime.\n\n"
+                f"Unit {unit_id}: {unit['objective']}\n"
+                f"Stay within these claims: {', '.join(unit['claims'])}.\n\n"
+                "Accepted repository meaning that governs this work:\n"
+                + ("\n".join(guidance) if guidance else "- none selected")
+                + f"\n\nIntent:\n{intent.strip()}"
+            ),
+            timeout=timeout,
         )
-    changed = git.changed_paths(worktree)
-    if not changed:
-        raise InvariantError(
-            "Invariant: the execution agent produced no repository change",
-            code="empty_candidate",
-            data={"change": change_id},
-        )
-    git.run(["add", "-A"], cwd=worktree)
-    git.run(["commit", "-q", "-m", intent.strip().splitlines()[0][:72]], cwd=worktree)
-    worker.work_submit(
-        change_id,
-        attempt_id=attempt_id,
-        actor=author,
-        operation_id=f"{operation}-submit",
-    )
-    converge_token = _grant(
-        worker,
-        change_id,
-        "candidate.converge",
-        attempt_id,
-        operation_id=f"{operation}-grant-converge",
-        attempt=attempt_id,
-    )
-    worker.candidate_converge(
-        change_id,
-        attempt_id=attempt_id,
-        token=converge_token,
-        operation_id=f"{operation}-converge",
-    )
+        if git.resolve(worktree, "HEAD") != starting_tip:
+            raise InvariantError(
+                "Invariant: the execution agent moved its worktree ref",
+                code="unauthorized_ref_movement",
+                data={"change": change_id, "unit": unit_id},
+            )
+        unit_changed = git.changed_paths(worktree)
+        if not unit_changed:
+            raise InvariantError(
+                "Invariant: the execution agent produced no repository change",
+                code="empty_candidate",
+                data={"change": change_id, "unit": unit_id},
+            )
+        git.run(["add", "-A"], cwd=worktree)
+        git.run(["commit", "-q", "-m", f"{unit_id}: {unit['objective'][:60]}"], cwd=worktree)
+        with kernel_lock:
+            worker.work_submit(
+                change_id,
+                attempt_id=attempt_id,
+                actor=author,
+                operation_id=f"{operation}-submit-{unit_id}",
+            )
+            converge_token = _grant(
+                worker,
+                change_id,
+                "candidate.converge",
+                attempt_id,
+                operation_id=f"{operation}-grant-converge-{unit_id}",
+                attempt=attempt_id,
+            )
+            worker.candidate_converge(
+                change_id,
+                attempt_id=attempt_id,
+                token=converge_token,
+                operation_id=f"{operation}-converge-{unit_id}",
+            )
+            changed.extend(unit_changed)
+            messages.append(execution.message)
+        return unit_id
+
+    # Dispatch the admissible frontier until every unit converged. Providers run in parallel;
+    # kernel bookkeeping is serialized so one ledger sees one writer at a time.
+    for _ in range(len(units) + 1):
+        frontier = worker.change_inspect(change_id).result["change"]["frontier"]
+        if not frontier:
+            break
+        with ThreadPoolExecutor(max_workers=max(1, len(frontier))) as pool:
+            list(pool.map(run_unit, frontier))
     state = worker.store.load(change_id).state
-    required = state.get("governance", {}).get("obligations", {}).get(
-        "required_verifiers", []
-    )
-    verifier_tokens = {
-        str(locator): _grant(
-            worker,
-            change_id,
-            "verification.run",
-            str(locator),
-            operation_id=f"{operation}-verify-{index}",
+    if set(state.get("converged", [])) != set(units):
+        raise InvariantError(
+            "Invariant: not every recommended unit converged",
+            code="recommendation_required",
+            data={"change": change_id, "converged": state.get("converged", [])},
         )
-        for index, locator in enumerate(required)
-    }
-    worker.candidate_evidence(
-        change_id,
-        tokens=verifier_tokens,
-        operation_id=f"{operation}-evidence",
-    )
-    state = worker.store.load(change_id).state
-    candidate = state["candidate"]
-    preview = _governance_preview(repo, state)
+    execution_message = "\n\n".join(dict.fromkeys(messages))
+
+    _capture_evidence(worker, change_id, f"{operation}-evidence")
     landing = _harness(repo)
     resolution: dict[str, Any] | None = None
-    # Walk the resolution list. A secondary agent resolves item by item; anything assigned to
-    # the user returns the same list for the host to present.
-    for round_index in range(8):
-        items = landing.change_pending(change_id).result["pending"]
-        if any(item["resolver"] == "user" for item in items):
-            return _pending_result(
-                change_id, candidate["tree"], items, preview, execution.message
+    for attempt_index in range(3):
+        state = worker.store.load(change_id).state
+        candidate = state["candidate"]
+        preview = _governance_preview(repo, state)
+        # Walk the resolution list. A secondary agent resolves item by item; anything assigned to
+        # the user returns the same list for the host to present.
+        with _candidate_checkout(repo, str(candidate["commit"])) as checkout:
+            for round_index in range(8):
+                items = landing.change_pending(change_id).result["pending"]
+                if any(item["resolver"] == "user" for item in items):
+                    return _pending_result(
+                        change_id, candidate["tree"], items, preview, execution_message
+                    )
+                for item in items:
+                    resolved = _resolve_item(
+                        repo,
+                        provider,
+                        checkout,
+                        change_id,
+                        item,
+                        preview,
+                        guidance,
+                        f"{operation}-resolve-{attempt_index}-{round_index}-{item['index']}",
+                        timeout=timeout,
+                    )
+                    if item["kind"] == "accept-governance":
+                        resolution = resolved
+                requested = landing.capability_request(
+                    change_id,
+                    capability="integration.land",
+                    actor=HARNESS_PRINCIPAL,
+                    resource=candidate["tree"],
+                    operation_id=f"{operation}-request-land-{attempt_index}-{round_index}",
+                )
+                if not isinstance(requested.result.get("action"), dict):
+                    break
+            else:
+                raise InvariantError(
+                    "Invariant: the resolution list did not converge",
+                    code="authority_required",
+                    data={"change": change_id},
+                )
+        token = requested.result.get("token")
+        if not isinstance(token, str):
+            raise InvariantError(
+                "Invariant: exact candidate is not ready to land",
+                code="capability_required",
+                data=requested.result,
             )
-        for item in items:
-            resolved = _resolve_item(
-                repo,
-                provider,
-                worktree,
+        try:
+            landing.integration_land(
                 change_id,
-                item,
-                preview,
-                f"{operation}-resolve-{round_index}-{item['index']}",
-                timeout=timeout,
+                token=token,
+                operation_id=f"{operation}-land-{attempt_index}",
+                subject=intent.strip().splitlines()[0][:72],
             )
-            if item["kind"] == "accept-governance":
-                resolution = resolved
-        requested = landing.capability_request(
-            change_id,
-            capability="integration.land",
-            actor=HARNESS_PRINCIPAL,
-            resource=candidate["tree"],
-            operation_id=f"{operation}-request-land-{round_index}",
-        )
-        if not isinstance(requested.result.get("action"), dict):
             break
-    else:
-        raise InvariantError(
-            "Invariant: the resolution list did not converge",
-            code="authority_required",
-            data={"change": change_id},
-        )
-    token = requested.result.get("token")
-    if not isinstance(token, str):
-        raise InvariantError(
-            "Invariant: exact candidate is not ready to land",
-            code="capability_required",
-            data=requested.result,
-        )
-    landing.integration_land(
-        change_id,
-        token=token,
-        operation_id=f"{operation}-land",
-        subject=intent.strip().splitlines()[0][:72],
-    )
+        except Blocked as blocked:
+            if blocked.code != "concurrent_ref_movement" or attempt_index == 2:
+                raise
+            # The target moved under a verified candidate: recompute explicitly onto the new
+            # parent, then re-evidence and re-resolve. Nothing is rebased silently.
+            moved = git.resolve(repo, state["target"]["ref"])
+            recompute_token = _grant(
+                worker,
+                change_id,
+                "candidate.converge",
+                f"recompute:{moved}",
+                operation_id=f"{operation}-grant-recompute-{attempt_index}",
+            )
+            worker.integration_recompute(
+                change_id,
+                token=recompute_token,
+                operation_id=f"{operation}-recompute-{attempt_index}",
+            )
+            _capture_evidence(worker, change_id, f"{operation}-evidence-{attempt_index + 1}")
     completed = landing.store.load(change_id).state
     commit = str(completed["landing"]["commit"])
     _cleanup(user, change_id, completed, operation)
@@ -721,11 +850,40 @@ def execute_agent_change(
             "paths": changed,
             "commit": commit,
             "pending": False,
-            "message": execution.message,
+            "message": execution_message,
             "governance": preview,
             "resolution": resolution,
         },
     )
+
+
+def _capture_evidence(worker: InvariantApplication, change_id: str, operation: str) -> None:
+    """Grant and run exactly the verifiers actual reach compiles for the current candidate."""
+
+    state = worker.store.load(change_id).state
+    candidate = state["candidate"]
+    context = worker.governance_context(
+        paths=[*state["scope"]["paths"], *candidate["paths"]],
+        interfaces=state["scope"]["interfaces"],
+        domains=state["scope"]["domains"],
+        contracts=state["scope"]["contracts"],
+        capability="integration.land",
+        at=state["base"],
+    ).result
+    required = set(context["obligations"]["required_verifiers"])
+    for unit in (state.get("recommendation") or {}).get("units", []):
+        required.update(unit.get("checks", []))
+    verifier_tokens = {
+        locator: _grant(
+            worker,
+            change_id,
+            "verification.run",
+            locator,
+            operation_id=f"{operation}-verify-{index}",
+        )
+        for index, locator in enumerate(sorted(required))
+    }
+    worker.candidate_evidence(change_id, tokens=verifier_tokens, operation_id=operation)
 
 
 def _resolve_review(
@@ -737,6 +895,7 @@ def _resolve_review(
     operation: str,
     *,
     timeout: int,
+    guidance: list[str] | None = None,
 ) -> None:
     reviewer = f"agent:{provider.value}/review-{uuid.uuid4().hex[:12]}"
     application = InvariantApplication.bind(repo, principal=reviewer)
@@ -754,7 +913,9 @@ def _resolve_review(
             "Review this exact candidate independently against the supplied user intent "
             "and repository governance. Inspect the worktree. Do not modify it. Return an "
             "accepted verdict only when no material defect remains.\n\n"
-            f"Intent: {action.get('context', {}).get('intent', {}).get('statement', '')}"
+            f"Intent: {action.get('context', {}).get('intent', {}).get('statement', '')}\n\n"
+            "Accepted repository meaning the candidate must respect:\n"
+            + ("\n".join(guidance) if guidance else "- none selected")
         ),
         {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -804,6 +965,7 @@ def _resolve_governance(
     operation: str,
     *,
     timeout: int,
+    guidance: list[str] | None = None,
 ) -> dict[str, Any]:
     """Obtain one independent, action-bound semantic resolution."""
 
@@ -827,7 +989,9 @@ def _resolve_governance(
             "evidence-backed, internally consistent, and their closed rules are appropriate. "
             "Reject if a material issue remains. Give a concise plain-language summary for the "
             "repository user; do not reproduce YAML, locators, hashes, or the drafting prompt.\n\n"
-            f"Bound proposal:\n{canonical_json(preview or {})}"
+            f"Bound proposal:\n{canonical_json(preview or {})}\n\n"
+            "Accepted repository meaning already in force:\n"
+            + ("\n".join(guidance) if guidance else "- none selected")
         ),
         {
             "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -933,16 +1097,19 @@ def _resolve_item(
     change_id: str,
     item: dict[str, Any],
     preview: dict[str, Any] | None,
+    guidance: list[str],
     operation: str,
     *,
     timeout: int,
 ) -> dict[str, Any] | None:
     action = _harness(repo).store.load(change_id).state["actions"][item["id"]]
     if item["kind"] in REVIEW_KINDS:
-        _resolve_review(repo, provider, worktree, change_id, action, operation, timeout=timeout)
+        _resolve_review(
+            repo, provider, worktree, change_id, action, operation, timeout=timeout, guidance=guidance
+        )
         return None
     return _resolve_governance(
-        repo, provider, worktree, change_id, action, preview, operation, timeout=timeout
+        repo, provider, worktree, change_id, action, preview, operation, timeout=timeout, guidance=guidance
     )
 
 

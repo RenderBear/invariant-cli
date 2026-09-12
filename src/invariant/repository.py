@@ -10,6 +10,9 @@ from invariant.mechanics import config, git
 from invariant.protocol import digest
 
 
+_POLICY_CACHE: dict[tuple[str, str, str], config.Config] = {}
+
+
 @dataclass(frozen=True)
 class Repository:
     root: Path
@@ -70,9 +73,20 @@ class Repository:
         return target, target_head, accepted
 
     def policy_at(self, ref: str, integration_branch: str) -> config.Config:
-        """Load tracked policy from one exact accepted Git ground."""
+        """Load tracked policy from one exact accepted Git ground; cached by commit oid."""
 
-        return config.resolve_at(self.primary_worktree, ref, integration_branch)
+        oid = git.resolve(self.root, ref) or ref
+        key = (str(self.common_dir), oid, integration_branch)
+        cached = _POLICY_CACHE.get(key)
+        if cached is None:
+            cached = config.resolve_at(self.primary_worktree, oid, integration_branch)
+            if len(_POLICY_CACHE) >= 64:
+                _POLICY_CACHE.pop(next(iter(_POLICY_CACHE)))
+            _POLICY_CACHE[key] = cached
+        return cached
 
     def ref(self, change_id: str) -> str:
         return f"refs/invariant/changes/{change_id}"
+
+    def archive_ref(self, change_id: str) -> str:
+        return f"refs/invariant/archive/{change_id}"

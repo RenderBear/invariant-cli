@@ -136,19 +136,48 @@ def create_server(
             ),
         )
 
+    @server.tool(title="Planning context", annotations=READ_ONLY)
+    def invariant_context_plan(change_id: str) -> Envelope:
+        """Selected records with prose, domains, contracts, obligations, and the tree under the reach."""
+        return call("context.plan", lambda: app.context_plan(change_id))
+
     @server.tool(title="Recommend work shape", annotations=MUTATION)
     def invariant_change_recommend(
         change_id: str,
+        proposal: dict[str, Any] | None = None,
         host_capacity: int | None = None,
         operation_id: str | None = None,
     ) -> Envelope:
-        """Record Invariant's conservative or semantic work recommendation."""
+        """Validate the harness's typed unit proposal, or record the conservative single unit."""
         return call(
             "change.recommend",
             lambda: app.change_recommend(
                 change_id,
+                proposal=proposal,
                 host_capacity=host_capacity,
                 operation_id=_operation(operation_id),
+            ),
+        )
+
+    @server.tool(title="Archive completed change", annotations=MUTATION)
+    def invariant_change_archive(
+        change_id: str, operation_id: str | None = None
+    ) -> Envelope:
+        """Move one completed change's ledger ref to the archive namespace."""
+        return call(
+            "change.archive",
+            lambda: app.change_archive(change_id, operation_id=_operation(operation_id)),
+        )
+
+    @server.tool(title="Recompute candidate onto moved target", annotations=MUTATION)
+    def invariant_integration_recompute(
+        change_id: str, grant_token: str, operation_id: str | None = None
+    ) -> Envelope:
+        """Consume a recompute grant and merge the retained candidate onto the current target."""
+        return call(
+            "integration.recompute",
+            lambda: app.integration_recompute(
+                change_id, token=grant_token, operation_id=_operation(operation_id)
             ),
         )
 

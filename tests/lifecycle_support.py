@@ -13,7 +13,9 @@ from invariant.mechanics import git
 Planner = Callable[[Mapping[str, Any]], Mapping[str, Any] | None]
 
 
-def repository(path: Path, *, commits: int = 1, planner: Planner | None = None) -> InvariantApplication:
+def repository(
+    path: Path, *, commits: int = 1, planner: Planner | None = None, **policy: Any
+) -> InvariantApplication:
     path.mkdir()
     git.run(["init", "-qb", "main"], cwd=path)
     git.run(["config", "user.name", "test"], cwd=path)
@@ -23,7 +25,7 @@ def repository(path: Path, *, commits: int = 1, planner: Planner | None = None) 
     (path / "src/a.txt").write_text("one\n", encoding="utf-8")
     git.run(["add", "-A"], cwd=path)
     git.run(["commit", "-qm", "seed"], cwd=path)
-    InvariantApplication.initialize(path)
+    InvariantApplication.initialize(path, **policy)
     for index in range(commits - 1):
         git.run(["commit", "-q", "--allow-empty", "-m", f"history {index}"], cwd=path)
     return InvariantApplication.bind(

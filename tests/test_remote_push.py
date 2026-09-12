@@ -16,6 +16,7 @@ def test_publication_is_denied_by_default_with_source(tmp_path: Path) -> None:
         "publish",
         intent="publish exact result",
         supplier="user:test",
+        paths=["src/publish.txt"],
         operation_id="open-publish",
     )
     app.change_recommend("publish", operation_id="recommend-publish")

@@ -40,8 +40,11 @@ class GovernanceSelection:
 
 def _intersects(record: Record, claims: set[str]) -> set[str]:
     matched: set[str] = set()
+    # A record's own file is reached only exactly; a prefix over the records directory is an
+    # estimate of where writing may happen, not a reach into every record.
+    if f"repo:{record.path}" in claims:
+        matched.add(f"repo:{record.path}")
     coordinates = {
-        f"repo:{record.path}",
         *record.strings("applies_to"),
         *record.strings("surfaces"),
         *record.strings("material"),
@@ -117,4 +120,8 @@ def select(
                     target = governance.get(kind, identifier)
                     if target:
                         changed |= include(target, {f"revisit-on:semantic:{record.identifier}"})
+            reference = f"{record.kind}:{record.identifier}"
+            for dependent in governance.records:
+                if dependent.kind == "semantic" and reference in dependent.strings("revisit_on"):
+                    changed |= include(dependent, {f"dependent-of:{reference}"})
     return GovernanceSelection.create(selected.values(), reasons)

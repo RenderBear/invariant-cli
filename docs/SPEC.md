@@ -187,7 +187,11 @@ paths + interfaces + domains + contracts + capabilities + governed material
 Pre-work selection uses declared claims and semantic planner output. A capability request also
 selects every active record whose `applies_to` intersects `capability:<name>`; a publication rule
 therefore cannot disappear merely because publication changes no source path. Candidate selection
-uses the actual Git diff and overrides omissions in the declaration. Selection returns each reason,
+uses the actual Git diff and overrides omissions in the declaration. A record's own file matches
+only an exact path claim: a declared prefix such as `.invariant/records` estimates where writing may
+happen and selects nothing by itself, while the candidate's exact record paths select exactly the
+records changed. Every semantic record whose `revisit_on` names a selected record is selected as a
+dependent. Selection returns each reason,
 so an operator can ask why a record applied without asking a model to reconstruct the answer.
 
 ### 3.3 Normative compiler
@@ -271,6 +275,11 @@ only at CLI invocation or MCP server startup; lower layers never change reposito
 data.
 
 ### 4.2 Git-backed ledger
+
+`LedgerStore.load` reads the head commit's `event.json` and `snapshot.json`, checks the event
+digest and the snapshot's sequence and last-event binding, and returns the state without replaying;
+an operation id's recorded event is read on demand at `head~n`. `LedgerStore.verify` replays and
+verifies the whole chain and is what `state.validate` uses.
 
 `LedgerStore` represents one change at `refs/invariant/changes/<change-id>`. A ledger commit tree is:
 
@@ -474,9 +483,12 @@ governance, or changed contracts triggers new compilation and possibly recommend
 
 ### 5.5 Retention and cleanup
 
-Completion keeps the change ledger. Work and candidate refs remain until an explicit retention
-operation proves their objects are reachable from the attested result or consumes a `work.discard`
-grant. Invalidated, rejected, conflicting, and unlanded work is never cleaned automatically.
+Completion keeps the change ledger. `change.archive` moves a completed or invalidated change's
+ledger ref to `refs/invariant/archive/<change-id>` after recording `change.archived`; the host does
+this after cleanup. An archived ledger still loads for inspection and is not walked by
+`state.validate`, whose history check falls back to the portable attestation. Work and candidate
+refs remain until an explicit retention operation proves their objects are reachable from the
+attested result or consumes a `work.discard` grant. Invalidated, rejected, conflicting, and unlanded work is never cleaned automatically.
 
 Runtime worktrees and logs may be removed as cache only after their exact ref and durable metadata
 are present. Destructive cleanup names every ref and path; broad recursive targets, unresolved
@@ -492,13 +504,26 @@ variables, and repository-root deletion are prohibited.
 governance context, domains, contracts, requested scope, retained relevant discoveries, host
 capacity, and tracked maximum parallel width.
 
-The semantic planner produces a typed proposal. It does not receive a worker-creation tool. The
-deterministic validator either accepts and normalizes the proposal, returns repair diagnostics for
-at most two semantic retries, or emits a conservative single unit. An invalid proposal never creates
-a work ref or grant.
+`change.open` requires a bounded reach estimate: at least one path, interface, domain, or contract
+claim, and never `repo:.`; otherwise it fails with `unbounded_scope`. The estimate is the blast
+radius the harness commits to before any worker runs.
 
-The harness may ask for a new recommendation or choose fewer workers. It may not supply its own
-plan and label it an Invariant recommendation.
+`planning/context.py` builds the planning context from the selection at the base: every selected
+record with its closed fields and canonical prose sections, domain scopes and interfaces, contract
+parties and surfaces, the compiled obligations, the tracked tree beneath the estimated reach (capped
+at 400 entries), and the one question the planner answers. `context.plan` returns it for a change.
+The same module renders `guidance_lines`, the plain form the host puts in front of every worker and
+reviewer, so context selection is a delivered consequence rather than a stored one.
+
+The semantic planner produces a typed proposal. The host's planner is a read-only provider run over
+that context; an MCP harness that is itself the model passes `proposal` to `change.recommend`. The
+planner does not receive a worker-creation tool. The deterministic validator either accepts and
+normalizes the proposal or records `recommendation.rejected` with the diagnostic and the rejected
+proposal, then emits the conservative single unit over the reach estimate. An invalid proposal
+never creates a work ref or grant.
+
+The harness may ask for a new recommendation or choose fewer workers. It may not label its own plan
+an Invariant recommendation; a proposal becomes one only by passing validation.
 
 ### 6.2 Validation
 
@@ -512,7 +537,8 @@ A recommendation is valid when:
 - every affected contract consumer transitively depends on its provider;
 - consumer bases are marked `after-provider`;
 - governance changes are isolated unless compiled directives say otherwise;
-- `serialize` and `limit-parallelism` obligations are reflected; and
+- `serialize` obligations become conflict edges between any two units that both reach a serialized
+  locator, and `limit-parallelism` bounds the width; and
 - every check locator resolves at the base or is explicitly marked candidate-created by its unit.
 
 Path overlap uses normalized repository-relative prefixes, not string containment. `repo:a/b` and
@@ -526,8 +552,9 @@ tracked and host capacity. Plans are capped at 32 units; a deterministic bitset 
 implementation is sufficient. Ties prefer the semantic planner's order, then lexical unit id.
 
 The resulting cardinality is `maximum_parallelism`; the chosen set is `recommended_frontier`.
-Live write grants remove conflicting nodes and available capacity. Completing or revoking an
-attempt recomputes the frontier from ledger state.
+Live write grants remove conflicting nodes and available capacity. A submitted attempt is complete
+for frontier purposes: its unit is neither ready nor live and holds no slot while it waits to
+converge. Completing or revoking an attempt recomputes the frontier from ledger state.
 
 The number is not a timeless claim about the whole repository. It is the greatest permitted live
 set under this recommendation, its claims, accepted governance, current candidate, and current
@@ -580,7 +607,7 @@ clients never need to parse the summary.
 | `worktree.create` | current recommendation and dependency-ready unit |
 | `worktree.write` | existing attempt, admissible frontier, no conflicting live write grant |
 | `verification.run` | selected verifier and exact candidate tree |
-| `candidate.converge` | clean submitted attempt and actual claims within recommendation |
+| `candidate.converge` | clean submitted attempt and actual claims within recommendation; or, for the resource `recompute:<target-head>`, an existing candidate whose target has moved to that head |
 | `integration.land` | all obligations satisfied, including a resolution of the opened kind when the candidate touches any tracked governance path; exact candidate; single use |
 | `remote.publish` | completed local landing, tracked opt-in, existing upstream; single use |
 | `change.invalidate` | attributable actor and reason |
@@ -596,6 +623,10 @@ create writable state, converge a candidate, move an integration ref, publish, o
 The ledger stores the token digest, not the token. Use hashes the supplied token, selects exactly one
 live grant, re-evaluates causal invalidators, records `grant.consumed` before or in the same protected
 transaction as the consequence, and refuses replay when `single_use`.
+
+`capability.request` retries internally on `concurrent_ledger_movement`: a decision that lost the
+race is re-evaluated against the new head, and a grant append that lost the race is re-appended onto
+the current head, so the token a call returns is never lost to a later replay of its operation id.
 
 An intent or recommendation replacement revokes affected work grants. A candidate change revokes
 resolution, verification, landing, and publication grants. Governance or target movement
@@ -645,7 +676,9 @@ The MCP server exposes exactly these tools:
 | `invariant_state_validate` | no | validate policy, records, refs, and attested history |
 | `invariant_governance_context` | no | select records and compile obligations for declared scope |
 | `invariant_change_open` | yes | create the durable change ledger |
-| `invariant_change_recommend` | yes | obtain and record Invariant's work recommendation |
+| `invariant_context_plan` | no | return the planning context Invariant selected for a change |
+| `invariant_change_recommend` | yes | validate the harness's typed proposal, or record the conservative unit |
+| `invariant_change_archive` | yes | move one completed change's ledger ref to the archive namespace |
 | `invariant_change_inspect` | no | return reduced state, frontier, actions, grants, and assurance |
 | `invariant_change_handoff` | no | return a canonical token-free handoff capsule |
 | `invariant_change_resume` | yes | causally refresh and continue a handed-off change |
@@ -659,6 +692,7 @@ The MCP server exposes exactly these tools:
 | `invariant_candidate_converge` | yes | consume a converge grant and update the aggregate candidate |
 | `invariant_candidate_evidence` | yes | consume verifier grants, capture evidence, and open any required review action |
 | `invariant_integration_land` | yes | consume the exact landing grant and atomically update the target |
+| `invariant_integration_recompute` | yes | consume a recompute grant and merge the candidate onto the moved target |
 | `invariant_integration_reconcile` | yes | repair interrupted post-ref bookkeeping only |
 | `invariant_publication_publish` | yes | consume a publish grant for the exact landed commit |
 | `invariant_change_invalidate` | yes | stop future work without deletion |
@@ -742,9 +776,14 @@ first-parent commit makes it stale unless a later audit grounds the new state.
 The conversational coordinator is read-only. When it classifies a user message as a write, the host
 opens a durable change from the user's original message, obtains scoped worktree capabilities for a
 provider-specific principal, runs the provider in the isolated worktree, commits the result itself,
-verifies the exact candidate, walks the resolution list with a distinct secondary agent for every
-item policy delegates, returns the list to the user for any item assigned to the user, and lands
-only through `integration.land`. Record candidates use the parent policy's configured
+runs the provider once more as the read-only planner over Invariant's planning context, dispatches
+the admissible frontier with one provider process per unit in parallel while serializing its own
+kernel calls, gives every worker and reviewer the selected records' prose and obligations, commits
+each unit's result itself, verifies the exact candidate, walks the resolution list with a distinct
+secondary agent for every item policy delegates, returns the list to the user for any item assigned
+to the user, recomputes once if the target moved, and lands only through `integration.land`. A
+coordinator reply that names no reach is refused with `unbounded_scope` rather than widened to the
+repository root. Record candidates use the parent policy's configured
 resolver; policy candidates always require direct user acceptance.
 
 `set harness` and `set mode` update clone-local host preferences. Every tracked setting is a
@@ -893,13 +932,21 @@ are acceptable only when their ref heads are included in the cache key and retur
 
 ## 12. Attestation and inspection
 
+`IntegrationService.recompute` is the explicit answer to a moved target. It consumes a
+`candidate.converge` grant for `recompute:<target-head>`, merges the retained candidate onto the
+target with Git's merge base, records `candidate.recomputed` with the new base and candidate, and
+clears evidence and reviews; every candidate-bound grant is stale and the change is `evidencing`
+again. A conflict returns `merge_conflict` and changes nothing. The host uses it once when a
+landing returns `concurrent_ref_movement`, then re-evidences and walks the resolution list again.
+
 `AttestationService` produces deterministic landing trailers from ledger state. The complete
 attestation may exceed practical commit-message size, so trailers contain stable digests and compact
 repeated unit bindings while the retained ledger contains full explanations.
 
 `state.validate` loads policy and records from the accepted integration commit, rejects mutable
-worktree governance, then walks first-parent history from the commit that first introduced
-`.invariant/config.yml`. It verifies:
+worktree governance, verifies every active change ledger's full chain (skipping a chain already
+verified at the same head, recorded under `.invariant/runtime/validated/`), counts archived ledgers,
+then walks first-parent history from the commit that first introduced `.invariant/config.yml`. It verifies:
 
 - landing parent and candidate identity;
 - change, supplied-intent, recommendation, and decision digests;
@@ -947,6 +994,7 @@ src/invariant/
     store.py                  Git commit-tree and update-ref persistence
     handoff.py                capsule creation, validation, export, import
   planning/
+    context.py                planning context and the guidance delivered to workers
     model.py                  recommendations, units, claims, edges
     recommend.py              semantic proposal orchestration and fallback
     validate.py               deterministic validation and conflict graph
@@ -1047,6 +1095,10 @@ Repository tests remain restricted to Git mechanics. The retained suite covers:
 - governance landings refusing a review as acceptance, derived record authority, and the
   user-owned record escalation as landing-gate properties;
 - refusal of an unauthenticated `user:` principal at the ledger transport;
+- submitted units releasing frontier slots and serialize directives bounding the live set;
+- recorded rejection of an invalid proposal and refusal of an unbounded reach;
+- explicit recomputation onto a moved target landing on the new parent; and
+- ledger archival moving one ref with history still valid;
 - dirty checkout and untracked collision preservation; and
 - exact bounded remote publication with local landing retained after rejection.
 

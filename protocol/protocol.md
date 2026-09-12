@@ -233,7 +233,11 @@ at least:
 
 Ledger updates use compare-and-swap. Concurrent writers retry from the winning ledger head or fail
 with `concurrent_ledger_movement`; they never discard another event. A change ledger ref has no
-wall-clock expiry and is never pruned implicitly.
+wall-clock expiry and is never pruned implicitly. A completed change MAY be archived by moving its
+ledger ref to `refs/invariant/archive/<change-id>`; archival moves one ref and deletes nothing, and
+the landing attestation remains portable without it. Ordinary operations MAY read the head event's
+canonical snapshot instead of replaying the chain; `state.validate` MUST verify the whole chain of
+every unarchived ledger.
 
 Generated work remains reachable through dedicated refs:
 
@@ -349,7 +353,10 @@ facets:
 have protocol meaning. Authority is derived from history (§1.5), never declared. `relations` and `facets` remain open vocabularies and acquire no
 mechanical effect implicitly.
 
-When a change's declared or observed reach intersects `applies_to`, the record MUST be selected. Its
+When a change's declared or observed reach intersects `applies_to`, the record MUST be selected. A
+record's own file selects it only when the exact file is reached; a declared prefix over the records
+directory is an estimate of where writing may happen, not a reach into every record. When a record
+is reached, every record that names it in `revisit_on` is selected with it. Its
 canonical prose enters context, its verifier and directive obligations compile, and the exact
 candidate receives at least attributable semantic review. A directive may strengthen that review to
 independent; it cannot remove it. A semantic record therefore always changes behavior even when it
@@ -468,7 +475,9 @@ Open prose, `relations`, and `facets` are preserved but never interpreted as hid
 Invariant compiles policy and selected records into an **obligation set**. The only protocol effects
 are:
 
-1. context selection;
+1. context selection, which is a consequence only when delivered: the harness MUST present the
+   selected records' canonical prose, verifiers, and review obligations to every worker attempt and
+   every reviewer it runs for the change;
 2. capability denial;
 3. required authority;
 4. required review;
@@ -630,9 +639,18 @@ A **change** is one requested outcome and one eventual atomic integration result
 schedulable part of that change. A small or tightly coupled change remains one unit. Invariant MUST
 NOT recommend parallelism merely because multiple workers are available.
 
+A change opens with a **reach estimate**: the paths and, when known, the interfaces, domains, and
+contracts the intent is expected to touch. The estimate is the blast radius the harness commits to
+before any worker runs. It MUST be non-empty, and the repository root is not an estimate:
+`repo:.` is rejected with `unbounded_scope`. Actual reach is still measured from the diff (§4.4).
+
 Before write workers are dispatched, `change.recommend` evaluates the exact base, supplied intent, selected
 governance, domains, contracts, paths, interfaces, configured capacity, and any retained discoveries.
-It returns a **work recommendation** with:
+The semantic planner receives the **planning context**: the selected records with their closed
+fields and canonical prose, every domain scope and interface, every contract's surfaces and parties,
+the compiled obligations including serialization and parallel limits, the tracked tree beneath the
+estimated reach, and the single question the planner answers: whether the intent splits into
+mutually exclusive, contractually independent units. It returns a **work recommendation** with:
 
 ```yaml
 version: 1
@@ -663,9 +681,12 @@ governance: [record:contract:ocr.engine-protocol.v1@<digest>]
 
 The recommendation has a digest and is appended to the change ledger. A semantic planner MAY help
 construct it, but the planner receives only Invariant-selected context, returns typed output, and
-has no authority to validate or issue grants. Invariant owns normalization, validation, conflict
-derivation, and the final recommendation. Without a valid semantic recommendation, the conservative
-result is one unit.
+has no authority to validate or issue grants. A harness MAY supply the planner's proposal itself
+when it is the model; the proposal is still validated as a proposal. Invariant owns normalization,
+validation, conflict derivation, and the final recommendation. An invalid proposal is recorded as
+`recommendation.rejected` with its diagnostic and the proposal it rejected before the conservative
+result is recorded. Without a valid semantic recommendation, the conservative result is one unit
+over the reach estimate.
 
 ### 6.2 Valid units
 
@@ -686,7 +707,9 @@ claimed path, interface, changing contract, or serialized locator does.
 ### 6.3 The admissible frontier
 
 At any ledger state, the **admissible frontier** is the set of dependency-ready units that do not
-conflict with each other or with live write grants. `maximum_parallelism` is the greatest permitted
+conflict with each other or with live write grants. A unit whose attempt has been submitted is
+complete for frontier purposes: it is not ready, it is not live, and it holds no slot while it waits
+to converge. `maximum_parallelism` is the greatest permitted
 number of simultaneous write grants after policy limits. `recommended_frontier` is the preferred
 subset to dispatch now.
 
@@ -839,7 +862,12 @@ concurrent non-inert target movement leaves the integration ref unchanged.
 
 If the target advances, landing authority becomes stale. Invariant retains the candidate and
 requires recomputation and fresh evidence against the new parent; it never silently rebases a
-reviewed tree.
+reviewed tree. `integration.recompute` is that explicit recomputation: it consumes a
+`candidate.converge` grant for the resource `recompute:<new-parent>`, merges the retained candidate
+onto the current target head with the captured base as merge base, and records a new candidate
+whose base is the new parent. A conflict leaves everything unchanged and returns `merge_conflict`.
+The new candidate has no evidence, review, or resolution; every candidate-bound grant is stale, and
+the change returns to `evidencing`.
 
 ### 8.5 Publication {#publication}
 
@@ -925,13 +953,13 @@ The protocol exposes typed operations in these families:
 
 ```text
 state.*          validate and inspect repository governance
-context.*        retrieve selected records and compiled obligations
-change.*         open, recommend, inspect, handoff, resume, invalidate
+context.*        retrieve selected records, compiled obligations, and the planning context
+change.*         open, recommend, inspect, handoff, resume, invalidate, archive
 action.*         inspect and respond to typed semantic or authority actions
 capability.*     request, inspect, revoke, and consume grants
 work.*           create attempts, inspect, submit, and retain unit results
 candidate.*      converge, inspect, evidence, review
-integration.*    land and reconcile
+integration.*    land, recompute, and reconcile
 publication.*    inspect and publish the exact landed result
 ```
 
@@ -965,7 +993,7 @@ At minimum, conforming implementations use these codes:
 | Repository | `not_repository`, `not_initialized`, `nested_invariant`, `unsupported_git`, `invalid_state`, `invalid_policy` |
 | Governance | `unknown_record`, `unresolved_locator`, `invalid_directive`, `contradictory_directives`, `stale_governance`, `authority_required`, `unauthenticated_principal` |
 | Ledger | `missing_change`, `corrupt_ledger`, `concurrent_ledger_movement`, `stale_handoff`, `missing_object` |
-| Recommendation | `invalid_recommendation`, `unbounded_unit`, `overlapping_claims`, `contract_order_violation`, `parallel_limit_exceeded`, `recommendation_required` |
+| Recommendation | `invalid_recommendation`, `unbounded_unit`, `unbounded_scope`, `overlapping_claims`, `contract_order_violation`, `parallel_limit_exceeded`, `recommendation_required` |
 | Capability | `unknown_capability`, `capability_denied`, `capability_required`, `stale_grant`, `grant_consumed`, `grant_revoked`, `containment_required` |
 | Work | `missing_worktree`, `dirty_worktree`, `parallel_claim_violation`, `work_retained`, `merge_conflict` |
 | Verification | `verification_failed`, `missing_evidence`, `stale_evidence`, `semantic_review_required`, `independent_review_required`, `stale_review` |
