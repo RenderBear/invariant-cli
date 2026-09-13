@@ -59,32 +59,25 @@
 
   <g class="sans">
     <!-- header -->
-    <text x="600" y="42" text-anchor="middle" class="ink hero">governance layer  =  semantic kernel  +  Git mechanics</text>
-    <text x="600" y="66" text-anchor="middle" class="muted body">Intent stays with the user. Execution stays with agents. Signing off is its own plane. Everything between is decided, verified, and recorded.</text>
+    <text x="600" y="48" text-anchor="middle" class="ink hero">governance layer  =  semantic kernel  +  Git mechanics</text>
 
     <!-- user -->
     <rect x="40" y="96" width="220" height="252" rx="6" class="card"/>
-    <circle cx="150" cy="148" r="16" class="icon"/>
-    <path d="M118 198a32 32 0 0 1 64 0" class="icon"/>
-    <text x="150" y="234" text-anchor="middle" class="mono green eyebrow">USER</text>
-    <text x="150" y="260" text-anchor="middle" class="ink title">Intent</text>
-    <text x="150" y="284" text-anchor="middle" class="muted body">Says what should change.</text>
-    <text x="150" y="304" text-anchor="middle" class="muted body">Supplies the sources that</text>
-    <text x="150" y="322" text-anchor="middle" class="muted body">meaning is judged against.</text>
+    <circle cx="150" cy="176" r="20" class="icon"/>
+    <path d="M110 240a40 40 0 0 1 80 0" class="icon"/>
+    <text x="150" y="288" text-anchor="middle" class="mono green eyebrow">USER</text>
+    <text x="150" y="316" text-anchor="middle" class="ink title">Intent</text>
 
     <!-- agents -->
     <rect x="940" y="96" width="220" height="252" rx="6" class="card"/>
-    <rect x="1027" y="134" width="46" height="36" rx="8" class="icon"/>
-    <circle cx="1042" cy="152" r="3.2" class="icon-fill"/>
-    <circle cx="1058" cy="152" r="3.2" class="icon-fill"/>
-    <path d="M1050 134V122" class="icon"/>
-    <circle cx="1050" cy="118" r="3.6" class="icon-fill"/>
-    <path d="M1018 198a32 32 0 0 1 64 0" class="icon"/>
-    <text x="1050" y="234" text-anchor="middle" class="mono green eyebrow">AGENTS</text>
-    <text x="1050" y="260" text-anchor="middle" class="ink title">Execution</text>
-    <text x="1050" y="284" text-anchor="middle" class="muted body">Plan and implement under</text>
-    <text x="1050" y="304" text-anchor="middle" class="muted body">scoped capabilities.</text>
-    <text x="1050" y="322" text-anchor="middle" class="muted body">Never authority.</text>
+    <rect x="1024" y="150" width="52" height="42" rx="9" class="icon"/>
+    <circle cx="1041" cy="171" r="3.6" class="icon-fill"/>
+    <circle cx="1059" cy="171" r="3.6" class="icon-fill"/>
+    <path d="M1050 150V136" class="icon"/>
+    <circle cx="1050" cy="132" r="4" class="icon-fill"/>
+    <path d="M1014 240a36 36 0 0 1 72 0" class="icon"/>
+    <text x="1050" y="288" text-anchor="middle" class="mono green eyebrow">AGENTS</text>
+    <text x="1050" y="316" text-anchor="middle" class="ink title">Execution</text>
 
     <!-- governance layer -->
     <g filter="url(#shadow)">
@@ -134,49 +127,42 @@
 
     <!-- resolution plane -->
     <rect x="40" y="404" width="1120" height="164" rx="6" class="plane"/>
-    <text x="600" y="432" text-anchor="middle" class="mono ink eyebrow">RESOLUTION · SIGNING OFF · A PLANE OF ITS OWN</text>
-    <text x="600" y="456" text-anchor="middle" class="muted body">One bound question at a time, over the exact candidate.</text>
+    <text x="600" y="440" text-anchor="middle" class="mono ink eyebrow">RESOLUTION · SIGNING OFF</text>
 
     <g filter="url(#shadow)">
       <rect x="64" y="476" width="220" height="68" rx="5" class="node"/>
     </g>
-    <circle cx="94" cy="504" r="8" class="icon"/>
-    <path d="M78 530a16 16 0 0 1 32 0" class="icon"/>
-    <text x="184" y="504" text-anchor="middle" class="ink body">User</text>
-    <text x="184" y="524" text-anchor="middle" class="muted small">direct authority</text>
+    <circle cx="104" cy="504" r="9" class="icon"/>
+    <path d="M86 532a18 18 0 0 1 36 0" class="icon"/>
+    <text x="188" y="516" text-anchor="middle" class="ink body">User</text>
 
     <g filter="url(#shadow)">
       <rect x="916" y="476" width="220" height="68" rx="5" class="node-green"/>
     </g>
-    <rect x="934" y="494" width="26" height="20" rx="5" class="icon"/>
-    <circle cx="942" cy="504" r="1.8" class="icon-fill"/>
-    <circle cx="952" cy="504" r="1.8" class="icon-fill"/>
-    <path d="M947 494V488" class="icon"/>
-    <text x="1040" y="504" text-anchor="middle" class="ink body">Secondary agent</text>
-    <text x="1040" y="524" text-anchor="middle" class="mono green small">one scoped intent.resolve</text>
+    <rect x="944" y="500" width="30" height="23" rx="6" class="icon"/>
+    <circle cx="953" cy="512" r="2" class="icon-fill"/>
+    <circle cx="965" cy="512" r="2" class="icon-fill"/>
+    <path d="M959 500V492" class="icon"/>
+    <text x="1042" y="516" text-anchor="middle" class="ink body">Secondary agent</text>
 
     <rect x="344" y="476" width="248" height="68" rx="5" class="ground-box"/>
-    <text x="468" y="506" text-anchor="middle" class="ink body">sources</text>
-    <text x="468" y="526" text-anchor="middle" class="muted small">supplied material a record cites</text>
+    <text x="468" y="516" text-anchor="middle" class="ink body">sources</text>
     <rect x="608" y="476" width="248" height="68" rx="5" class="ground-box"/>
-    <text x="732" y="506" text-anchor="middle" class="ink body">skills</text>
-    <text x="732" y="526" text-anchor="middle" class="muted small">human-presented evaluation</text>
+    <text x="732" y="516" text-anchor="middle" class="ink body">skills</text>
 
     <path d="M284 510H336" class="arrow"/>
     <path d="M916 510H864" class="arrow"/>
-    <text x="600" y="561" text-anchor="middle" class="mono muted small">judged against these, never against the resolver's own opinion</text>
 
     <!-- lifecycle -->
     <rect x="40" y="596" width="1120" height="224" rx="6" class="lane"/>
-    <text x="600" y="624" text-anchor="middle" class="mono ink eyebrow">GIT-GROUNDED LIFECYCLE · THE GIT MECHANICS ROW, EXPANDED</text>
+    <text x="600" y="624" text-anchor="middle" class="mono ink eyebrow">GIT-GROUNDED LIFECYCLE</text>
 
     <g filter="url(#shadow)">
       <rect x="64" y="676" width="130" height="62" rx="5" class="node"/>
     </g>
     <circle cx="80" cy="676" r="10" fill="url(#accent)"/>
     <text x="80" y="680" text-anchor="middle" class="white badge">1</text>
-    <text x="129" y="702" text-anchor="middle" class="ink body">recommend</text>
-    <text x="129" y="722" text-anchor="middle" class="mono muted small">change ledger</text>
+    <text x="129" y="712" text-anchor="middle" class="ink body">recommend</text>
 
     <g filter="url(#glow)">
       <rect x="300" y="646" width="112" height="40" rx="5" class="node-green"/>
@@ -194,24 +180,21 @@
     </g>
     <circle cx="534" cy="676" r="10" fill="url(#accent)"/>
     <text x="534" y="680" text-anchor="middle" class="white badge">3</text>
-    <text x="593" y="702" text-anchor="middle" class="ink body">exact candidate</text>
-    <text x="593" y="722" text-anchor="middle" class="mono muted small">candidate ref</text>
+    <text x="593" y="712" text-anchor="middle" class="ink body">exact candidate</text>
 
     <g filter="url(#shadow)">
       <rect x="774" y="676" width="150" height="62" rx="5" class="node"/>
     </g>
     <circle cx="790" cy="676" r="10" fill="url(#accent)"/>
     <text x="790" y="680" text-anchor="middle" class="white badge">4</text>
-    <text x="849" y="702" text-anchor="middle" class="ink body">evidence</text>
-    <text x="849" y="722" text-anchor="middle" class="mono muted small">review · sign-off</text>
+    <text x="849" y="712" text-anchor="middle" class="ink body">evidence</text>
 
     <g filter="url(#glow)">
       <rect x="1030" y="676" width="130" height="62" rx="5" class="node-green"/>
     </g>
     <circle cx="1046" cy="676" r="10" fill="url(#accent)"/>
     <text x="1046" y="680" text-anchor="middle" class="white badge">5</text>
-    <text x="1095" y="702" text-anchor="middle" class="ink body">landing</text>
-    <text x="1095" y="722" text-anchor="middle" class="mono green small">compare-and-swap</text>
+    <text x="1095" y="712" text-anchor="middle" class="ink body">landing</text>
 
     <path d="M194 707H246L300 668" class="green-arrow flow"/>
     <path d="M194 707H260L300 716" class="green-arrow flow"/>
@@ -221,10 +204,5 @@
     <path d="M412 766L466 718L510 710" class="green-arrow flow"/>
     <path d="M668 707H766" class="arrow"/>
     <path d="M924 707H1022" class="arrow"/>
-
-    <path d="M129 738V790H286" class="ground"/>
-    <text x="64" y="806" class="mono muted small">refs/invariant/changes/*</text>
-    <path d="M1095 738V790H900" class="ground"/>
-    <text x="1136" y="806" text-anchor="end" class="mono muted small">accepted branch ref</text>
   </g>
 </svg>
